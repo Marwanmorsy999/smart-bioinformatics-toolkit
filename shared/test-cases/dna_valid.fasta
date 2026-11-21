@@ -1,0 +1,6 @@
+>dna_001 Example canonical DNA sequence
+ATGCGTACGTAGCTAGCTAGCTAG
+>dna_002 DNA with valid IUPAC ambiguity
+ATGCRYSWKMBDHVNACGT
+>dna_003 Another canonical sequence
+GGGGCCCCAAAATTTT

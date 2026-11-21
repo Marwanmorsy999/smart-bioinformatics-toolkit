@@ -1,0 +1,15 @@
+taxid	scientific_name	rank	parent_taxid	full_lineage
+2	Bacteria	superkingdom		Bacteria
+1239	Firmicutes	phylum	2	Bacteria;Firmicutes
+1385	Bacillales	order	1239	Bacteria;Firmicutes;Bacillales
+186817	Bacillaceae	family	1385	Bacteria;Firmicutes;Bacillales;Bacillaceae
+1386	Bacillus	genus	186817	Bacteria;Firmicutes;Bacillales;Bacillaceae;Bacillus
+1396	Bacillus cereus	species	1386	Bacteria;Firmicutes;Bacillales;Bacillaceae;Bacillus;Bacillus cereus
+1423	Bacillus subtilis	species	1386	Bacteria;Firmicutes;Bacillales;Bacillaceae;Bacillus;Bacillus subtilis
+1224	Proteobacteria	phylum	2	Bacteria;Proteobacteria
+91347	Enterobacterales	order	1224	Bacteria;Proteobacteria;Enterobacterales
+543	Enterobacteriaceae	family	91347	Bacteria;Proteobacteria;Enterobacterales;Enterobacteriaceae
+561	Escherichia	genus	543	Bacteria;Proteobacteria;Enterobacterales;Enterobacteriaceae;Escherichia
+562	Escherichia coli	species	561	Bacteria;Proteobacteria;Enterobacterales;Enterobacteriaceae;Escherichia;Escherichia coli
+208962	Escherichia albertii	species	561	Bacteria;Proteobacteria;Enterobacterales;Enterobacteriaceae;Escherichia;Escherichia albertii
+1	root	root		root

@@ -1,0 +1,69 @@
+{
+  "blast_file": "blast_taxonomy.tsv",
+  "mapping_file": "taxonomy_map.tsv",
+  "schema": "blastn_local_v1",
+  "top_n": 10,
+  "min_consensus": 0.8,
+  "query_ids": ["q1", "q2", "q3"],
+  "flags": ["no_hit_queries"],
+  "per_query": {
+    "q1": {
+      "status": "ambiguous_species",
+      "supported_rank": "genus",
+      "consensus_taxon": "Escherichia",
+      "consensus_taxid": 561,
+      "candidate_species": [
+        "Escherichia coli",
+        "Escherichia albertii",
+        "Shigella dysenteriae"
+      ],
+      "candidate_count": 3,
+      "passing_hit_count": 3,
+      "truncated": false,
+      "warnings": [
+        "Multiple species share the supported genus; species-level identification is not supported."
+      ],
+      "support": {
+        "reference_hits": 3,
+        "unique_accessions": 3,
+        "unique_species": 3,
+        "genus_support": 1.0,
+        "species_support": 0.3333
+      }
+    },
+    "q2": {
+      "status": "species_agreement",
+      "supported_rank": "species",
+      "consensus_taxon": "Bacillus subtilis",
+      "consensus_taxid": 1234,
+      "candidate_species": [
+        "Bacillus subtilis"
+      ],
+      "candidate_count": 1,
+      "passing_hit_count": 1,
+      "truncated": false,
+      "warnings": [],
+      "support": {
+        "reference_hits": 1,
+        "unique_accessions": 1,
+        "unique_species": 1,
+        "genus_support": 1.0,
+        "species_support": 1.0
+      }
+    },
+    "q3": {
+      "status": "insufficient_evidence",
+      "supported_rank": null,
+      "consensus_taxon": null,
+      "consensus_taxid": null,
+      "candidate_species": [],
+      "candidate_count": 0,
+      "passing_hit_count": 0,
+      "truncated": false,
+      "warnings": [
+        "No candidates available for consensus."
+      ],
+      "support": {}
+    }
+  }
+}

@@ -1,0 +1,5 @@
+qseqid	sacc	staxids	sscinames	pident	length	qstart	qend	qlen	evalue	bitscore	qcovs
+q1	acc1	562	Escherichia coli	99.0	100	1	100	100	1e-50	200	100
+q1	acc2	623	Escherichia albertii	98.0	100	1	100	100	1e-40	190	100
+q1	acc3	380918	Shigella dysenteriae	97.0	100	1	100	100	1e-30	180	100
+q2	acc4	1234	Bacillus subtilis	100.0	50	1	50	50	1e-10	90	100

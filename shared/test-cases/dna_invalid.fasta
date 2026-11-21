@@ -1,0 +1,9 @@
+>dna_good A valid sequence
+ATGCGTACGT
+>dna_bad Invalid characters
+ATGCXYZ123
+>dna_empty Empty sequence follows
+>dna_duplicate Duplicate identifier example
+ATGC
+>dna_duplicate Another record with same ID
+ATGCGG

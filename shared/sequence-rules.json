@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0.0",
+  "dna": {
+    "accepted_symbols": "ACGTRYSWKMBDHVN",
+    "canonical_symbols": "ACGT",
+    "ambiguous_symbols": "RYSWKMBDHVN",
+    "description": "IUPAC DNA nucleotide alphabet. U is excluded because this mode validates DNA, not RNA."
+  },
+  "protein": {
+    "accepted_symbols": "ACDEFGHIKLMNPQRSTVWYBZJXUO*",
+    "canonical_symbols": "ACDEFGHIKLMNPQRSTVWY",
+    "ambiguous_symbols": "BZJXUO",
+    "stop_symbol": "*",
+    "description": "Standard amino acids plus B, Z, J, X, U, O and the stop symbol *."
+  },
+  "statistics": {
+    "gc_definition": "(G + C) / (A + C + G + T) * 100",
+    "gc_denominator": "canonical_acgt_only",
+    "ambiguous_bases_in_gc_denominator": false,
+    "statistics_include": "valid_non_empty_records_only"
+  }
+}

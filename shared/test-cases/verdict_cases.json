@@ -1,0 +1,1440 @@
+{
+  "description": "Shared verdict test cases for Python and JavaScript (parity). Synthetic fixtures; not real BLAST data.",
+  "cases": [
+    {
+      "name": "no_hits",
+      "consensus": {
+        "query_id": "q",
+        "status": "insufficient_evidence",
+        "supported_rank": null,
+        "consensus_taxon": null,
+        "candidate_count": 0,
+        "evidence": []
+      },
+      "options": {},
+      "expected": {
+        "status": "insufficient_evidence",
+        "reported_rank": null,
+        "reported_taxon": null,
+        "caution_flags": [],
+        "qualifying_species": []
+      }
+    },
+    {
+      "name": "low_coverage",
+      "consensus": {
+        "query_id": "q",
+        "status": "species_agreement",
+        "supported_rank": "species",
+        "consensus_taxon": "Escherichia coli",
+        "candidate_count": 1,
+        "evidence": [
+          {
+            "accession": "a1",
+            "bitscore": 150,
+            "evalue": 0.0,
+            "pident": 99.5,
+            "query_coverage": 60,
+            "rank": 1,
+            "lineage": {
+              "taxid": 1,
+              "name": "Escherichia coli",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 7604,
+                  "name": "Escherichia"
+                },
+                "species": {
+                  "taxid": 7119,
+                  "name": "Escherichia coli"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "options": {},
+      "expected": {
+        "status": "insufficient_evidence",
+        "reported_rank": null,
+        "reported_taxon": null,
+        "caution_flags": [],
+        "qualifying_species": []
+      }
+    },
+    {
+      "name": "below_threshold",
+      "consensus": {
+        "query_id": "q",
+        "status": "species_agreement",
+        "supported_rank": "species",
+        "consensus_taxon": "Escherichia coli",
+        "candidate_count": 1,
+        "evidence": [
+          {
+            "accession": "a1",
+            "bitscore": 150,
+            "evalue": 0.0,
+            "pident": 96.2,
+            "query_coverage": 100,
+            "rank": 1,
+            "lineage": {
+              "taxid": 1,
+              "name": "Escherichia coli",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 7604,
+                  "name": "Escherichia"
+                },
+                "species": {
+                  "taxid": 7119,
+                  "name": "Escherichia coli"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "options": {},
+      "expected": {
+        "status": "below_screening_threshold",
+        "reported_rank": "genus",
+        "reported_taxon": "Escherichia",
+        "caution_flags": [],
+        "qualifying_species": []
+      }
+    },
+    {
+      "name": "species_supported",
+      "consensus": {
+        "query_id": "q",
+        "status": "species_agreement",
+        "supported_rank": "species",
+        "consensus_taxon": "Escherichia coli",
+        "candidate_count": 1,
+        "evidence": [
+          {
+            "accession": "a1",
+            "bitscore": 200,
+            "evalue": 0.0,
+            "pident": 99.4,
+            "query_coverage": 100,
+            "rank": 1,
+            "lineage": {
+              "taxid": 1,
+              "name": "Escherichia coli",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 7604,
+                  "name": "Escherichia"
+                },
+                "species": {
+                  "taxid": 7119,
+                  "name": "Escherichia coli"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "options": {},
+      "expected": {
+        "status": "group_level_only",
+        "reported_rank": "group",
+        "reported_taxon": "Escherichia / Shigella complex",
+        "caution_flags": [
+          "difficult_group:escherichia_shigella_complex"
+        ],
+        "qualifying_species": [
+          "Escherichia coli"
+        ]
+      }
+    },
+    {
+      "name": "single_qualifying_with_lower_candidate",
+      "consensus": {
+        "query_id": "q",
+        "status": "ambiguous_species",
+        "supported_rank": "genus",
+        "consensus_taxon": "Escherichia",
+        "candidate_count": 2,
+        "evidence": [
+          {
+            "accession": "a1",
+            "bitscore": 200,
+            "evalue": 0.0,
+            "pident": 99.5,
+            "query_coverage": 100,
+            "rank": 1,
+            "lineage": {
+              "taxid": 1,
+              "name": "Escherichia coli",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 7604,
+                  "name": "Escherichia"
+                },
+                "species": {
+                  "taxid": 7119,
+                  "name": "Escherichia coli"
+                }
+              }
+            }
+          },
+          {
+            "accession": "a2",
+            "bitscore": 150,
+            "evalue": 0.0,
+            "pident": 96.0,
+            "query_coverage": 100,
+            "rank": 2,
+            "lineage": {
+              "taxid": 1,
+              "name": "Escherichia albertii",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 7604,
+                  "name": "Escherichia"
+                },
+                "species": {
+                  "taxid": 4816,
+                  "name": "Escherichia albertii"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "options": {},
+      "expected": {
+        "status": "group_level_only",
+        "reported_rank": "group",
+        "reported_taxon": "Escherichia / Shigella complex",
+        "caution_flags": [
+          "difficult_group:escherichia_shigella_complex"
+        ],
+        "qualifying_species": [
+          "Escherichia coli"
+        ]
+      }
+    },
+    {
+      "name": "two_species_one_genus",
+      "consensus": {
+        "query_id": "q",
+        "status": "ambiguous_species",
+        "supported_rank": "genus",
+        "consensus_taxon": "Escherichia",
+        "candidate_count": 2,
+        "evidence": [
+          {
+            "accession": "a1",
+            "bitscore": 200,
+            "evalue": 0.0,
+            "pident": 99.5,
+            "query_coverage": 100,
+            "rank": 1,
+            "lineage": {
+              "taxid": 1,
+              "name": "Escherichia coli",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 7604,
+                  "name": "Escherichia"
+                },
+                "species": {
+                  "taxid": 7119,
+                  "name": "Escherichia coli"
+                }
+              }
+            }
+          },
+          {
+            "accession": "a2",
+            "bitscore": 195,
+            "evalue": 0.0,
+            "pident": 99.0,
+            "query_coverage": 100,
+            "rank": 2,
+            "lineage": {
+              "taxid": 1,
+              "name": "Escherichia albertii",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 7604,
+                  "name": "Escherichia"
+                },
+                "species": {
+                  "taxid": 4816,
+                  "name": "Escherichia albertii"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "options": {},
+      "expected": {
+        "status": "genus_level_only",
+        "reported_rank": "genus",
+        "reported_taxon": "Escherichia",
+        "caution_flags": [
+          "difficult_group:escherichia_shigella_complex"
+        ],
+        "qualifying_species": [
+          "Escherichia coli",
+          "Escherichia albertii"
+        ]
+      }
+    },
+    {
+      "name": "bacillus_cereus_group_single",
+      "consensus": {
+        "query_id": "q",
+        "status": "species_agreement",
+        "supported_rank": "species",
+        "consensus_taxon": "Bacillus cereus",
+        "candidate_count": 1,
+        "evidence": [
+          {
+            "accession": "b1",
+            "bitscore": 250,
+            "evalue": 0.0,
+            "pident": 99.9,
+            "query_coverage": 100,
+            "rank": 1,
+            "lineage": {
+              "taxid": 1,
+              "name": "Bacillus cereus",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 4383,
+                  "name": "Bacillus"
+                },
+                "species": {
+                  "taxid": 1417,
+                  "name": "Bacillus cereus"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "options": {},
+      "expected": {
+        "status": "group_level_only",
+        "reported_rank": "group",
+        "reported_taxon": "Bacillus cereus group",
+        "caution_flags": [
+          "difficult_group:bacillus_cereus_group"
+        ],
+        "qualifying_species": [
+          "Bacillus cereus"
+        ]
+      }
+    },
+    {
+      "name": "bacillus_cereus_group_two_species",
+      "consensus": {
+        "query_id": "q",
+        "status": "ambiguous_species",
+        "supported_rank": "genus",
+        "consensus_taxon": "Bacillus",
+        "candidate_count": 2,
+        "evidence": [
+          {
+            "accession": "b1",
+            "bitscore": 250,
+            "evalue": 0.0,
+            "pident": 99.9,
+            "query_coverage": 100,
+            "rank": 1,
+            "lineage": {
+              "taxid": 1,
+              "name": "Bacillus cereus",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 4383,
+                  "name": "Bacillus"
+                },
+                "species": {
+                  "taxid": 1417,
+                  "name": "Bacillus cereus"
+                }
+              }
+            }
+          },
+          {
+            "accession": "b2",
+            "bitscore": 248,
+            "evalue": 0.0,
+            "pident": 99.8,
+            "query_coverage": 100,
+            "rank": 2,
+            "lineage": {
+              "taxid": 1,
+              "name": "Bacillus thuringiensis",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 4383,
+                  "name": "Bacillus"
+                },
+                "species": {
+                  "taxid": 3770,
+                  "name": "Bacillus thuringiensis"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "options": {},
+      "expected": {
+        "status": "genus_level_only",
+        "reported_rank": "genus",
+        "reported_taxon": "Bacillus",
+        "caution_flags": [
+          "difficult_group:bacillus_cereus_group"
+        ],
+        "qualifying_species": [
+          "Bacillus cereus",
+          "Bacillus thuringiensis"
+        ]
+      }
+    },
+    {
+      "name": "multiple_genera",
+      "consensus": {
+        "query_id": "q",
+        "status": "higher_rank_only",
+        "supported_rank": "family",
+        "consensus_taxon": "Enterobacteriaceae",
+        "candidate_count": 2,
+        "evidence": [
+          {
+            "accession": "c1",
+            "bitscore": 200,
+            "evalue": 0.0,
+            "pident": 99.5,
+            "query_coverage": 100,
+            "rank": 1,
+            "lineage": {
+              "taxid": 1,
+              "name": "Escherichia coli",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 7604,
+                  "name": "Escherichia"
+                },
+                "species": {
+                  "taxid": 7119,
+                  "name": "Escherichia coli"
+                }
+              }
+            }
+          },
+          {
+            "accession": "c2",
+            "bitscore": 199,
+            "evalue": 0.0,
+            "pident": 99.4,
+            "query_coverage": 100,
+            "rank": 2,
+            "lineage": {
+              "taxid": 1,
+              "name": "Shigella dysenteriae",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 7356,
+                  "name": "Shigella"
+                },
+                "species": {
+                  "taxid": 8555,
+                  "name": "Shigella dysenteriae"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "options": {},
+      "expected": {
+        "status": "insufficient_evidence",
+        "reported_rank": "family",
+        "reported_taxon": "Enterobacteriaceae",
+        "caution_flags": [
+          "difficult_group:escherichia_shigella_complex"
+        ],
+        "qualifying_species": [
+          "Escherichia coli",
+          "Shigella dysenteriae"
+        ]
+      }
+    },
+    {
+      "name": "species_agreement_without_taxonomy",
+      "consensus": {
+        "query_id": "q",
+        "status": "species_agreement",
+        "supported_rank": "species",
+        "consensus_taxon": "Escherichia coli",
+        "candidate_count": 1,
+        "evidence": [
+          {
+            "accession": "a1",
+            "bitscore": 200,
+            "evalue": 0.0,
+            "pident": 99.4,
+            "query_coverage": 100,
+            "rank": 1,
+            "lineage": null
+          }
+        ]
+      },
+      "options": {},
+      "expected": {
+        "status": "insufficient_evidence",
+        "reported_rank": null,
+        "reported_taxon": null,
+        "caution_flags": [],
+        "qualifying_species": []
+      }
+    },
+    {
+      "name": "conflicting_lineages",
+      "consensus": {
+        "query_id": "q",
+        "status": "conflicting_lineages",
+        "supported_rank": null,
+        "consensus_taxon": null,
+        "candidate_count": 1,
+        "evidence": [
+          {
+            "accession": "a1",
+            "bitscore": 200,
+            "evalue": 0.0,
+            "pident": 99.4,
+            "query_coverage": 100,
+            "rank": 1,
+            "lineage": {
+              "taxid": 1,
+              "name": "Escherichia coli",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 7604,
+                  "name": "Escherichia"
+                },
+                "species": {
+                  "taxid": 7119,
+                  "name": "Escherichia coli"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "options": {},
+      "expected": {
+        "status": "insufficient_evidence",
+        "reported_rank": null,
+        "reported_taxon": null,
+        "caution_flags": [
+          "difficult_group:escherichia_shigella_complex"
+        ],
+        "qualifying_species": [
+          "Escherichia coli"
+        ]
+      }
+    },
+    {
+      "name": "coverage_unavailable",
+      "consensus": {
+        "query_id": "q",
+        "status": "species_agreement",
+        "supported_rank": "species",
+        "consensus_taxon": "Escherichia coli",
+        "candidate_count": 1,
+        "evidence": [
+          {
+            "accession": "a1",
+            "bitscore": 200,
+            "evalue": 0.0,
+            "pident": 99.4,
+            "query_coverage": null,
+            "rank": 1,
+            "lineage": {
+              "taxid": 1,
+              "name": "Escherichia coli",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 7604,
+                  "name": "Escherichia"
+                },
+                "species": {
+                  "taxid": 7119,
+                  "name": "Escherichia coli"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "options": {},
+      "expected": {
+        "status": "group_level_only",
+        "reported_rank": "group",
+        "reported_taxon": "Escherichia / Shigella complex",
+        "caution_flags": [
+          "coverage_unavailable",
+          "difficult_group:escherichia_shigella_complex"
+        ],
+        "qualifying_species": [
+          "Escherichia coli"
+        ]
+      }
+    },
+    {
+      "name": "partial_sequence_caution",
+      "consensus": {
+        "query_id": "q",
+        "status": "species_agreement",
+        "supported_rank": "species",
+        "consensus_taxon": "Escherichia coli",
+        "candidate_count": 1,
+        "evidence": [
+          {
+            "accession": "a1",
+            "bitscore": 200,
+            "evalue": 0.0,
+            "pident": 99.4,
+            "query_coverage": 100,
+            "rank": 1,
+            "lineage": {
+              "taxid": 1,
+              "name": "Escherichia coli",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 7604,
+                  "name": "Escherichia"
+                },
+                "species": {
+                  "taxid": 7119,
+                  "name": "Escherichia coli"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "options": {
+        "query_length": 300
+      },
+      "expected": {
+        "status": "group_level_only",
+        "reported_rank": "group",
+        "reported_taxon": "Escherichia / Shigella complex",
+        "caution_flags": [
+          "difficult_group:escherichia_shigella_complex",
+          "partial_sequence"
+        ],
+        "qualifying_species": [
+          "Escherichia coli"
+        ]
+      }
+    },
+    {
+      "name": "custom_threshold_stricter",
+      "consensus": {
+        "query_id": "q",
+        "status": "species_agreement",
+        "supported_rank": "species",
+        "consensus_taxon": "Escherichia coli",
+        "candidate_count": 1,
+        "evidence": [
+          {
+            "accession": "a1",
+            "bitscore": 200,
+            "evalue": 0.0,
+            "pident": 99.4,
+            "query_coverage": 100,
+            "rank": 1,
+            "lineage": {
+              "taxid": 1,
+              "name": "Escherichia coli",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 7604,
+                  "name": "Escherichia"
+                },
+                "species": {
+                  "taxid": 7119,
+                  "name": "Escherichia coli"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "options": {
+        "species_threshold": 99.5
+      },
+      "expected": {
+        "status": "below_screening_threshold",
+        "reported_rank": "genus",
+        "reported_taxon": "Escherichia",
+        "caution_flags": [
+          "near_threshold"
+        ],
+        "qualifying_species": []
+      }
+    },
+    {
+      "name": "best_hit_chosen_by_bitscore",
+      "consensus": {
+        "query_id": "q",
+        "status": "species_agreement",
+        "supported_rank": "species",
+        "consensus_taxon": "Escherichia coli",
+        "candidate_count": 2,
+        "evidence": [
+          {
+            "accession": "a1",
+            "bitscore": 100,
+            "evalue": 0.0,
+            "pident": 96.0,
+            "query_coverage": 100,
+            "rank": 1,
+            "lineage": {
+              "taxid": 1,
+              "name": "Escherichia coli",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 7604,
+                  "name": "Escherichia"
+                },
+                "species": {
+                  "taxid": 7119,
+                  "name": "Escherichia coli"
+                }
+              }
+            }
+          },
+          {
+            "accession": "a2",
+            "bitscore": 300,
+            "evalue": 0.0,
+            "pident": 99.2,
+            "query_coverage": 100,
+            "rank": 2,
+            "lineage": {
+              "taxid": 1,
+              "name": "Escherichia coli",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 7604,
+                  "name": "Escherichia"
+                },
+                "species": {
+                  "taxid": 7119,
+                  "name": "Escherichia coli"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "options": {},
+      "expected": {
+        "status": "group_level_only",
+        "reported_rank": "group",
+        "reported_taxon": "Escherichia / Shigella complex",
+        "caution_flags": [
+          "difficult_group:escherichia_shigella_complex"
+        ],
+        "qualifying_species": [
+          "Escherichia coli"
+        ]
+      }
+    },
+    {
+      "name": "mitis_group_name_normalisation",
+      "consensus": {
+        "query_id": "q",
+        "status": "species_agreement",
+        "supported_rank": "species",
+        "consensus_taxon": "Streptococcus mitis",
+        "candidate_count": 1,
+        "evidence": [
+          {
+            "accession": "s1",
+            "bitscore": 230,
+            "evalue": 0.0,
+            "pident": 99.0,
+            "query_coverage": 100,
+            "rank": 1,
+            "lineage": {
+              "taxid": 1,
+              "name": "  streptococcus   MITIS ",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 511,
+                  "name": "Streptococcus"
+                },
+                "species": {
+                  "taxid": 6702,
+                  "name": "  streptococcus   MITIS "
+                }
+              }
+            }
+          }
+        ]
+      },
+      "options": {},
+      "expected": {
+        "status": "group_level_only",
+        "reported_rank": "group",
+        "reported_taxon": "Mitis group (viridans) streptococci",
+        "caution_flags": [
+          "difficult_group:mitis_group_streptococci",
+          "near_threshold"
+        ],
+        "qualifying_species": [
+          "  streptococcus   MITIS "
+        ]
+      }
+    },
+    {
+      "name": "near_threshold_below",
+      "consensus": {
+        "query_id": "q",
+        "status": "species_agreement",
+        "supported_rank": "species",
+        "consensus_taxon": "Escherichia coli",
+        "candidate_count": 1,
+        "evidence": [
+          {
+            "accession": "a1",
+            "bitscore": 150,
+            "evalue": 0.0,
+            "pident": 98.4,
+            "query_coverage": 100,
+            "rank": 1,
+            "lineage": {
+              "taxid": 1,
+              "name": "Escherichia coli",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 7604,
+                  "name": "Escherichia"
+                },
+                "species": {
+                  "taxid": 7119,
+                  "name": "Escherichia coli"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "options": {},
+      "expected": {
+        "status": "below_screening_threshold",
+        "reported_rank": "genus",
+        "reported_taxon": "Escherichia",
+        "caution_flags": [
+          "near_threshold"
+        ],
+        "qualifying_species": []
+      }
+    },
+    {
+      "name": "near_threshold_above",
+      "consensus": {
+        "query_id": "q",
+        "status": "species_agreement",
+        "supported_rank": "species",
+        "consensus_taxon": "Escherichia coli",
+        "candidate_count": 1,
+        "evidence": [
+          {
+            "accession": "a1",
+            "bitscore": 200,
+            "evalue": 0.0,
+            "pident": 98.7,
+            "query_coverage": 100,
+            "rank": 1,
+            "lineage": {
+              "taxid": 1,
+              "name": "Escherichia coli",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 7604,
+                  "name": "Escherichia"
+                },
+                "species": {
+                  "taxid": 7119,
+                  "name": "Escherichia coli"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "options": {},
+      "expected": {
+        "status": "group_level_only",
+        "reported_rank": "group",
+        "reported_taxon": "Escherichia / Shigella complex",
+        "caution_flags": [
+          "difficult_group:escherichia_shigella_complex",
+          "near_threshold"
+        ],
+        "qualifying_species": [
+          "Escherichia coli"
+        ]
+      }
+    },
+    {
+      "name": "near_threshold_nonqualifying",
+      "consensus": {
+        "query_id": "q",
+        "status": "ambiguous_species",
+        "supported_rank": "genus",
+        "consensus_taxon": "Escherichia",
+        "candidate_count": 2,
+        "evidence": [
+          {
+            "accession": "a1",
+            "bitscore": 200,
+            "evalue": 0.0,
+            "pident": 99.0,
+            "query_coverage": 100,
+            "rank": 1,
+            "lineage": {
+              "taxid": 1,
+              "name": "Escherichia coli",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 7604,
+                  "name": "Escherichia"
+                },
+                "species": {
+                  "taxid": 7119,
+                  "name": "Escherichia coli"
+                }
+              }
+            }
+          },
+          {
+            "accession": "a2",
+            "bitscore": 190,
+            "evalue": 0.0,
+            "pident": 98.4,
+            "query_coverage": 100,
+            "rank": 2,
+            "lineage": {
+              "taxid": 2,
+              "name": "Escherichia albertii",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 7604,
+                  "name": "Escherichia"
+                },
+                "species": {
+                  "taxid": 7120,
+                  "name": "Escherichia albertii"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "options": {},
+      "expected": {
+        "status": "group_level_only",
+        "reported_rank": "group",
+        "reported_taxon": "Escherichia / Shigella complex",
+        "caution_flags": [
+          "difficult_group:escherichia_shigella_complex",
+          "near_threshold"
+        ],
+        "qualifying_species": [
+          "Escherichia coli"
+        ]
+      }
+    },
+    {
+      "name": "identical_top_identities_same_genus",
+      "consensus": {
+        "query_id": "q",
+        "status": "ambiguous_species",
+        "supported_rank": "genus",
+        "consensus_taxon": "Escherichia",
+        "candidate_count": 2,
+        "evidence": [
+          {
+            "accession": "a1",
+            "bitscore": 200,
+            "evalue": 0.0,
+            "pident": 99.0,
+            "query_coverage": 100,
+            "rank": 1,
+            "lineage": {
+              "taxid": 1,
+              "name": "Escherichia coli",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 7604,
+                  "name": "Escherichia"
+                },
+                "species": {
+                  "taxid": 7119,
+                  "name": "Escherichia coli"
+                }
+              }
+            }
+          },
+          {
+            "accession": "a2",
+            "bitscore": 199,
+            "evalue": 0.0,
+            "pident": 99.0,
+            "query_coverage": 100,
+            "rank": 2,
+            "lineage": {
+              "taxid": 2,
+              "name": "Escherichia albertii",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 7604,
+                  "name": "Escherichia"
+                },
+                "species": {
+                  "taxid": 7120,
+                  "name": "Escherichia albertii"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "options": {},
+      "expected": {
+        "status": "genus_level_only",
+        "reported_rank": "genus",
+        "reported_taxon": "Escherichia",
+        "caution_flags": [
+          "difficult_group:escherichia_shigella_complex",
+          "near_threshold"
+        ],
+        "qualifying_species": [
+          "Escherichia coli",
+          "Escherichia albertii"
+        ]
+      }
+    },
+    {
+      "name": "identical_top_identities_different_genera",
+      "consensus": {
+        "query_id": "q",
+        "status": "conflicting_lineages",
+        "supported_rank": null,
+        "consensus_taxon": null,
+        "candidate_count": 2,
+        "evidence": [
+          {
+            "accession": "a1",
+            "bitscore": 200,
+            "evalue": 0.0,
+            "pident": 99.0,
+            "query_coverage": 100,
+            "rank": 1,
+            "lineage": {
+              "taxid": 1,
+              "name": "Escherichia coli",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 7604,
+                  "name": "Escherichia"
+                },
+                "species": {
+                  "taxid": 7119,
+                  "name": "Escherichia coli"
+                }
+              }
+            }
+          },
+          {
+            "accession": "a2",
+            "bitscore": 199,
+            "evalue": 0.0,
+            "pident": 99.0,
+            "query_coverage": 100,
+            "rank": 2,
+            "lineage": {
+              "taxid": 3,
+              "name": "Salmonella enterica",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 7605,
+                  "name": "Salmonella"
+                },
+                "species": {
+                  "taxid": 7121,
+                  "name": "Salmonella enterica"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "options": {},
+      "expected": {
+        "status": "insufficient_evidence",
+        "reported_rank": null,
+        "reported_taxon": null,
+        "caution_flags": [
+          "difficult_group:escherichia_shigella_complex",
+          "near_threshold"
+        ],
+        "qualifying_species": [
+          "Escherichia coli",
+          "Salmonella enterica"
+        ]
+      }
+    },
+    {
+      "name": "missing_identity",
+      "consensus": {
+        "query_id": "q",
+        "status": "species_agreement",
+        "supported_rank": "species",
+        "consensus_taxon": "Escherichia coli",
+        "candidate_count": 1,
+        "evidence": [
+          {
+            "accession": "a1",
+            "bitscore": 200,
+            "evalue": 0.0,
+            "pident": null,
+            "query_coverage": 100,
+            "rank": 1,
+            "lineage": {
+              "taxid": 1,
+              "name": "Escherichia coli",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 7604,
+                  "name": "Escherichia"
+                },
+                "species": {
+                  "taxid": 7119,
+                  "name": "Escherichia coli"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "options": {},
+      "expected": {
+        "status": "insufficient_evidence",
+        "reported_rank": null,
+        "reported_taxon": null,
+        "caution_flags": [],
+        "qualifying_species": []
+      }
+    },
+    {
+      "name": "missing_coverage",
+      "consensus": {
+        "query_id": "q",
+        "status": "species_agreement",
+        "supported_rank": "species",
+        "consensus_taxon": "Escherichia coli",
+        "candidate_count": 1,
+        "evidence": [
+          {
+            "accession": "a1",
+            "bitscore": 200,
+            "evalue": 0.0,
+            "pident": 99.4,
+            "query_coverage": null,
+            "rank": 1,
+            "lineage": {
+              "taxid": 1,
+              "name": "Escherichia coli",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 7604,
+                  "name": "Escherichia"
+                },
+                "species": {
+                  "taxid": 7119,
+                  "name": "Escherichia coli"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "options": {},
+      "expected": {
+        "status": "group_level_only",
+        "reported_rank": "group",
+        "reported_taxon": "Escherichia / Shigella complex",
+        "caution_flags": [
+          "coverage_unavailable",
+          "difficult_group:escherichia_shigella_complex"
+        ],
+        "qualifying_species": [
+          "Escherichia coli"
+        ]
+      }
+    },
+    {
+      "name": "empty_taxonomy",
+      "consensus": {
+        "query_id": "q",
+        "status": "insufficient_evidence",
+        "supported_rank": null,
+        "consensus_taxon": null,
+        "candidate_count": 1,
+        "evidence": [
+          {
+            "accession": "a1",
+            "bitscore": 200,
+            "evalue": 0.0,
+            "pident": 99.4,
+            "query_coverage": 100,
+            "rank": 1,
+            "lineage": null
+          }
+        ]
+      },
+      "options": {},
+      "expected": {
+        "status": "insufficient_evidence",
+        "reported_rank": null,
+        "reported_taxon": null,
+        "caution_flags": [],
+        "qualifying_species": []
+      }
+    },
+    {
+      "name": "uninformative_species_name",
+      "consensus": {
+        "query_id": "q",
+        "status": "insufficient_evidence",
+        "supported_rank": null,
+        "consensus_taxon": null,
+        "candidate_count": 1,
+        "evidence": [
+          {
+            "accession": "a1",
+            "bitscore": 200,
+            "evalue": 0.0,
+            "pident": 99.4,
+            "query_coverage": 100,
+            "rank": 1,
+            "lineage": {
+              "taxid": 1,
+              "name": "Escherichia sp.",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 7604,
+                  "name": "Escherichia"
+                },
+                "species": {
+                  "taxid": 7119,
+                  "name": "Escherichia sp."
+                }
+              }
+            }
+          }
+        ]
+      },
+      "options": {},
+      "expected": {
+        "status": "insufficient_evidence",
+        "reported_rank": null,
+        "reported_taxon": null,
+        "caution_flags": [],
+        "qualifying_species": []
+      }
+    },
+    {
+      "name": "mixed_case_whitespace_species",
+      "consensus": {
+        "query_id": "q",
+        "status": "species_agreement",
+        "supported_rank": "species",
+        "consensus_taxon": "Escherichia coli",
+        "candidate_count": 2,
+        "evidence": [
+          {
+            "accession": "a1",
+            "bitscore": 200,
+            "evalue": 0.0,
+            "pident": 99.0,
+            "query_coverage": 100,
+            "rank": 1,
+            "lineage": {
+              "taxid": 1,
+              "name": "  escherichia   coli  ",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 7604,
+                  "name": "Escherichia"
+                },
+                "species": {
+                  "taxid": 7119,
+                  "name": "  escherichia   coli  "
+                }
+              }
+            }
+          },
+          {
+            "accession": "a2",
+            "bitscore": 190,
+            "evalue": 0.0,
+            "pident": 98.8,
+            "query_coverage": 100,
+            "rank": 2,
+            "lineage": {
+              "taxid": 1,
+              "name": "Escherichia coli",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 7604,
+                  "name": "Escherichia"
+                },
+                "species": {
+                  "taxid": 7119,
+                  "name": "Escherichia coli"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "options": {},
+      "expected": {
+        "status": "group_level_only",
+        "reported_rank": "group",
+        "reported_taxon": "Escherichia / Shigella complex",
+        "caution_flags": [
+          "difficult_group:escherichia_shigella_complex",
+          "near_threshold"
+        ],
+        "qualifying_species": [
+          "  escherichia   coli  "
+        ]
+      }
+    },
+    {
+      "name": "subspecies_strain_names_distinct",
+      "consensus": {
+        "query_id": "q",
+        "status": "ambiguous_species",
+        "supported_rank": "genus",
+        "consensus_taxon": "Escherichia",
+        "candidate_count": 2,
+        "evidence": [
+          {
+            "accession": "a1",
+            "bitscore": 200,
+            "evalue": 0.0,
+            "pident": 99.0,
+            "query_coverage": 100,
+            "rank": 1,
+            "lineage": {
+              "taxid": 1,
+              "name": "Escherichia coli K-12",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 7604,
+                  "name": "Escherichia"
+                },
+                "species": {
+                  "taxid": 7119,
+                  "name": "Escherichia coli K-12"
+                }
+              }
+            }
+          },
+          {
+            "accession": "a2",
+            "bitscore": 190,
+            "evalue": 0.0,
+            "pident": 98.9,
+            "query_coverage": 100,
+            "rank": 2,
+            "lineage": {
+              "taxid": 1,
+              "name": "Escherichia coli",
+              "source": "mapping",
+              "ranks": {
+                "genus": {
+                  "taxid": 7604,
+                  "name": "Escherichia"
+                },
+                "species": {
+                  "taxid": 7119,
+                  "name": "Escherichia coli"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "options": {},
+      "expected": {
+        "status": "genus_level_only",
+        "reported_rank": "genus",
+        "reported_taxon": "Escherichia",
+        "caution_flags": [
+          "difficult_group:escherichia_shigella_complex",
+          "near_threshold"
+        ],
+        "qualifying_species": [
+          "Escherichia coli K-12",
+          "Escherichia coli"
+        ]
+      }
+    }
+  ]
+}

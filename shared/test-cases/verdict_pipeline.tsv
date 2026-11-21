@@ -1,0 +1,9 @@
+qseqid	sacc	staxids	sscinames	pident	length	qstart	qend	qlen	evalue	bitscore	qcovs
+c1	NR_001	1396	Bacillus cereus	99.9	1400	1	1400	1400	0.0	2500	100
+c1	NR_002	1423	Bacillus subtilis	94.0	1400	1	1400	1400	0.0	2100	100
+c2	NR_003	562	Escherichia coli	99.5	1400	1	1400	1400	0.0	2450	100
+c2	NR_004	208962	Escherichia albertii	99.0	1400	1	1400	1400	0.0	2400	100
+c3	NR_005	562	Escherichia coli	96.5	1400	1	1400	1400	0.0	2200	100
+c4	NR_006	1423	Bacillus subtilis	99.8	1400	1	1400	1400	0.0	2480	100
+c5	NR_007	1423	Bacillus subtilis	100.0	300	1	300	300	0.0	540	100
+c6	NR_008	1423	Bacillus subtilis	99.0	500	1	500	1400	0.0	880	36

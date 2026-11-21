@@ -1,0 +1,74 @@
+{
+  "description":"Synthetic end-to-end verdict fixture (illustrative taxids, not real BLAST data). Shared by Python and JavaScript tests.",
+  "blast_file":"verdict_pipeline.tsv",
+  "mapping_file":"verdict_pipeline_map.tsv",
+  "schema":"blastn_local_v1",
+  "top_n":10,
+  "min_consensus":0.8,
+  "query_ids":[
+    "c1",
+    "c2",
+    "c3",
+    "c4",
+    "c5",
+    "c6",
+    "c7"
+  ],
+  "verdicts":{
+    "c1":{
+      "status":"group_level_only",
+      "reported_rank":"group",
+      "reported_taxon":"Bacillus cereus group",
+      "caution_flags":[
+        "difficult_group:bacillus_cereus_group"
+      ]
+    },
+    "c2":{
+      "status":"genus_level_only",
+      "reported_rank":"genus",
+      "reported_taxon":"Escherichia",
+      "caution_flags":[
+        "difficult_group:escherichia_shigella_complex"
+      ]
+    },
+    "c3":{
+      "status":"below_screening_threshold",
+      "reported_rank":"genus",
+      "reported_taxon":"Escherichia",
+      "caution_flags":[]
+    },
+    "c4":{
+      "status":"species_supported",
+      "reported_rank":"species",
+      "reported_taxon":"Bacillus subtilis",
+      "caution_flags":[]
+    },
+    "c5":{
+      "status":"species_supported",
+      "reported_rank":"species",
+      "reported_taxon":"Bacillus subtilis",
+      "caution_flags":[
+        "partial_sequence"
+      ]
+    },
+    "c6":{
+      "status":"insufficient_evidence",
+      "reported_rank":null,
+      "reported_taxon":null,
+      "caution_flags":[]
+    },
+    "c7":{
+      "status":"insufficient_evidence",
+      "reported_rank":null,
+      "reported_taxon":null,
+      "caution_flags":[]
+    }
+  },
+  "verdict_counts":{
+    "below_screening_threshold":1,
+    "genus_level_only":1,
+    "group_level_only":1,
+    "insufficient_evidence":2,
+    "species_supported":2
+  }
+}

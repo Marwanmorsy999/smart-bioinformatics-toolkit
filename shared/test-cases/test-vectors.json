@@ -1,0 +1,42 @@
+{
+  "description": "Shared behavioral fixtures for the Python and JavaScript implementations.",
+  "cases": [
+    {
+      "name": "canonical_dna",
+      "type": "dna",
+      "sequence": "ACGTACGT",
+      "valid": true,
+      "length": 8,
+      "gc_percent": 50.0,
+      "ambiguous_count": 0
+    },
+    {
+      "name": "ambiguous_dna_is_valid_warning",
+      "type": "dna",
+      "sequence": "ACGTRYN",
+      "valid": true,
+      "length": 7,
+      "gc_percent": 50.0,
+      "ambiguous_count": 3
+    },
+    {
+      "name": "invalid_dna_symbols",
+      "type": "dna",
+      "sequence": "ACGTXYZ123",
+      "valid": false,
+      "length": 10,
+      "gc_percent": null,
+      "ambiguous_count": null
+    },
+    {
+      "name": "protein_with_accepted_ambiguity",
+      "type": "protein",
+      "sequence": "MABZJXUOEFG*",
+      "valid": true,
+      "length": 12,
+      "gc_percent": null,
+      "ambiguous_count": 6,
+      "stop_count": 1
+    }
+  ]
+}

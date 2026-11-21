@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Analyze a BLAST tabular result file locally in your browser.">
+  <meta name="theme-color" content="#102a43">
+  <title>BLAST Results Analyzer · Smart Bioinformatics Toolkit</title>
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="index.html" aria-label="Smart Bioinformatics Toolkit home">
+      <span class="brand-mark" aria-hidden="true">S<span>Bio</span></span>
+      <span class="brand-name">Smart Bioinformatics<span>Toolkit</span></span>
+    </a>
+    <nav class="top-nav" aria-label="Main navigation">
+      <a href="index.html#tools">Tools</a>
+      <a href="index.html#workflow">How it works</a>
+      <a href="index.html#about">About</a>
+    </nav>
+    <span class="local-badge"><span class="status-dot"></span> Browser processing</span>
+  </header>
+
+  <main>
+    <section class="section-block">
+      <div class="section-heading">
+        <div><p class="eyebrow">Independent tool</p><h2>BLAST Results Analyzer</h2></div>
+        <p class="section-note">Import a BLAST tabular file produced elsewhere. No new BLAST request is made.</p>
+      </div>
+
+      <div class="workspace">
+        <div class="workspace-header">
+          <div><p class="eyebrow">TOOL 03</p><h3>BLAST TSV import and analysis</h3><p>Validate schema, filter and rank hits, preserve ties, and export CSV/JSON.</p></div>
+          <span class="standalone-tag">Independent tool</span>
+        </div>
+
+        <div class="input-grid">
+          <div class="field-group">
+            <label for="blast-schema">BLAST schema</label>
+            <select id="blast-schema">
+              <option value="auto">Auto-infer (only when unambiguous)</option>
+              <option value="standard">Standard 12-column outfmt 6</option>
+              <option value="extended">Extended 11-column (with qlen/taxonomy)</option>
+            </select>
+            <small>Auto-inference uses column count only. Mixed counts require an explicit choice.</small>
+          </div>
+          <div class="field-group">
+            <label for="blast-file">Upload BLAST TSV</label>
+            <input id="blast-file" type="file" accept=".tsv,.txt,text/plain,text/tab-separated-values">
+            <small>Maximum file size: 5 MB for this browser MVP.</small>
+          </div>
+        </div>
+
+        <div class="field-group sequence-input-group">
+          <div class="label-row"><label for="blast-text">Or paste your BLAST tabular output</label><button id="load-blast-example" class="text-button" type="button">Load example</button></div>
+          <textarea id="blast-text" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="qseqid\tsseqid\tpident\tlength\t..."></textarea>
+          <div class="textarea-footer"><small>Tab-separated. Standard 12 columns or extended 11 columns. Lines starting with # are ignored.</small><span id="blast-char-count">0 characters</span></div>
+        </div>
+
+        <details class="advanced">
+          <summary>Thresholds and options</summary>
+          <div class="input-grid">
+            <div class="field-group"><label for="min-identity">Minimum identity (%)</label><input id="min-identity" type="number" min="0" max="100" step="0.1" value="0"></div>
+            <div class="field-group"><label for="min-coverage">Minimum query coverage (%)</label><input id="min-coverage" type="number" min="0" max="100" step="0.1" value="0"></div>
+            <div class="field-group"><label for="max-evalue">Maximum E-value</label><input id="max-evalue" type="text" value=""></div>
+            <div class="field-group"><label for="max-hits">Maximum displayed hits per query (0 = all)</label><input id="max-hits" type="number" min="0" step="1" value="0"></div>
+          </div>
+          <div class="field-group sequence-input-group">
+            <label for="query-lengths">Query lengths (optional, one per line: id length)</label>
+            <textarea id="query-lengths" spellcheck="false" placeholder="q1 100"></textarea>
+            <small>Used to calculate query coverage for standard 12-column input, which has no qlen column.</small>
+          </div>
+          <div class="field-group sequence-input-group">
+            <label for="query-fasta">Query FASTA (optional, derives lengths and no-hit list)</label>
+            <textarea id="query-fasta" spellcheck="false" placeholder=">q1&#10;ACGT..."></textarea>
+          </div>
+          <div class="field-group sequence-input-group">
+            <label for="query-list">Query ID list (optional, one per line)</label>
+            <textarea id="query-list" spellcheck="false" placeholder="q1"></textarea>
+          </div>
+        </details>
+
+        <div class="action-row">
+          <button id="run-blast" class="primary-button" type="button">Analyze BLAST TSV <span aria-hidden="true">→</span></button>
+          <button id="clear-blast" class="quiet-button" type="button">Clear</button>
+        </div>
+        <p id="blast-error" class="input-error" role="alert" hidden></p>
+
+        <section id="blast-results" class="results-panel" aria-live="polite" hidden>
+          <div class="results-header"><div><p class="eyebrow">ANALYSIS OUTPUT</p><h4 id="blast-results-title">BLAST analysis</h4></div><span id="blast-result-status" class="result-status"></span></div>
+          <div id="blast-summary" class="summary-grid"></div>
+          <div id="blast-note" class="results-note"></div>
+          <div class="table-wrap"><table id="blast-table"><thead></thead><tbody></tbody></table></div>
+          <div id="blast-file-errors" class="message-list"></div>
+          <div class="export-row" id="blast-export-actions">
+            <button id="blast-download-json" class="secondary-button small-button" type="button">Download JSON</button>
+            <button id="blast-download-csv" class="secondary-button small-button" type="button">Download filtered CSV</button>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer"><span>Smart Bioinformatics Toolkit <span class="footer-muted">· Milestone 0.1.0</span></span><span>Research use · Not for clinical diagnosis</span></footer>
+  <script type="module" src="js/blast-app.js"></script>
+</body>
+</html>

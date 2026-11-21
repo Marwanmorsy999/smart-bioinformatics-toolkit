@@ -1,0 +1,22 @@
+{
+  "description": "Expected reproducibility metadata keys for taxonomy reports (Python/JS parity).",
+  "top_level_keys": [
+    "tool",
+    "tool_version",
+    "generated_at",
+    "input_file",
+    "input_file_hash_sha256",
+    "parameters",
+    "thresholds",
+    "disclaimer"
+  ],
+  "parameter_keys": [
+    "top_n",
+    "min_consensus",
+    "species_threshold",
+    "min_coverage",
+    "min_query_length",
+    "near_threshold_margin",
+    "difficult_groups_loaded"
+  ]
+}
