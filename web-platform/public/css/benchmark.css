@@ -1,7 +1,36 @@
-﻿/* Risk-coverage chart styles (external; CSP forbids inline styles). */
-#chart { max-width: 100%; overflow-x: auto; }
-#chart svg { max-width: 100%; height: auto; }
-.legend-call { color: #2b6cb0; }
-.legend-wrong { color: #c53030; }
-#rc-table { border-collapse: collapse; margin-top: 1rem; }
-#rc-table th, #rc-table td { border: 1px solid #cbd5e0; padding: 0.35rem 0.6rem; text-align: left; }
+/* Risk-coverage chart styles (external; CSP forbids inline styles).
+   All data shown on this page is synthetic demonstration data. */
+
+#chart { max-width: 100%; overflow-x: auto; margin: 18px 0 14px; }
+#chart svg { display: block; max-width: 100%; height: auto; }
+
+/* Bar colours come from the shared design tokens in main.css. */
+.bar-call { fill: var(--info, #1d5f80); }
+.bar-wrong { fill: var(--danger, #a02b2b); }
+.axis-line { stroke: var(--ink-soft, #354b5d); stroke-width: 1; }
+.axis-label { fill: var(--muted, #4e6373); font: 600 11px var(--font, system-ui, sans-serif); }
+.bar-title { font: 700 11px var(--font, system-ui, sans-serif); }
+
+.legend { font-size: .8125rem; color: var(--ink-soft, #354b5d); line-height: 1.7; }
+.legend-call { color: var(--info, #1d5f80); font-weight: 750; }
+.legend-wrong { color: var(--danger, #a02b2b); font-weight: 750; }
+
+#rc-table { border-collapse: collapse; margin-top: 1rem; width: 100%; font-size: .8125rem; }
+#rc-table caption {
+  caption-side: top; text-align: left; padding: 8px 10px;
+  color: var(--muted, #4e6373); font-weight: 700;
+}
+#rc-table th, #rc-table td {
+  border: 1px solid var(--line, #d8e3e8);
+  padding: .45rem .6rem; text-align: left;
+}
+#rc-table thead { background: #eef4f6; }
+#rc-table tbody tr:nth-child(even) { background: var(--surface-2, #f8fbfc); }
+
+@media (max-width: 640px) {
+  #chart { overflow-x: auto; }
+  #rc-table { display: block; overflow-x: auto; white-space: nowrap; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #chart, #rc-table { transition: none; }
+}

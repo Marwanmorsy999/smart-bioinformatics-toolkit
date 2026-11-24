@@ -3,12 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Analyze a BLAST tabular result file locally in your browser.">
-  <meta name="theme-color" content="#102a43">
+  <meta name="description" content="Analyze a BLAST tabular result file locally in your browser. Research use only.">
+  <meta name="theme-color" content="#0f2740">
   <title>BLAST Results Analyzer · Smart Bioinformatics Toolkit</title>
   <link rel="stylesheet" href="css/main.css">
 </head>
 <body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+
   <header class="topbar">
     <a class="brand" href="index.html" aria-label="Smart Bioinformatics Toolkit home">
       <span class="brand-mark" aria-hidden="true">S<span>Bio</span></span>
@@ -19,43 +21,48 @@
       <a href="index.html#workflow">How it works</a>
       <a href="index.html#about">About</a>
     </nav>
-    <span class="local-badge"><span class="status-dot"></span> Browser processing</span>
+    <span class="local-badge"><span class="status-dot" aria-hidden="true"></span> Browser processing</span>
   </header>
 
-  <main>
+  <main id="main-content" tabindex="-1">
     <section class="section-block">
       <div class="section-heading">
-        <div><p class="eyebrow">Independent tool</p><h2>BLAST Results Analyzer</h2></div>
+        <div><p class="eyebrow">Independent tool</p><h1>BLAST Results Analyzer</h1></div>
         <p class="section-note">Import a BLAST tabular file produced elsewhere. No new BLAST request is made.</p>
+      </div>
+
+      <div class="research-strip" role="note">
+        <span class="privacy-icon" aria-hidden="true">i</span>
+        <p><strong>Research-use tool.</strong> Similarity hits are screening evidence, not proof of species identity and not a clinical diagnosis.</p>
       </div>
 
       <div class="workspace">
         <div class="workspace-header">
-          <div><p class="eyebrow">TOOL 03</p><h3>BLAST TSV import and analysis</h3><p>Validate schema, filter and rank hits, preserve ties, and export CSV/JSON.</p></div>
+          <div><p class="eyebrow">TOOL 03</p><h2>BLAST TSV import and analysis</h2><p>Validate schema, filter and rank hits, preserve ties, and export CSV/JSON.</p></div>
           <span class="standalone-tag">Independent tool</span>
         </div>
 
         <div class="input-grid">
           <div class="field-group">
             <label for="blast-schema">BLAST schema</label>
-            <select id="blast-schema">
+            <select id="blast-schema" aria-describedby="blast-schema-help">
               <option value="auto">Auto-infer (only when unambiguous)</option>
               <option value="standard">Standard 12-column outfmt 6</option>
               <option value="extended">Extended 11-column (with qlen/taxonomy)</option>
             </select>
-            <small>Auto-inference uses column count only. Mixed counts require an explicit choice.</small>
+            <small id="blast-schema-help">Auto-inference uses column count only. Mixed counts require an explicit choice.</small>
           </div>
           <div class="field-group">
             <label for="blast-file">Upload BLAST TSV</label>
-            <input id="blast-file" type="file" accept=".tsv,.txt,text/plain,text/tab-separated-values">
-            <small>Maximum file size: 5 MB for this browser MVP.</small>
+            <input id="blast-file" type="file" accept=".tsv,.txt,text/plain,text/tab-separated-values" aria-describedby="blast-file-help">
+            <small id="blast-file-help">Maximum file size: 5 MB for this browser MVP.</small>
           </div>
         </div>
 
         <div class="field-group sequence-input-group">
-          <div class="label-row"><label for="blast-text">Or paste your BLAST tabular output</label><button id="load-blast-example" class="text-button" type="button">Load example</button></div>
-          <textarea id="blast-text" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="qseqid\tsseqid\tpident\tlength\t..."></textarea>
-          <div class="textarea-footer"><small>Tab-separated. Standard 12 columns or extended 11 columns. Lines starting with # are ignored.</small><span id="blast-char-count">0 characters</span></div>
+          <div class="label-row"><label for="blast-text">Or paste your BLAST tabular output</label><button id="load-blast-example" class="text-button" type="button">Load example (synthetic)</button></div>
+          <textarea id="blast-text" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="qseqid&#9;sseqid&#9;pident&#9;length&#9;..." aria-describedby="blast-text-help"></textarea>
+          <div class="textarea-footer"><small id="blast-text-help">Tab-separated. Standard 12 columns or extended 11 columns. Lines starting with # are ignored.</small><span id="blast-char-count">0 characters</span></div>
         </div>
 
         <details class="advanced">
@@ -68,8 +75,8 @@
           </div>
           <div class="field-group sequence-input-group">
             <label for="query-lengths">Query lengths (optional, one per line: id length)</label>
-            <textarea id="query-lengths" spellcheck="false" placeholder="q1 100"></textarea>
-            <small>Used to calculate query coverage for standard 12-column input, which has no qlen column.</small>
+            <textarea id="query-lengths" spellcheck="false" placeholder="q1 100" aria-describedby="query-lengths-help"></textarea>
+            <small id="query-lengths-help">Used to calculate query coverage for standard 12-column input, which has no qlen column.</small>
           </div>
           <div class="field-group sequence-input-group">
             <label for="query-fasta">Query FASTA (optional, derives lengths and no-hit list)</label>
@@ -87,8 +94,8 @@
         </div>
         <p id="blast-error" class="input-error" role="alert" hidden></p>
 
-        <section id="blast-results" class="results-panel" aria-live="polite" hidden>
-          <div class="results-header"><div><p class="eyebrow">ANALYSIS OUTPUT</p><h4 id="blast-results-title">BLAST analysis</h4></div><span id="blast-result-status" class="result-status"></span></div>
+        <section id="blast-results" class="results-panel" aria-live="polite" aria-labelledby="blast-results-title" hidden>
+          <div class="results-header"><div><p class="eyebrow">ANALYSIS OUTPUT</p><h3 id="blast-results-title">BLAST analysis</h3></div><span id="blast-result-status" class="result-status" aria-live="polite"></span></div>
           <div id="blast-summary" class="summary-grid"></div>
           <div id="blast-note" class="results-note"></div>
           <div class="table-wrap"><table id="blast-table"><thead></thead><tbody></tbody></table></div>
@@ -102,7 +109,7 @@
     </section>
   </main>
 
-  <footer class="footer"><span>Smart Bioinformatics Toolkit <span class="footer-muted">· Milestone 0.1.0</span></span><span>Research use · Not for clinical diagnosis</span></footer>
+  <footer class="footer"><span>Smart Bioinformatics Toolkit <span class="footer-muted">· Milestone 0.1.0</span></span><span>Research use only · Not for clinical diagnosis</span></footer>
   <script type="module" src="js/blast-app.js"></script>
 </body>
 </html>

@@ -3,48 +3,58 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="A modular, browser-based bioinformatics toolkit. Validate FASTA files and calculate sequence statistics locally.">
-  <meta name="theme-color" content="#102a43">
+  <meta name="description" content="A modular, browser-based bioinformatics toolkit. Validate FASTA files and calculate sequence statistics locally. Research use only.">
+  <meta name="theme-color" content="#0f2740">
   <title>Smart Bioinformatics Toolkit</title>
   <link rel="stylesheet" href="css/main.css">
 </head>
 <body>
+  <a class="skip-link" href="#home">Skip to main content</a>
+
   <header class="topbar">
     <a class="brand" href="#home" aria-label="Smart Bioinformatics Toolkit home">
       <span class="brand-mark" aria-hidden="true">S<span>Bio</span></span>
       <span class="brand-name">Smart Bioinformatics<span>Toolkit</span></span>
     </a>
     <nav class="top-nav" aria-label="Main navigation">
-      <a class="active" href="#tools">Tools</a>
+      <a class="active" href="#tools" aria-current="location">Tools</a>
       <a href="#workflow">How it works</a>
       <a href="#about">About</a>
     </nav>
-    <span class="local-badge"><span class="status-dot"></span> Browser processing</span>
+    <span class="local-badge"><span class="status-dot" aria-hidden="true"></span> Browser processing</span>
   </header>
 
-  <main id="home">
+  <main id="home" tabindex="-1">
     <section class="hero">
-      <div class="hero-copy">
-        <p class="eyebrow">A modular workspace for sequence analysis</p>
-        <h1>Small bioinformatics tasks.<br><span>One simple workspace.</span></h1>
-        <p class="hero-description">Use one tool and leave, or connect tools into a larger analysis. Start by validating FASTA sequences or calculating sequence statistics.</p>
-        <a class="primary-link" href="#tools">Explore the tools <span aria-hidden="true">→</span></a>
-      </div>
-      <div class="hero-art" aria-hidden="true">
-        <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div>
-        <div class="dna-card">
-          <div class="dna-heading"><span class="mini-dot"></span> SEQUENCE WORKSPACE</div>
-          <div class="sequence-line"><span>01</span><b>ATGCGTACGTAGCTAG</b></div>
-          <div class="sequence-line"><span>02</span><b>GCTAGCATCGATCGTA</b></div>
-          <div class="sequence-line"><span>03</span><b>TTAGCGATCGGATCGA</b></div>
-          <div class="art-footer"><span>FASTA</span><span>VALIDATION</span><span>STATS</span></div>
+      <div class="hero-inner">
+        <div class="hero-copy">
+          <p class="eyebrow">A modular workspace for sequence analysis</p>
+          <h1>Small bioinformatics tasks.<br><span>One simple workspace.</span></h1>
+          <p class="hero-description">Use one tool and leave, or connect tools into a larger analysis. Start by validating FASTA sequences or calculating sequence statistics.</p>
+          <a class="primary-link" href="#tools">Explore the tools <span aria-hidden="true">→</span></a>
+          <p class="small">Research use only. Results require independent interpretation.</p>
+        </div>
+        <div class="hero-art" aria-hidden="true">
+          <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div>
+          <div class="dna-card">
+            <div class="dna-heading"><span class="mini-dot"></span> SEQUENCE WORKSPACE</div>
+            <div class="sequence-line"><span>01</span><b>ATGCGTACGTAGCTAG</b></div>
+            <div class="sequence-line"><span>02</span><b>GCTAGCATCGATCGTA</b></div>
+            <div class="sequence-line"><span>03</span><b>TTAGCGATCGGATCGA</b></div>
+            <div class="art-footer"><span>FASTA</span><span>VALIDATION</span><span>STATS</span></div>
+          </div>
         </div>
       </div>
     </section>
 
+    <div class="research-strip" role="note">
+      <span class="privacy-icon" aria-hidden="true">i</span>
+      <p><strong>Research-use toolkit.</strong> Outputs are screening evidence, not proof of identity and not a clinical diagnosis. Interpretation remains the user's responsibility.</p>
+    </div>
+
     <section class="privacy-strip" aria-label="Privacy information">
       <span class="privacy-icon" aria-hidden="true">✓</span>
-      <p><strong>Your sequence stays in your browser.</strong> This first milestone performs FASTA parsing, validation and statistics locally. Nothing is uploaded to a server.</p>
+      <p><strong>Your sequence stays in your browser.</strong> This milestone performs FASTA parsing, validation and statistics locally. Nothing is uploaded to a server.</p>
     </section>
 
     <section id="tools" class="section-block">
@@ -56,18 +66,18 @@
       <div class="tool-layout">
         <aside class="tool-sidebar" aria-label="Available tools">
           <button class="tool-nav active" type="button" data-tool="validator" aria-pressed="true">
-            <span class="tool-nav-icon">01</span><span><strong>FASTA Validator</strong><small>Check file structure and symbols</small></span>
+            <span class="tool-nav-icon" aria-hidden="true">01</span><span><strong>FASTA Validator</strong><small>Check file structure and symbols</small></span>
           </button>
           <button class="tool-nav" type="button" data-tool="statistics" aria-pressed="false">
-            <span class="tool-nav-icon">02</span><span><strong>Sequence Statistics</strong><small>Length, GC%, composition and N50</small></span>
+            <span class="tool-nav-icon" aria-hidden="true">02</span><span><strong>Sequence Statistics</strong><small>Length, GC%, composition and N50</small></span>
           </button>
           <a class="tool-nav" href="blast.html">
-            <span class="tool-nav-icon">03</span><span><strong>BLAST Results Analyzer</strong><small>Import and analyze BLAST TSV</small></span>
+            <span class="tool-nav-icon" aria-hidden="true">03</span><span><strong>BLAST Results Analyzer</strong><small>Import and analyze BLAST TSV</small></span>
           </a>
           <a class="tool-nav" href="taxonomy.html">
-            <span class="tool-nav-icon">04</span><span><strong>Taxonomy Analyzer</strong><small>Taxonomic consensus from BLAST</small></span>
+            <span class="tool-nav-icon" aria-hidden="true">04</span><span><strong>Taxonomy Analyzer</strong><small>Taxonomic consensus from BLAST</small></span>
           </a>
-          <div class="coming-soon"><span class="coming-dot"></span><span><strong>More tools are planned</strong><small>BLAST search</small></span></div>
+          <div class="coming-soon"><span class="coming-dot" aria-hidden="true"></span><span><strong>More tools are planned</strong><small>BLAST search</small></span></div>
         </aside>
 
         <section class="workspace" aria-labelledby="workspace-title">
@@ -79,16 +89,16 @@
           <div class="input-grid">
             <div class="field-group">
               <label for="sequence-type">Sequence type</label>
-              <select id="sequence-type">
+              <select id="sequence-type" aria-describedby="sequence-type-help">
                 <option value="dna">DNA (IUPAC nucleotide alphabet)</option>
                 <option value="protein">Protein (amino-acid alphabet)</option>
               </select>
-              <small>Choose explicitly. The tool will not guess the sequence type.</small>
+              <small id="sequence-type-help">Choose explicitly. The tool will not guess the sequence type.</small>
             </div>
             <div class="field-group">
               <label for="fasta-file">Upload FASTA file</label>
-              <input id="fasta-file" type="file" accept=".fa,.fasta,.fna,.ffn,.faa,.txt,text/plain">
-              <small>Maximum file size: 5 MB for this browser MVP.</small>
+              <input id="fasta-file" type="file" accept=".fa,.fasta,.fna,.ffn,.faa,.txt,text/plain" aria-describedby="fasta-file-help">
+              <small id="fasta-file-help">Maximum file size: 5 MB for this browser MVP.</small>
             </div>
           </div>
 
@@ -105,8 +115,8 @@
           </div>
           <p id="input-error" class="input-error" role="alert" hidden></p>
 
-          <section id="results" class="results-panel" aria-live="polite" hidden>
-            <div class="results-header"><div><p class="eyebrow">ANALYSIS OUTPUT</p><h4 id="results-title">Validation results</h4></div><span id="result-status" class="result-status"></span></div>
+          <section id="results" class="results-panel" aria-live="polite" aria-labelledby="results-title" hidden>
+            <div class="results-header"><div><p class="eyebrow">ANALYSIS OUTPUT</p><h4 id="results-title">Validation results</h4></div><span id="result-status" class="result-status" aria-live="polite"></span></div>
             <div id="summary-cards" class="summary-grid"></div>
             <div id="results-note" class="results-note"></div>
             <div class="table-wrap"><table id="results-table"><thead></thead><tbody></tbody></table></div>
@@ -124,19 +134,20 @@
     <section id="workflow" class="how-section">
       <div class="section-heading"><div><p class="eyebrow">Designed for independent tasks</p><h2>Simple now. Connected later.</h2></div><p class="section-note">Each tool will have its own input and downloadable output. Later, outputs can be passed to the next tool.</p></div>
       <div class="steps-grid">
-        <article class="step-card"><span>01</span><h3>Choose a task</h3><p>Open only the tool you need. A full workflow is optional.</p></article>
-        <article class="step-card"><span>02</span><h3>Run the analysis</h3><p>Use clear defaults, with advanced settings added only when needed.</p></article>
-        <article class="step-card"><span>03</span><h3>Keep your result</h3><p>Review the output and download it in a reusable format.</p></article>
+        <article class="step-card"><span aria-hidden="true">01</span><h3>Choose a task</h3><p>Open only the tool you need. A full workflow is optional.</p></article>
+        <article class="step-card"><span aria-hidden="true">02</span><h3>Run the analysis</h3><p>Use clear defaults, with advanced settings added only when needed.</p></article>
+        <article class="step-card"><span aria-hidden="true">03</span><h3>Keep your result</h3><p>Review the output and download it in a reusable format.</p></article>
       </div>
     </section>
 
     <section id="about" class="about-section">
       <div><p class="eyebrow">Project status</p><h2>Milestone 01</h2><p>This is the first working foundation: FASTA validation and sequence statistics in the browser, with a matching Python command-line implementation in the repository.</p></div>
-      <div class="about-points"><p><span>✓</span> No frontend framework</p><p><span>✓</span> No upload to a server</p><p><span>✓</span> DNA and protein modes</p><p><span>✓</span> CSV and JSON exports</p></div>
+      <div class="about-points"><p><span aria-hidden="true">✓</span> No frontend framework</p><p><span aria-hidden="true">✓</span> No upload to a server</p><p><span aria-hidden="true">✓</span> DNA and protein modes</p><p><span aria-hidden="true">✓</span> CSV and JSON exports</p></div>
     </section>
   </main>
 
-  <footer class="footer"><span>Smart Bioinformatics Toolkit <span class="footer-muted">· Milestone 0.1.0</span></span><span>Research use · Not for clinical diagnosis</span></footer>
+  <footer class="footer"><span>Smart Bioinformatics Toolkit <span class="footer-muted">· Milestone 0.1.0</span></span><span>Research use only · Not for clinical diagnosis</span></footer>
   <script type="module" src="js/app.js"></script>
 </body>
 </html>
+
