@@ -12,3 +12,7 @@ benchmark_runs/
 *.log
 .coverage
 htmlcov/
+
+# Local BLAST+ installer (not source)
+ncbi-blast-2.17.0+-win64.exe
+

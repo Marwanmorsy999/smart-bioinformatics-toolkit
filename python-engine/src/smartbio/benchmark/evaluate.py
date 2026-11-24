@@ -18,6 +18,9 @@ from __future__ import annotations
 
 from typing import Any
 
+import math
+from smartbio.taxonomy.verdict import DEFAULT_SPECIES_THRESHOLD
+
 
 def parse_truth_text(text: str) -> dict[str, str]:
     """Parse a two-column TSV: query_id<TAB>true_species (header optional)."""
@@ -64,6 +67,18 @@ def _top_hit_species(entry: dict[str, Any]) -> str | None:
 
 def _rate(num: int, den: int) -> float | None:
     return round(num / den, 4) if den else None
+
+
+def wilson_interval(successes: int, trials: int, z: float = 1.959964) -> tuple[float, float] | None:
+    """Wilson score 95% confidence interval for a proportion (two-sided 95%)."""
+    if trials <= 0:
+        return None
+    phat = successes / trials
+    z2 = z * z
+    denom = 1.0 + z2 / trials
+    centre = (phat + z2 / (2.0 * trials)) / denom
+    half = (z / denom) * math.sqrt(phat * (1.0 - phat) / trials + z2 / (4.0 * trials * trials))
+    return (round(max(0.0, centre - half), 4), round(min(1.0, centre + half), 4))
 
 
 def evaluate_benchmark(
@@ -132,9 +147,30 @@ def evaluate_benchmark(
         )
 
     n = len(rows)
+
+    # Baseline (b): plain top hit, only when its identity meets the
+    # conservative species screening reference (98.65 by default); otherwise
+    # the method abstains (no species call).
+    cutoff_rows = []
+    for r in rows:
+        top_pid = None
+        if r["top_hit_species"] is not None:
+            for e in (entries[r["query_id"]]["consensus"].get("evidence") or []):
+                v = (e.get("lineage") or {}).get("ranks", {}).get("species", {}) or {}
+                if v.get("name", "").lower() == r["top_hit_species"].lower():
+                    top_pid = e.get("pident")
+                    break
+        cutoff_call = r["top_hit_species"] if top_pid is not None and top_pid >= DEFAULT_SPECIES_THRESHOLD else None
+        cutoff_correct = cutoff_call is not None and _norm(cutoff_call) == _norm(r["true_species"])
+        cutoff_rows.append({**r, "cutoff_species_call": cutoff_call, "cutoff_species_correct": cutoff_correct})
+
     top_calls = sum(1 for r in rows if r["top_hit_species"] is not None)
     top_correct = sum(1 for r in rows if r["top_hit_correct"])
     top_wrong = top_calls - top_correct
+
+    cut_calls = sum(1 for r in cutoff_rows if r["cutoff_species_call"] is not None)
+    cut_correct = sum(1 for r in cutoff_rows if r["cutoff_species_correct"])
+    cut_wrong = cut_calls - cut_correct
 
     v_calls = sum(1 for r in rows if r["verdict_species_call"] is not None)
     v_correct = sum(1 for r in rows if r["verdict_species_correct"])
@@ -149,8 +185,13 @@ def evaluate_benchmark(
     abstained = [r for r in rows if r["verdict_species_call"] is None]
     abstain_genus_ok = sum(1 for r in abstained if r["verdict_genus_correct"])
 
+    top_wi = wilson_interval(top_correct, top_calls)
+    cut_wi = wilson_interval(cut_correct, cut_calls)
+    v_wi = wilson_interval(v_correct, v_calls)
+
     return {
         "n_evaluated": n,
+        "species_screening_threshold": DEFAULT_SPECIES_THRESHOLD,
         "n_truth_without_result": len(missing),
         "truth_without_result": missing,
         "top_hit_method": {
@@ -160,6 +201,16 @@ def evaluate_benchmark(
             "wrong": top_wrong,
             "wrong_rate_among_calls": _rate(top_wrong, top_calls),
             "wrong_rate_overall": _rate(top_wrong, n),
+            "wilson_95pct_ci_on_correct_rate": top_wi,
+        },
+        "top_hit_cutoff_method": {
+            "species_calls": cut_calls,
+            "species_call_rate": _rate(cut_calls, n),
+            "correct": cut_correct,
+            "wrong": cut_wrong,
+            "wrong_rate_among_calls": _rate(cut_wrong, cut_calls),
+            "wrong_rate_overall": _rate(cut_wrong, n),
+            "wilson_95pct_ci_on_correct_rate": cut_wi,
         },
         "verdict_method": {
             "species_calls": v_calls,
@@ -173,6 +224,7 @@ def evaluate_benchmark(
             "group_level_verdicts": len(group_rows),
             "group_level_containing_truth": group_ok_n,
             "verdict_counts": dict(sorted(v_counts.items())),
+            "wilson_95pct_ci_on_correct_rate": v_wi,
         },
         "notes": [
             "Wrong species calls are the headline metric; compare it together with the species call rate.",

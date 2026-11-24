@@ -48,3 +48,21 @@
 ## Final counts this session
 - Python: 116 passed, 1 skipped
 - JavaScript: 60 passed, 0 failed
+
+## Loop 5 — Phase 0 audit (last hand-off)
+### Task 0: audit hand-off
+- Actual baseline (this snapshot): Python 116 passed / 1 skipped (test_blast_integration skipped: BLAST+ not installed); JavaScript 60 passed / 0 failed.
+- The mission's reference numbers (JS 52 -> 51, Python 102 -> 106) do not match this snapshot; no test was dropped or merged here. All LOOP_LOG-described coverage (verdict shared cases, taxonomy_cycle, build_taxonomy_map, blast_integration, report metadata) is present and green. Nothing to restore.
+- Playwright QA (previously reported): taxonomy.html example loads, analysis runs, 3 verdict banners render, JSON/CSV downloads work, print-report button present; group links not exercised in the example (no difficult-group members appear); code sets rel="noopener noreferrer". Not re-run in this session (no browser fixture change).
+- near_threshold: added caution only; did not alter verdict_pipeline expected verdicts or synthetic demo counts (fixtures untouched). Verified by test_verdict_pipeline + test_verdict passing.
+- Synthetic demo concept (plain top hit confidently names a missing close sibling while verdict abstains): covered by test_absent_group_member_top_hit_is_wrong_but_verdict_abstains (top_hit wrong >= cereus queries; verdict wrong == 0). These are synthetic pipeline numbers, not real performance.
+
+### Task 1: report metadata parity
+- Python build_reproducibility_metadata and JS buildReportHtml share structure: tool, tool_version, generated_at (ISO-8601 UTC), input_file, input_file_hash_sha256, parameters (top_n, min_consensus, species_threshold, min_coverage, min_query_length, near_threshold_margin, difficult_groups_loaded), thresholds, disclaimer. Verified by test_report.py and report_metadata.test.mjs. Both green.
+
+### Files changed
+- docs/LOOP_LOG.md (this entry)
+
+### Not verified
+- Report HTML visual layout in a real browser print.
+- Group-link safety in a real difficult-group run (example lacks such hits).

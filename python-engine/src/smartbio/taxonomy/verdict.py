@@ -64,6 +64,8 @@ def _is_uninformative_species(name: str | None) -> bool:
         return True
     if n in {"bacterium", "uncultured bacterium"}:
         return True
+    if n.startswith("candidatus"):
+        return True
     return False
 
 

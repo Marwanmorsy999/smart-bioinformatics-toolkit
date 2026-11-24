@@ -94,15 +94,16 @@ def main() -> int:
         ref_without = qdir / "reference_without_queries.fasta"
         queries = qdir / "queries.fasta"
         truth = qdir / "truth.tsv"
-        if not ref_without.is_file() or not queries.is_file() or not truth.is_file():
+        if not queries.is_file() or not truth.is_file():
             fail("benchmark-queries did not produce expected files.")
+        db_input = ref_without if ref_without.is_file() else args.reference
 
         # 2. build BLAST db
         db = seed_dir / "db"
         dbdir = seed_dir
-        mcmd = [makeblastdb, "-in", str(ref_without), "-dbtype", "nucl", "-out", str(db)]
+        mcmd = [makeblastdb, "-in", str(db_input), "-dbtype", "nucl", "-out", str(db)]
         if args.taxid_map is not None:
-            mcmd += ["-taxid_map", str(args.taxid_map)]
+            mcmd += ["-parse_seqids", "-taxid_map", str(args.taxid_map)]
         run(mcmd)
 
         # 3. blastn

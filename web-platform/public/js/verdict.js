@@ -22,6 +22,7 @@ function isUninformativeSpecies(name) {
   if (/\bsp\.?\b/.test(n)) return true;
   if (n.includes("uncultured")) return true;
   if (n === "bacterium" || n === "uncultured bacterium") return true;
+  if (n.startsWith("candidatus")) return true;
   return false;
 }
 

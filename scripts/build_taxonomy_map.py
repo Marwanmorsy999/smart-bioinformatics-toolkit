@@ -46,6 +46,32 @@ def parse_nodes(path: Path) -> dict[int, tuple[int | None, str]]:
     return out
 
 
+def parse_names(path: Path) -> dict[int, str]:
+    """Parse names.dmp: tax_id, name_txt, unique_name, name_class (tab|tab separated)."""
+    out: dict[int, str] = {}
+    with path.open(encoding="utf-8") as fh:
+        for line in fh:
+            line = line.rstrip("\n")
+            if not line.strip():
+                continue
+            fields = [f.strip() for f in line.split("\t|\t")]
+            if fields and fields[-1].endswith("\t|"):
+                fields[-1] = fields[-1][:-2].strip()
+            if not fields or not fields[0]:
+                continue
+            try:
+                tid = int(fields[0])
+            except ValueError:
+                continue
+            name = fields[1] if len(fields) > 1 else ""
+            cls = fields[3] if len(fields) > 3 else ""
+            # Prefer scientific name; keep first non-empty otherwise.
+            if cls == "scientific name" or cls == "":
+                if tid not in out or not out[tid]:
+                    out[tid] = name
+    return out
+
+
 def parse_rankedlineage(path: Path) -> dict[int, dict[str, str]]:
     out: dict[int, dict[str, str]] = {}
     with path.open(encoding="utf-8") as fh:
@@ -130,14 +156,22 @@ def build_lineage(rl: dict[str, str]) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build taxonomy_map.tsv from NCBI taxdump.")
-    parser.add_argument("--rankedlineage", required=True, type=Path)
+    parser.add_argument("--rankedlineage", required=False, type=Path, default=None)
+    parser.add_argument("--names", required=False, type=Path, default=None)
     parser.add_argument("--nodes", required=True, type=Path)
     parser.add_argument("--accessions", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
 
     nodes = parse_nodes(args.nodes)
-    ranked = parse_rankedlineage(args.rankedlineage)
+    if args.rankedlineage is not None:
+        ranked = parse_rankedlineage(args.rankedlineage)
+    else:
+        names_map = parse_names(args.names) if args.names else {}
+        ranked = {}
+        for tid in nodes:
+            ranked[tid] = {"name": names_map.get(tid, "") or ""}
+
     taxids: set[int] = set()
     for tid in read_accession_taxids(args.accessions):
         for a in ancestors(tid, nodes):

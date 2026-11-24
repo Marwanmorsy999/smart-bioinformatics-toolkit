@@ -18,8 +18,8 @@ pytestmark = pytest.mark.skipif(
 def test_blast_run_integration(tmp_path):
     ref = tmp_path / "ref.fasta"
     qry = tmp_path / "qry.fasta"
-    ref.write_text(">ref1 test ref\nACGTACGTACGTACGTACGTACGTACGTACGT\n", encoding="utf-8")
-    qry.write_text(">q1 test query\nACGTACGTACGTACGTACGTACGTACGTACGT\n", encoding="utf-8")
+    ref.write_text(">ref1 test ref\nAAGATCTGCAGTTGCGTCGCCTGTGCCGGTAG\n", encoding="utf-8")
+    qry.write_text(">q1 test query\nAAGATCTGCAGTTGCGTCGCCTGTGCCGGTAG\n", encoding="utf-8")
     db = tmp_path / "db"
     subprocess.run(["makeblastdb", "-in", str(ref), "-dbtype", "nucl", "-out", str(db)], check=True, capture_output=True)
     out_dir = tmp_path / "out"
