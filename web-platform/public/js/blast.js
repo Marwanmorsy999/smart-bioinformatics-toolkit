@@ -1,3 +1,4 @@
+import { safeCsvCell } from "./csv-safe.js";
 export const BLAST_SCHEMAS = {
   standard: [
     "qseqid", "sseqid", "pident", "length", "mismatch", "gapopen",
@@ -473,12 +474,7 @@ export function toBlastCsv(rows) {
   });
   // import toCsv from statistics? reimplement simple
   const columns = [...new Set(flatRows.flatMap((row) => Object.keys(row)))];
-  const escape = (value) => {
-    if (value === null || value === undefined) return "";
-    const text = String(value);
-    return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
-  };
-  return [columns.join(","), ...flatRows.map((row) => columns.map((col) => escape(row[col])).join(","))].join("\r\n");
+  return [columns.join(","), ...flatRows.map((row) => columns.map((col) => safeCsvCell(row[col])).join(","))].join("\r\n");
 }
 
 // aliases

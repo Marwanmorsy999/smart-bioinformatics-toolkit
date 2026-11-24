@@ -1,3 +1,4 @@
+import { safeCsvCell } from "./csv-safe.js";
 import {
   parseBlastTsv, analyzeBlast
 } from "./blast.js";
@@ -438,12 +439,7 @@ elements.downloadCsv.addEventListener("click", () => {
     rows.push({ query_id: qid, verdict: nv.status, reported_rank: nv.reported_rank, reported_taxon: nv.reported_taxon, top_identity: "", verdict_cautions: "", status: c.status, supported_rank: c.supported_rank, consensus_taxon: c.consensus_taxon, candidate_count: 0, unique_species: "", genus_support: "", species_support: "", candidate_species: "", warnings: c.warnings.join("; ") });
   }
   const columns = [...new Set(rows.flatMap((row) => Object.keys(row)))];
-  const escape = (value) => {
-    if (value == null) return "";
-    const text = String(value);
-    return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
-  };
-  const csv = [columns.join(","), ...rows.map((row) => columns.map((c) => escape(row[c])).join(","))].join("\r\n");
+  const csv = [columns.join(","), ...rows.map((row) => columns.map((c) => safeCsvCell(row[c])).join(","))].join("\r\n");
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");

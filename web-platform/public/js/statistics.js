@@ -1,3 +1,4 @@
+import { safeCsvCell } from "./csv-safe.js";
 export function calculateStatistics(validationReport) {
   const type = validationReport.sequence_type;
   const validRecords = validationReport.records.filter((record) => record.valid && record.sequence.length > 0);
@@ -86,10 +87,5 @@ function median(values) {
 export function toCsv(rows) {
   if (!rows.length) return "";
   const columns = [...new Set(rows.flatMap((row) => Object.keys(row)))];
-  const escape = (value) => {
-    if (value === null || value === undefined) return "";
-    const text = String(value);
-    return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
-  };
-  return [columns.join(","), ...rows.map((row) => columns.map((column) => escape(row[column])).join(","))].join("\r\n");
+  return [columns.join(","), ...rows.map((row) => columns.map((column) => safeCsvCell(row[column])).join(","))].join("\r\n");
 }
