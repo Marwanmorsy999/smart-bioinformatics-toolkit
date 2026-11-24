@@ -98,3 +98,28 @@
 - Real browser Playwright run and Cloudflare deployment (wrangler login not available; STOP condition).
 - Risk-coverage sweep and per-genus breakdown (phase 3) not completed this session.
 - Sourced difficult-group expansion / NCBI remote BLAST API notes (phases 4-5) not completed this session.
+
+## Phase 3-6 checkpoint (this session)
+
+### Phase 3 - risk-coverage sweep
+- Added shared synthetic fixture `shared/test-cases/risk_coverage_cases.json` and `risk_coverage.py` / `risk-coverage.js` with tests in both languages (Python +3, JS +2). The accessible inline-SVG chart is in `web-platform/public/benchmark.html`. Clearly labelled synthetic, never presented as performance.
+- Production risk-coverage curves from the real benchmark outputs were not swept across thresholds in this session (only the synthetic shared-fixture sweep was implemented); this remains a task.
+
+### Phase 4 - sourced next-step advice / difficult groups
+- Not completed this session. Existing difficult groups remain cited and flagged `needs_curator_review`; no new groups added without reading a source. Name-drift notes not written.
+
+### Phase 5 - remote BLAST backend and deployment
+- Verified all URL API params, output formats and usage limits from official NCBI pages (docs/NCBI_API_NOTES.md) and the `16S_ribosomal_RNA` database name from the NCBI FTP listing.
+- Implemented Pages Functions (submit/status/results/history) with D1 binding, `MOCK_NCBI=1`, input validation, server-side once-per-minute RID polling, result caching, CSP/no-store headers, no sequence persistence (hash only) and tests for every endpoint (+37 JS tests).
+- Cloudflare Pages project created on Free plan; static preview deployed successfully (Cloudflare API: deploy stage success) at https://4e5048a8.smart-bioinformatics-toolkit.pages.dev (alias https://phase-1-robustness-safety.smart-bioinformatics-toolkit.pages.dev). D1 database still needs a real database_id and the migration applied before the backend can run live; backend was verified with mocks only.
+- Real-browser verification of the live URL was blocked: the paired browser and curl both rejected the pages.dev TLS certificate in this environment; Cloudflare API confirmed the deployment exists and succeeded.
+
+### Phase 6 - documentation
+- Added docs/PROJECT_SUMMARY.md (Mermaid diagram, what/gap/evidence/result/limits), docs/DEMO_SCRIPT.md (script-inserted real results), docs/NCBI_API_NOTES.md. benchmark_data/RESULTS.md generated from saved JSON.
+
+### Final counts
+- Python: 123 passed, 0 skipped.
+- JS: 102 passed, 0 failed.
+
+### Not verified / remaining risks
+- Live NCBI remote BLAST call (MOCK mode only), live D1-backed endpoints, real-browser rendering of the live deployment, production risk-coverage sweep from real outputs, Phase 4 sourced additions, UI wiring for remote submission.
