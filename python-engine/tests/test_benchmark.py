@@ -239,3 +239,15 @@ def test_total_queries_includes_no_hit_queries():
     assert rep["summary"]["queries_with_no_hits"] == 2
     assert rep["summary"]["unique_queries"] == 0
 
+
+def test_indel_option_is_deterministic_and_recorded():
+    ref = build_reference()
+    a = make_benchmark_queries(ref, mode="noisy", n=3, length=LENGTH, substitution_rate=0.005, indel_rate=0.01, seed=9)
+    b = make_benchmark_queries(ref, mode="noisy", n=3, length=LENGTH, substitution_rate=0.005, indel_rate=0.01, seed=9)
+    no_indel = make_benchmark_queries(ref, mode="noisy", n=3, length=LENGTH, substitution_rate=0.005, indel_rate=0.0, seed=9)
+    assert a["queries_fasta"] == b["queries_fasta"]
+    assert a["queries_fasta"] != no_indel["queries_fasta"]
+    assert a["indel_rate"] == 0.01 and no_indel["indel_rate"] == 0.0
+    assert a["simulated_errors_not_sequencing_errors"] is True
+    with pytest.raises(ValueError):
+        make_benchmark_queries(ref, indel_rate=0.9)

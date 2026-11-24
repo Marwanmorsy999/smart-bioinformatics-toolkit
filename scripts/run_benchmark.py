@@ -47,6 +47,7 @@ def main() -> int:
     parser.add_argument("--n", type=int, default=20)
     parser.add_argument("--length", type=int, default=200)
     parser.add_argument("--substitution-rate", type=float, default=0.005)
+    parser.add_argument("--indel-rate", type=float, default=0.0)
     parser.add_argument("--taxonomy-map", type=Path, default=None)
     parser.add_argument("--taxid-map", type=Path, default=None)
     parser.add_argument("--max-target-seqs", type=int, default=50)
@@ -87,6 +88,7 @@ def main() -> int:
             "--n", str(args.n),
             "--length", str(args.length),
             "--substitution-rate", str(args.substitution_rate),
+            "--indel-rate", str(args.indel_rate),
             "--seed", seed,
             "--out-dir", str(qdir),
         ])
@@ -163,6 +165,7 @@ def main() -> int:
         "n_queries": args.n,
         "length": args.length,
         "substitution_rate": args.substitution_rate,
+        "indel_rate": args.indel_rate,
         "per_seed": [
             {
                 "seed": ps["seed"],

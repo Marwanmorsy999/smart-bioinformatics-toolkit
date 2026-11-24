@@ -126,6 +126,7 @@ def build_parser() -> argparse.ArgumentParser:
     bq.add_argument("--n", type=int, default=20, help="Number of queries.")
     bq.add_argument("--length", type=int, default=500, help="Query length in nt (default 500).")
     bq.add_argument("--substitution-rate", type=float, default=0.005, dest="substitution_rate")
+    bq.add_argument("--indel-rate", type=float, default=0.0, dest="indel_rate")
     bq.add_argument("--seed", type=int, default=1)
     bq.add_argument("--out-dir", required=True)
 
@@ -246,7 +247,7 @@ def run(args: argparse.Namespace) -> int:
         result = make_benchmark_queries(
             Path(args.reference).read_text(encoding="utf-8-sig"),
             mode=args.mode, n=args.n, length=args.length,
-            substitution_rate=args.substitution_rate, seed=args.seed,
+            substitution_rate=args.substitution_rate, indel_rate=args.indel_rate, seed=args.seed,
         )
         out = Path(args.out_dir)
         out.mkdir(parents=True, exist_ok=True)
