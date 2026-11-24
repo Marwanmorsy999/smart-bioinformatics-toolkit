@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Build a taxonomy_map.tsv from NCBI taxdump files.
 
 Inputs:
@@ -163,6 +163,13 @@ def main() -> int:
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
 
+    if args.rankedlineage is None and args.names is None:
+        parser.error(
+            "either --rankedlineage or --names is required: without a name "
+            "source every scientific_name would be written empty. Supply "
+            "--rankedlineage (rankedlineage.dmp) or --names (names.dmp)."
+        )
+
     nodes = parse_nodes(args.nodes)
     if args.rankedlineage is not None:
         ranked = parse_rankedlineage(args.rankedlineage)
@@ -200,3 +207,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

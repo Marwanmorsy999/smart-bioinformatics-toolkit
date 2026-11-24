@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 import subprocess
 import sys
 
@@ -25,3 +25,20 @@ def test_build_taxonomy_map(tmp_path):
     for line in text.splitlines():
         if line.startswith("562\t"):
             assert "Escherichia coli" in line
+
+
+def test_build_taxonomy_map_requires_name_source(tmp_path):
+    """No --rankedlineage and no --names must fail instead of emitting blanks."""
+    out = tmp_path / "taxonomy_map.tsv"
+    cmd = [
+        sys.executable, str(SCRIPT),
+        "--nodes", str(FIXTURE / "nodes.dmp"),
+        "--accessions", str(FIXTURE / "accessions.tsv"),
+        "--output", str(out),
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    assert res.returncode != 0, res.stdout
+    assert "--rankedlineage" in res.stderr
+    assert "--names" in res.stderr
+    assert "empty" in res.stderr
+    assert not out.exists(), "no output file should be written on failure"
