@@ -159,3 +159,17 @@ Sources opened (all 2026-11-24): NCBI policy, NCBI Datasets docs + API keys, NCB
 | RDP classifier page unreachable (transport error) | https://rdp.cme.msu.edu/classifier/classifier.jsp | 2026-11-24 | API_SCOUT | UNVERIFIED |
 | NCBI Bookshelf E-utilities docs blocked by browser check | https://www.ncbi.nlm.nih.gov/books/NBK25501/?report=reader | 2026-11-24 | API_SCOUT | UNVERIFIED |
 | Web search for alternate RDP source failed (HTTP 402) | (websearch tool, no URL) | 2026-11-24 | API_SCOUT | UNVERIFIED |
+
+## Late candidate: AI Hero (investigated 2026-11-24, REJECT)
+
+| Field | Value |
+|---|---|
+| URL actually opened | https://aihero.dev/ , https://www.aihero.dev/llms.txt , https://www.aihero.dev/api , https://www.aihero.dev/api/search?q=frontend%20UI%20design%20accessibility |
+| Auth | Public content is free; privileged CMS reads require a scoped `aih_pat_*` bearer token (admin mint). No token requested or used. |
+| Free tier | Public posts/skills/tutorial markdown are free (`/:slug.md`), but the site teaches AI engineering, not UI assets or bioinformatics. |
+| Rate limits | Not published on the pages opened; no authenticated calls made. |
+| Licence/terms | Not stated on the pages opened; content reuse terms UNVERIFIED. |
+| What it adds | Nothing to this project's benchmark or trust: no verified 16S/taxonomy/UI asset value. |
+| Failure modes | `https://www.aihero.dev/.well-known/api-catalog` returned 404 although linked from the homepage; `https://www.aihero.com/` and `https://aihero.com/` transport error. |
+| Decision | **REJECT** - not a UI asset library; no verifiable benefit; licence unverified. No content downloaded into the repo. |
+| Ledger claim | AI Hero is an AI-engineering education site with free public markdown | https://www.aihero.dev/llms.txt | 2026-11-24 | API_SCOUT | UNVERIFIED (licence/reuse terms not opened) |
