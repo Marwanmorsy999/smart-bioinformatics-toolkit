@@ -103,7 +103,15 @@ async function serveAsset(request, env) {
   }
   // Hand the original request to the Workers assets binding so static paths,
   // legacy pages, JS/CSS and their _headers security policy are served as-is.
-  return assets.fetch(request);
+  // A binding fault must still fail closed with our own security headers.
+  try {
+    return await assets.fetch(request);
+  } catch {
+    return new Response("Static assets are unavailable.", {
+      status: 503,
+      headers: ASSET_UNAVAILABLE_HEADERS
+    });
+  }
 }
 
 /**

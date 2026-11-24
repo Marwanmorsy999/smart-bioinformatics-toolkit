@@ -129,6 +129,9 @@
 .workflow-legend .legend-queued::before { background: var(--info); }
 .workflow-legend .legend-verified::before { background: var(--success); }
 
+.poll-controls { margin-top: 12px; }
+.poll-controls[hidden] { display: none; }
+
 /* ---------- Status / state pills ---------- */
 .state-pill {
   display: inline-flex; align-items: center; padding: 5px 10px; border-radius: 99px;
@@ -202,6 +205,21 @@
 }
 .receipt-row.is-local .receipt-tag { background: var(--success-bg); color: var(--success); }
 .receipt-row.is-worker .receipt-tag { background: var(--warning-bg); color: var(--warning); }
+
+/* ---------- Per-run transparency sections (education + locality) ---------- */
+.result-subsection {
+  margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line);
+}
+.result-subsection h4 { margin-bottom: 8px; }
+.result-subsection h5 { margin: 14px 0 6px; font-size: .8125rem; }
+.receipt-summary {
+  display: grid; grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 14px; margin: 10px 0; font-size: .8125rem;
+}
+.receipt-summary dt { font-weight: 750; color: var(--ink-soft); }
+.receipt-summary dd { margin: 0; color: var(--ink); word-break: break-word; }
+.transparency-table { margin-top: 8px; }
+.transparency-table td { word-break: break-word; }
 
 /* ---------- Footer ---------- */
 .site-footer {

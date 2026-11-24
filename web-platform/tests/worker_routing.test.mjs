@@ -189,3 +189,13 @@ test("missing ASSETS binding for a static path fails closed with nosniff", async
   assert.equal(response.headers.get("X-Content-Type-Options"), "nosniff");
   assert.match(await response.text(), /Static assets are unavailable/);
 });
+
+test("a thrown ASSETS.fetch fails closed with the same security headers", async () => {
+  const workerFetch = createFetch(makeStubMap([]));
+  const env = { ASSETS: { fetch: async () => { throw new Error("binding fault"); } } };
+  const response = await workerFetch(new Request(`${ORIGIN}/ai.html`), env, {});
+  assert.equal(response.status, 503);
+  assert.equal(response.headers.get("X-Content-Type-Options"), "nosniff");
+  assert.equal(response.headers.get("Content-Security-Policy"), "default-src 'none'");
+  assert.match(await response.text(), /Static assets are unavailable/);
+});

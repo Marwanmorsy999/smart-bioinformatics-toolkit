@@ -22,7 +22,7 @@
       <a class="active" href="ai.html" aria-current="location">AI workspace</a>
       <a href="index.html#about">About</a>
     </nav>
-    <span id="backend-badge" class="local-badge" role="status" aria-live="polite">Backend status: checking…</span>
+    <span id="backend-badge" class="local-badge">Backend status: checking…</span>
   </header>
 
   <main id="main-content" tabindex="-1">
@@ -31,7 +31,7 @@
         <div>
           <p class="eyebrow section-kicker">Plan → approve → execute → validate → explain</p>
           <h1>AI Research Workspace</h1>
-          <p class="section-lede">Two labelled routes: <strong>Browser (local)</strong> validates FASTA and computes statistics in this page with no terminal; <strong>Local agent</strong> uses the Worker to plan and a local Python agent to run heavy tools. Availability is checked before you submit — no backend means a blocked request, never a simulated result.</p>
+          <p class="section-lede">Two labelled routes: <strong>Browser (local)</strong> validates FASTA and computes statistics in this page with no terminal; <strong>Local agent</strong> uses the Worker to plan and a local Python agent to run heavy tools. FASTA is capped at <strong>10,000 characters</strong> on the local-agent route and at <strong>64 KiB (65,536 bytes)</strong> for browser-local analysis; the applicable limit is checked before submission. No backend means a blocked request, never a simulated result.</p>
         </div>
       </div>
 
@@ -40,7 +40,8 @@
         <p><strong>Research-use workflow.</strong> Outputs are screening evidence, not proof of identity and not a clinical diagnosis. Heavy tools require plan approval; browser-local statistics need no approval because nothing leaves this page.</p>
       </div>
 
-      <div class="workflow-strip" aria-label="Four-stage research workflow">
+      <h2 class="sr-only" id="workflow-stages-title">Four-stage research workflow</h2>
+      <div class="workflow-strip" aria-labelledby="workflow-stages-title">
         <article class="workflow-stage" data-state="current">
           <span class="stage-label">Stage 01</span><h3>Plan</h3>
           <p>Your question becomes an exact list of tools, parameters and possible data egress.</p>
@@ -69,7 +70,7 @@
       <div class="ai-flow">
         <section class="workspace" aria-labelledby="intake-title">
           <div class="workspace-header">
-            <div><p class="eyebrow">STEP 1 · REQUEST</p><h2 id="intake-title">Describe your question</h2><p>Ask for FASTA validation/statistics, or describe a taxonomic question. FASTA input is capped at 10,000 characters by the shared validator.</p></div>
+            <div><p class="eyebrow">STEP 1 · REQUEST</p><h2 id="intake-title">Describe your question</h2><p>Ask for FASTA validation/statistics, or describe a taxonomic question. The local-agent route accepts at most 10,000 characters of FASTA; browser-local analysis accepts at most 64 KiB (65,536 bytes). The applicable limit is checked before submission.</p></div>
             <span class="stage-tag"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.7 4.6L18 9l-4.3 1.4L12 15l-1.7-4.6L6 9l4.3-1.4L12 3z"/></svg> Plan</span>
             <span id="execution-mode" class="badge-mode">Execution: checking…</span>
           </div>
@@ -83,15 +84,17 @@
 
             <div class="field-group">
               <label for="execution-route">Execution route</label>
-              <select id="execution-route" aria-describedby="route-help">
+              <select id="execution-route" aria-describedby="route-help route-availability">
                 <option value="browser-local" selected>Browser (local) — validation &amp; statistics</option>
                 <option value="local-agent">Local agent — Worker plan + heavy tools</option>
               </select>
               <small id="route-help">Browser (local) needs no terminal or backend. Local agent requires the agent on this machine; heavy tools are blocked if it is not observed.</small>
+              <small id="route-availability" class="route-availability"></small>
             </div>
 
             <div class="action-row" role="group" aria-label="Example questions">
-              <span class="example-label">Example prompt:</span>
+              <span class="example-label">Example prompts:</span>
+              <button id="fasta-example" type="button" class="secondary-button small-button" data-question="Validate and profile my FASTA and calculate GC content">FASTA · validate &amp; profile (browser-local)</button>
               <button id="phylo-example" type="button" class="secondary-button small-button" data-question="Build a phylogenetic tree from my FASTA and show me the alignment and report">Phylogenetics · build a tree</button>
             </div>
 
@@ -99,7 +102,7 @@
               <div class="field-group">
                 <label for="fasta-file">Upload FASTA file</label>
                 <input id="fasta-file" type="file" accept=".fa,.fasta,.fna,.ffn,.txt,text/plain" aria-describedby="fasta-help">
-                <small id="fasta-help">Read locally with File.text(); maximum 64 KiB sent to the Worker.</small>
+                <small id="fasta-help">Read locally with File.text(). Browser-local analysis is capped at 64 KiB (65,536 bytes); the local-agent route is capped at 10,000 characters and is checked before submission.</small>
               </div>
               <div class="field-group">
                 <label for="project-id">Project ID (optional)</label>
@@ -109,11 +112,11 @@
 
             <div class="field-group">
               <label for="sequence-type">Sequence type (browser-local)</label>
-              <select id="sequence-type">
+              <select id="sequence-type" aria-describedby="sequence-type-help">
                 <option value="dna" selected>DNA / RNA (IUPAC nucleotide codes)</option>
                 <option value="protein">Protein</option>
               </select>
-              <small>Used only by the browser-local route; the agent plan sets its own parameters.</small>
+              <small id="sequence-type-help">Used only by the browser-local route; the agent plan sets its own parameters.</small>
             </div>
 
             <div class="field-group">
@@ -123,12 +126,16 @@
             </div>
 
             <div class="action-row">
-              <button id="build-plan" class="primary-button" type="submit">Build plan <span aria-hidden="true">→</span></button>
+              <button id="build-plan" class="primary-button" type="submit"><span id="build-plan-label">Analyze locally</span> <span aria-hidden="true">→</span></button>
             </div>
             <p id="input-error" class="input-error" role="alert" hidden></p>
           </form>
 
           <p id="status-line" class="status-line" role="status" aria-live="polite"></p>
+          <div id="poll-controls" class="action-row poll-controls" hidden>
+            <button id="poll-retry" class="secondary-button small-button" type="button">Retry status check</button>
+            <button id="poll-stop" class="quiet-button small-button" type="button">Stop checking</button>
+          </div>
         </section>
 
         <section id="plan-panel" class="workspace plan-card" aria-labelledby="plan-title" hidden>
@@ -161,6 +168,8 @@
           <div id="findings-box"></div>
           <div id="limitations-box"></div>
           <div id="artifacts-box"></div>
+          <div id="education-box"></div>
+          <div id="locality-box"></div>
           <div id="download-links" class="download-links"></div>
         </section>
       </div>

@@ -76,3 +76,73 @@ test("HTML keeps all element ids referenced by the page scripts", () => {
   assert.match(indexHtml, /data-tool="validator"/);
   assert.match(indexHtml, /data-tool="statistics"/);
 });
+
+test("keyboard focus stays contrast-safe on light surfaces", () => {
+  const mainCss = read("css/main.css");
+  const componentsCss = read("css/components.css");
+  assert.match(mainCss, /:where\([^)]*\):focus-visible \{\s*outline: 3px solid var\(--focus\);/);
+  // The old override set --focus-on-dark on navy buttons/links and the skip
+  // link, giving ~1.25-1.33:1 on a light page (WCAG 1.4.11 / 2.4.7 failure).
+  assert.doesNotMatch(mainCss, /\.primary-button,\s*\.primary-link,\s*\.skip-link/);
+  assert.doesNotMatch(mainCss, /var\(--focus-on-dark\)/);
+  // --focus-on-dark is reserved for links on the dark footer only.
+  assert.match(componentsCss, /\.site-footer a, \.footer-links a\):focus-visible \{ outline-color: var\(--focus-on-dark\);/);
+  assert.equal(count(css, /var\(--focus-on-dark\)/g), 1, "only the dark footer may use --focus-on-dark");
+});
+
+test("artifact download links look and behave like links", () => {
+  assert.match(css, /\.artifact-link\s*\{[^}]*color:\s*var\(--teal-deep\)/);
+  assert.match(css, /\.artifact-link\s*\{[^}]*text-decoration:\s*underline/);
+  assert.match(css, /\.artifact-link:hover\s*\{/);
+  assert.match(css, /\.artifact-link:focus-visible\s*\{/);
+});
+
+test("AI page has ordered headings, described help text and one backend live region", () => {
+  assert.ok(aiHtml.indexOf("<h2") > 0 && aiHtml.indexOf("<h2") < aiHtml.indexOf("<h3"),
+    "an h2 must precede the first h3 on the AI page");
+  assert.match(aiHtml, /<select id="sequence-type" aria-describedby="sequence-type-help">/);
+  assert.match(aiHtml, /<small id="sequence-type-help">/);
+  const liveRegionIds = ["backend-badge", "backend-status"].filter((id) => {
+    const tag = aiHtml.match(new RegExp(`<[^>]*id="${id}"[^>]*>`))?.[0] || "";
+    return /aria-live|role="status"/.test(tag);
+  });
+  assert.deepEqual(liveRegionIds, ["backend-status"], "backend status must announce once, not twice");
+});
+
+test("AI examples offer a working browser-local prompt and route-aware presets", () => {
+  const workspaceJs = read("js/ai-workspace.js");
+  assert.match(aiHtml, /id="fasta-example"/);
+  assert.match(aiHtml, /data-question="Validate and profile my FASTA/);
+  assert.match(aiHtml, /id="phylo-example"/);
+  assert.match(workspaceJs, /elements\.fastaExample\.addEventListener/);
+  assert.match(workspaceJs, /applyExampleRoute\(ROUTE_AGENT/);
+  assert.match(workspaceJs, /agentOption\.disabled = !backendDescription\.connected/);
+});
+
+test("AI result view surfaces per-run education and locality data without markup injection", () => {
+  const workspaceJs = read("js/ai-workspace.js");
+  assert.match(aiHtml, /id="education-box"/);
+  assert.match(aiHtml, /id="locality-box"/);
+  assert.doesNotMatch(workspaceJs, /innerHTML/, "untrusted run data must never be parsed as HTML");
+  assert.match(workspaceJs, /renderTransparencySections\(run\)/);
+  assert.match(workspaceJs, /renderTransparencySections\(null\)/);
+  assert.match(workspaceJs, /educationBox\.replaceChildren/);
+  assert.match(workspaceJs, /localityBox\.replaceChildren/);
+  for (const field of [
+    "rule_or_threshold", "why_insufficient", "what_would_help", "verified_reference",
+    "local_operations", "external_transmissions", "consent_records", "receipt.mode"
+  ]) {
+    assert.ok(workspaceJs.includes(field), `result view is missing ${field}`);
+  }
+  assert.equal(count(workspaceJs, /setTimeout\(\(\) => URL\.revokeObjectURL\(url\), 0\)/g), 2,
+    "both download helpers must defer object URL revocation until after the click");
+});
+
+test("mock Worker mode is labelled in the badge and chip and styled as a warning", () => {
+  const workspaceJs = read("js/ai-workspace.js");
+  assert.match(workspaceJs, /backendBadge\.textContent = backendDescription\.badge/);
+  assert.match(workspaceJs, /elements\.mode\.textContent = executionBadge\(currentRoute\(\), backendDescription\)/);
+  assert.match(workspaceJs, /classList\.toggle\("mock", backendDescription\.mode === "mock"\)/);
+  assert.match(css, /\.badge-mode\.mock/);
+  assert.match(css, /\.local-badge\.mock/);
+});

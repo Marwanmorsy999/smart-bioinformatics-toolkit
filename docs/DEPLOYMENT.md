@@ -59,7 +59,7 @@ Files, in `web-platform/migrations/`:
 1. `0001_create_blast_requests.sql` — `blast_requests` table.
 2. `0002_ai_platform.sql` — datasets, requests, plans, approvals, jobs, artifacts, tool runs, reports, audit events.
 3. `0003_blast_consent.sql` — single-use BLAST consent tokens.
-4. `0004_blast_consent_unique.sql` — additive uniqueness constraints (jobs, approvals, consents).
+4. `0004_blast_consent_unique.sql` — additive unique indexes on `jobs(plan_id, step_id)` and `approvals(plan_id, step_id)`. It does **not** add a constraint to `blast_consents`; single-use consent is enforced by the atomic claim in `blast/_lib.js`.
 
 Wrangler applies migration files in filename order. Do not renumber or skip a
 file: `0002` depends on `0001`, and `0004` is additive to `0003`.
