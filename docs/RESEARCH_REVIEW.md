@@ -1,4 +1,4 @@
-# Evidence review: limits of 16S rRNA species-level identification
+﻿# Evidence review: limits of 16S rRNA species-level identification
 
 Prepared by: LITERATURE agent. Review date: 2026-11-24.
 Scope: every claim below is grounded ONLY in a source that was actually opened and read with webfetch during this task. Nothing is taken from memory or from a page that failed to open. Failed/partial accesses are listed explicitly and their content is marked UNVERIFIED. This document does not change any code or data file.
@@ -107,3 +107,4 @@ All rows below are UNVERIFIED pending the citation checker. Date format YYYY-MM-
 | C22 79 mycobacterial type strains: RIDOM all perfect, GenBank 23%, RDP-II 25% | https://pmc.ncbi.nlm.nih.gov/articles/PMC523561 | 2026-11-24 | LITERATURE | UNVERIFIED |
 | C23 Bacteroides fragilis group case: uncultured best hits in GenBank vs perfect match to reference strain | https://pmc.ncbi.nlm.nih.gov/articles/PMC1594676 | 2026-11-24 | LITERATURE | UNVERIFIED |
 | CORRECTION PMID 24357014 is Lippmann et al. (stem cells), not Kim et al.; correct PMID 24505072 | https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id=24357014&retmode=json | 2026-11-24 | LITERATURE | UNVERIFIED |
+

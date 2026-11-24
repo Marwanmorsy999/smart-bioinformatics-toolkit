@@ -19,3 +19,9 @@
 - First condition complete: heldout L500 0.5% -> top-hit wrong mean 145.4/200 (seeds 143/133/155/153/143), verdict wrong mean 12.0 (7/10/15/15/13). Saved in benchmark_data/benchmark_runs_expanded/heldout_L500_s0.5/benchmark_summary.json.
 - Gate G3 not yet complete: remaining 4 conditions still running.
 
+
+## G1/G7 citation check (CITATION_CHECKER, independent)
+- Re-opened 44 official URLs: 77 VERIFIED, 3 PARTIAL, 2 UNVERIFIED, 2 N/A. All core claims in README/UI verified. Fixed broken ledger URL (/policy/limits -> /home/about/policies) and mis-cited RESEARCH_REVIEW C4 row (95% completeness figure is on 16s-rrna-resolution.md).
+- PARTIAL: E-utilities rate-limit URL (fixed), B. cereus member list (needs curator review - flagged), RESEARCH_REVIEW C4 URL (fixed). UNVERIFIED: Kim et al. full text (abstract only - scoped honestly), web search HTTP 402 (no artifact).
+- G1: literature + API catalog ACCEPTED after independent citation check. G7 ledger: 77 verified entries.
+
