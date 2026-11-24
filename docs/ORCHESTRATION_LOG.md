@@ -13,3 +13,9 @@
 - Data agent (orchestrator): indel option added to queries.py + CLI + runner with deterministic tests; expanded benchmark (5 seeds, lengths 300/500/1000, 0.5%/1%, indel 0.01) running in background.
 - Gate G1: literature and API catalog ACCEPTED pending independent citation checker (verification wave). No fabricated data introduced; all ledger rows marked UNVERIFIED where appropriate.
 
+
+## Wave 1 - Gate G3 (in progress)
+- Expanded benchmark running: 5 conditions x 5 seeds x 200 queries (heldout L500/0.5%, L300/0.5%, L1000/0.5%, L500/1%, L500/0.5%+indel 0.01).
+- First condition complete: heldout L500 0.5% -> top-hit wrong mean 145.4/200 (seeds 143/133/155/153/143), verdict wrong mean 12.0 (7/10/15/15/13). Saved in benchmark_data/benchmark_runs_expanded/heldout_L500_s0.5/benchmark_summary.json.
+- Gate G3 not yet complete: remaining 4 conditions still running.
+
