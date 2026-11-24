@@ -16,6 +16,11 @@ export async function handleHistory(request, env, { limit = HISTORY_LIMIT } = {}
   if (!db) return errorResponse("BLAST database binding is unavailable.", 503, request);
   const parsedLimit = Number(limit);
   const safeLimit = Number.isFinite(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), HISTORY_LIMIT) : HISTORY_LIMIT;
-  const rows = await listRecent(db, safeLimit);
+  let rows;
+  try {
+    rows = await listRecent(db, safeLimit);
+  } catch {
+    return errorResponse("BLAST database is unavailable.", 503, request);
+  }
   return jsonResponse({ submissions: rows, count: rows.length, mock: isMock(env) }, 200, request);
 }

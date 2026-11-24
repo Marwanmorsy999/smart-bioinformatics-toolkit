@@ -78,3 +78,14 @@ test("status falls back to the URL path when params are absent", async () => {
   assert.equal(response.status, 200);
   assert.equal((await response.json()).status, "complete");
 });
+
+test("D1 read failures return 503 instead of an unhandled error", async () => {
+  const brokenDb = {
+    prepare() {
+      throw new Error("D1 unavailable");
+    }
+  };
+  const response = await handleStatus("ABC123", statusRequest("ABC123"), mockEnv(brokenDb));
+  assert.equal(response.status, 503);
+  assert.match((await response.json()).error, /unavailable/i);
+});

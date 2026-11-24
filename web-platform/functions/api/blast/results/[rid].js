@@ -42,7 +42,12 @@ export async function handleResults(rid, request, env) {
   const db = env && env.BLAST_DB;
   if (!db) return errorResponse("BLAST database binding is unavailable.", 503, request);
 
-  const row = await getRequest(db, safeRid);
+  let row;
+  try {
+    row = await getRequest(db, safeRid);
+  } catch {
+    return errorResponse("BLAST database is unavailable.", 503, request);
+  }
   if (!row) return errorResponse(`Unknown request ID: ${safeRid}.`, 404, request);
   if (row.status !== "complete") {
     return errorResponse(`Results are not ready. Current status: ${row.status}.`, 409, request);
@@ -60,7 +65,11 @@ export async function handleResults(rid, request, env) {
         return errorResponse("Could not fetch results from NCBI.", 502, request);
       }
     }
-    await cacheResults(db, safeRid, tsv);
+    try {
+      await cacheResults(db, safeRid, tsv);
+    } catch {
+      return errorResponse("Could not cache the BLAST results.", 500, request);
+    }
   }
 
   return textResponse(tsv, 200, request);

@@ -42,7 +42,12 @@ export async function handleStatus(rid, request, env, { now = Date.now() } = {})
   const db = env && env.BLAST_DB;
   if (!db) return errorResponse("BLAST database binding is unavailable.", 503, request);
 
-  const row = await getRequest(db, safeRid);
+  let row;
+  try {
+    row = await getRequest(db, safeRid);
+  } catch {
+    return errorResponse("BLAST database is unavailable.", 503, request);
+  }
   if (!row) return errorResponse(`Unknown request ID: ${safeRid}.`, 404, request);
 
   const lastChecked = row.last_checked_at ? Date.parse(row.last_checked_at) : NaN;
@@ -68,6 +73,10 @@ export async function handleStatus(rid, request, env, { now = Date.now() } = {})
     }
   }
 
-  await updateStatus(db, safeRid, status, new Date(now).toISOString());
+  try {
+    await updateStatus(db, safeRid, status, new Date(now).toISOString());
+  } catch {
+    return errorResponse("Could not update the BLAST request.", 500, request);
+  }
   return jsonResponse({ status }, 200, request);
 }
