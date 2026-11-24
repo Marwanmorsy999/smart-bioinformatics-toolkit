@@ -52,7 +52,7 @@ suggest a different binding name — ignore that suggestion. The same database
 and ID are repeated in `[env.staging]` because Wrangler does **not** inherit
 `d1_databases` into named environments.
 
-## 3. Migrations — apply in order 0001 → 0004
+## 3. Migrations — apply in order 0001 → 0006 (skipping the unused 0005)
 
 Files, in `web-platform/migrations/`:
 
@@ -60,6 +60,7 @@ Files, in `web-platform/migrations/`:
 2. `0002_ai_platform.sql` — datasets, requests, plans, approvals, jobs, artifacts, tool runs, reports, audit events.
 3. `0003_blast_consent.sql` — single-use BLAST consent tokens.
 4. `0004_blast_consent_unique.sql` — additive unique indexes on `jobs(plan_id, step_id)` and `approvals(plan_id, step_id)`. It does **not** add a constraint to `blast_consents`; single-use consent is enforced by the atomic claim in `blast/_lib.js`.
+5. `0006_agent_heartbeat.sql` — additive `agent_heartbeats` table used by `/api/ai/backend` to observe an idle but polling agent. There is deliberately no `0005`: it was reserved during review and never written.
 
 Wrangler applies migration files in filename order. Do not renumber or skip a
 file: `0002` depends on `0001`, and `0004` is additive to `0003`.

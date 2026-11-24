@@ -49,6 +49,22 @@ Format: `date | agent | action | files | verification | status`.
 | 2026-11-25 | Tester (independent) | Final website-focused integration verification | `docs/discovery/TEST_REPORT_M5.md` | **PASS**: 231 pytest + 144 JS; 26/26 audit assertions; 3/3 website pipelines; real/mock distinguished; plugin compliance OK | Verified |
 | 2026-11-25 | Orchestrator | Incremental commits and GitHub publication | git history on `phase-1-robustness-safety` | 4 logical commits + fix/site commits; push verified | Implemented |
 
+## 2026-11-25 — M6 production readiness
+
+| Date | Agent | Action | Files | Verification | Status |
+|---|---|---|---|---|---|
+| 2026-11-25 | Orchestrator | Independent M6.1 baseline: HEAD 8a946a2 matched remote, clean tree, six M5 commits inspected, 231/144 suites and compliance re-run | — | All baseline claims confirmed; reports accurate | Verified |
+| 2026-11-25 | Worker E | Output-contract enforcement, integrity tests, generic seams | `functions/api/ai/_lib.js`, `tests/result_contract.test.mjs`, `aiagent/validation.py` | Missing outputs/wrong types/bad hashes/incomplete provenance rejected | Implemented |
+| 2026-11-25 | Worker F | Execution topology, browser fast path, backend status, cross-platform agent setup | `docs/EXECUTION_TOPOLOGY.md`, `public/js/ai-execution.js`, `scripts/agent-setup/**` | 8 topology tests; PowerShell AST + sh -n syntax checks | Implemented |
+| 2026-11-25 | Worker H | FR-8.5 locality receipts and FR-8.6 education mode | `aiagent/locality.py`, `education.py`, `report.py`, `functions/api/ai/report.js` | 8 Python + 6 JS tests; abstentions preserved | Implemented |
+| 2026-11-25 | Worker I | Standalone Cloudflare Worker with Workers Assets; real D1 ID; deployment doc | `worker.js`, `wrangler.toml`, `tests/worker_routing.test.mjs`, `docs/DEPLOYMENT.md` | 8 routing tests; config schema validated | Implemented |
+| 2026-11-25 | Worker J | Professional UI upgrade and usability fixes | `public/index.html`, `ai.html`, `css/components.css`, `tests/ui_quality.test.mjs` | 7 static quality tests; live browser review | Implemented |
+| 2026-11-25 | Orchestrator | D1 created, migrations 0001–0004 + 0006 applied, secrets set, staging deployed | Cloudflare + `wrangler.toml` | 14 tables; staging endpoints 200 with CSP, real plan row created | Deployed (staging) |
+| 2026-11-25 | Scientific reviewer | Independent phylogenetics method validation (M6.4) | report in-session | PASS WITH NOTES; real Biopython NJ; MAFFT optional, not required | Verified |
+| 2026-11-25 | Red team | Adversarial result/consent/plugin/UI attacks | report in-session | FAIL: 1 HIGH + 4 MEDIUM; all fixed and re-verified | Implemented |
+| 2026-11-25 | Workers K/L/M | Trust-boundary hardening, accessibility fixes, agent heartbeat + User-Agent | `reference_ledger.js`, `worker_locality.js`, `worker_education.js`, `migrations/0006_agent_heartbeat.sql`, `public/**` | 240 pytest + 211 JS; forgery/concurrency tests | Implemented |
+| 2026-11-25 | Browser tester | Real Chromium E2E on deployed staging | `docs/discovery/TEST_REPORT_M6_BROWSER.md`, `m6-screenshots/**` | 10 scenarios; see FINAL RE-RUN section for counts | Verified |
+
 ## Known environment issues
 
 - `D:\Apps\Star-Office-UI\office-status.cmd` does not exist in this environment; dashboard updates were attempted by orchestrator and agents and skipped. This does not affect product work.

@@ -31,6 +31,8 @@ report. The original 16S toolkit is preserved and reused as the first analysis p
 - Reproducible demo: [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md); independent M1–M4 verification: [`docs/discovery/TEST_REPORT.md`](docs/discovery/TEST_REPORT.md)
 - M5 plugin authoring: [`docs/plugins/PLUGIN_AUTHORING.md`](docs/plugins/PLUGIN_AUTHORING.md); phylogenetics tool research: [`docs/plugins/PHYLOGENETICS_TOOLING.md`](docs/plugins/PHYLOGENETICS_TOOLING.md); browser demo: [`docs/plugins/PHYLOGENETICS_DEMO.md`](docs/plugins/PHYLOGENETICS_DEMO.md)
 - M5 independent verification: [`docs/discovery/TEST_REPORT_M5.md`](docs/discovery/TEST_REPORT_M5.md); final report: [`docs/MILESTONE_M5_FINAL_REPORT.md`](docs/MILESTONE_M5_FINAL_REPORT.md)
+- M6 execution options: [`docs/EXECUTION_TOPOLOGY.md`](docs/EXECUTION_TOPOLOGY.md); agent setup: [`scripts/agent-setup/README.md`](scripts/agent-setup/README.md); deployment: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
+- M6 browser E2E evidence: [`docs/discovery/TEST_REPORT_M6_BROWSER.md`](docs/discovery/TEST_REPORT_M6_BROWSER.md); final report: [`docs/MILESTONE_M6_FINAL_REPORT.md`](docs/MILESTONE_M6_FINAL_REPORT.md)
 - Dataset transport and consent: [`docs/DATA_TRANSPORT.md`](docs/DATA_TRANSPORT.md) — no local dataset is uploaded to R2; artifacts and reports are stored in D1 today.
 
 The AI planner and explainer are **deterministic by default** — no LLM key or paid service

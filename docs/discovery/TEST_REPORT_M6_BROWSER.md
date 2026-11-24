@@ -1,6 +1,8 @@
 # M6 Independent Browser E2E Test Report
 
-**Test date:** 2026-11-25 (UTC timestamps in evidence: 2026-11-24T22:39:19Z → 22:39:32Z)
+> **FINAL RE-RUN — 2026-11-24T22:56:46Z → 22:57:00Z — 64/64 assertions PASS, 10/10 scenarios PASS, no blocking defect.** This was executed after the staging redeploy (Worker `e4938f2c`, migration 0006) with the agent polling via heartbeat. See **§11 FINAL RE-RUN** at the end of this document. Sections 1–10 below are retained as historical evidence from the earlier, pre-redeploy run.
+
+**Test date (historical run):** 2026-11-25 (UTC timestamps in evidence: 2026-11-24T22:39:19Z → 22:39:32Z)
 **Target:** `https://smart-bioinformatics-toolkit-staging.m-2396.workers.dev`
 **Runner:** real Chromium 159.0.8154.6 driven by Playwright 1.65.1 (installed under `web-platform/node_modules`), Node v24.21.0, Windows.
 **Role:** independent tester — no product source files were changed. Only this report and `docs/discovery/m6-screenshots/*.png` were written in the repo.
@@ -297,3 +299,150 @@ Manual spot-check of the two key UI paths: on `/ai.html`, choose "Browser (local
 1. **HIGH** — remove the cold-start catch-22 in backend observation (§6.2): add an authenticated agent heartbeat or count a recent successful poll as evidence, so an idle healthy agent can be observed and the first heavy job can be started from the UI.
 2. **LOW–MEDIUM** — label mock mode in the badge/mode chip, not only in the detail text (§7). Keep the fail-closed block.
 3. **Ops** — make the agent's HTTP client send a compatible `User-Agent` (or adjust Cloudflare rules) so polling is not silently 403'd (§6.1).
+
+---
+
+# 11. FINAL RE-RUN (post-redeploy Worker `e4938f2c`, migration 0006)
+
+**Status: FINAL — 10/10 scenarios PASS, 64/64 assertions PASS, 0 FAIL, no blocking defect.**
+All screenshots in `docs/discovery/m6-screenshots/` were **refreshed by this re-run** and overwrite the earlier set. The earlier run's log and screenshots were archived outside the repo at `D:\DevCache\Temp\opencode\m6-browser-log-previous.json` and `D:\DevCache\Temp\opencode\m6-screenshots-previous\`.
+
+## 11.1 Commands and artifacts for the final run
+
+```powershell
+# Cold-start backend verification performed BEFORE any API write or browser run:
+GET https://smart-bioinformatics-toolkit-staging.m-2396.workers.dev/api/ai/backend
+
+# Full suite re-run (updated harness for the new disabled-option and mock labels):
+& "D:\tools\nodejs\node.exe" "D:\DevCache\Temp\opencode\m6-e2e.cjs"
+# transcript: D:\DevCache\Temp\opencode\m6-e2e-final-stdout.txt
+# structured log: D:\DevCache\Temp\opencode\m6-browser-log.json
+
+# Existing tests against the redeployed code (web-platform workdir):
+& "D:\tools\nodejs\node.exe" --test tests/*.test.mjs
+# ℹ tests 211 / pass 211 / fail 0 / duration_ms 537.2217
+```
+
+Log metadata: `startedAt 2026-11-24T22:56:46.448Z`, `finishedAt 2026-11-24T22:57:00.062Z`, Playwright `1.65.1`, Chromium `159.0.8154.6`.
+
+## 11.2 Cold-start backend verification (requirement 2)
+
+Direct `GET /api/ai/backend` **before any bootstrap call from this tester**:
+
+```json
+{"execution_mode":"real","agent_status":"connected","heavy_analyses_available":true,
+ "agent_observation_basis":"agent heartbeat recorded by authenticated agent poll",
+ "last_agent_activity_at":"2026-11-24T22:52:35.442Z","age":0,
+ "message":"Local agent observed recently; heavy analyses are available.",
+ "simulated_results_available":false}
+```
+
+The browser at scenario 2 independently fetched the same endpoint: `agent_status:"connected"`, `heavy_analyses_available:true`, basis `"agent heartbeat recorded by authenticated agent poll"`. `#backend-badge` = **"Backend: local agent observed"**; status = "Local agent observed recently; heavy analyses are available."; no POST occurred in this scenario (`[{"method":"GET","path":"/api/ai/backend","status":200}, ...]`). **No API plan/job bootstrap was needed.** The agent kept polling throughout the run; no stoppage was observed.
+
+## 11.3 Final PASS/FAIL table (64 assertions)
+
+| # | Scenario | Result | Final evidence |
+| --- | --- | --- | --- |
+| 1 | Home navigation / hero / capability cards | **PASS** | 4 nav links, hero heading, 6 cards |
+| 2 | Backend observed from cold start | **PASS** | heartbeat basis via authenticated poll; no POST; badge "Backend: local agent observed" |
+| 3 | Browser-local validation + GC, no Worker fetch | **PASS** | `Execution: browser-local`, 3/3 valid, GC table, **zero `/api/*` requests after submit**; Education notes + Locality receipt sections visible |
+| 4 | Phylo plan → approve → genuine job/result | **PASS** | `phylogenetics.workflow`, `job_6b19ae4d63b98160`, mode `real`, validation pass, 11 artifact-cited findings, 9 artifacts incl. all four required, report/provenance links; Education notes + Locality receipt sections visible |
+| 5 | Report download / evidence | **PASS** | `GET /api/ai/runs/job_6b19ae4d63b98160/report` 200; Reproducibility, Limitations, Data locality, Education notes; `Execution mode: real` |
+| 6 | Malformed FASTA | **PASS** | "Invalid nucleotide character in FASTA record 2 on line 4…"; `POST /api/ai/requests` 400; no plan/job |
+| 7 | Unavailable backend | **PASS** (harness adapted) | local-agent `<option>` is **disabled**, `#route-availability` = "The local agent is unavailable, so the local-agent route is blocked. Browser-local analysis still works."; stale route still blocked; no plan request; no simulated result |
+| 8 | Consent / egress API | **PASS** | 403 `consent_missing`; BLAST history 0 → 0; no NCBI request; planner step has no egress |
+| 9 | Mock mode labelling | **PASS** (previously FAIL) | badge **"Backend: mock — simulated results not scientific evidence"**; chip **"Execution: mock (not scientific evidence)"** before *and after* a stale route selection; mock route-availability message; option disabled; no plan request; no simulated result |
+| 10 | Console / network diagnostics | **PASS** | No page errors, no failed requests, 0 external-host requests; only two expected HTTP-error console messages (400 and 403) |
+
+Timings (ms): 1=1387, 2=937, 3=531, 4=5930, 5=92, 6=856, 7=534, 8=806, 9=492.
+
+## 11.4 Explicit confirmations requested
+
+1. **Mock badge/chip — CONFIRMED PASS.** The prior M6-BROWSER-01 gap is fixed: `#backend-badge` = `Backend: mock — simulated results not scientific evidence`; `#execution-mode` = `Execution: mock (not scientific evidence)` at page load and after forcing a stale local-agent selection. The route is blocked with an honest message and no plan is created. Evidence: screenshot `08-mock.png`, log scenario `9-mock`.
+2. **Cold start — CONFIRMED.** Heartbeat-based observation works with no prior job and no tester bootstrap (§11.2). The previous HIGH cold-start catch-22 is resolved.
+3. **Genuine phylo job — CONFIRMED.** `job_6b19ae4d63b98160`, `execution_mode:"real"`, `validation.status:"pass"`, checked rules `required_artifacts_present, json_parses, declared_json_objects, sha256_consistency, execution_mode_label`, no flags; 11 findings citing `phylo_validation.json`, `alignment_summary.json`, `tree_stats.json`, `phylo_report.json`; artifacts `alignment.fasta`, `alignment_summary.json`, `phylo_report.html`, `phylo_report.json`, `phylo_validation.json`, `report.html`, `tree.nwk`, `tree.svg`, `tree_stats.json`; report + provenance links present.
+4. **Browser-local has zero analysis API calls — CONFIRMED.** After submit, `rec.apiRequests.slice(before)` = `[]`; the only scenario API response was the page-load `GET /api/ai/backend` 200.
+5. **New workspace sections — CONFIRMED.** Both `#education-box` ("Education notes") and `#locality-box` ("Locality receipt") render in browser-local and local-agent results. Browser-local text: "Browser-local profile: no per-run education notes are produced…" and "Browser-local run: FASTA parsing, validation and statistics stayed in this page…". Agent result text: "No education notes recorded for this run." / "No locality receipt recorded for this run." (honest empty states). The downloaded report still contains a real "Data locality" section with `Receipt mode real`, `No external egress true`.
+6. **No new console errors / failed requests — CONFIRMED.** All nine scenario recorder entries show `pageErrors: []`, `failedRequests: []`, `externalRequestsCount: 0`. Console errors: only scenario 6 (expected 400) and scenario 8 (expected 403).
+
+## 11.5 Refreshed screenshots (final run)
+
+| File | Bytes |
+| --- | ---: |
+| `01-home.png` | 200477 |
+| `02-ai-backend.png` | 38173 |
+| `03-browser-local.png` | 28621 |
+| `04-phylo-plan.png` | 30644 |
+| `05-phylo-result.png` | 39988 |
+| `06-malformed.png` | 26960 |
+| `07-unavailable.png` | 27464 |
+| `08-mock.png` | 26926 |
+
+8 screenshots, all under 500 KB. `03-browser-local.png` and `05-phylo-result.png` visibly include the new Education notes / Locality receipt sections; `08-mock.png` shows the new mock badge/chip and route-availability message.
+
+## 11.6 Remaining observations (not blockers)
+
+* **LOW — per-run locality data not surfaced in workspace.** `GET /api/ai/runs/:id` has no `provenance` or `locality_receipt` field, so `localityReceiptFromRun()` renders "No locality receipt recorded for this run." even though `GET /api/ai/runs/:id/provenance` returns `locality_receipt: {mode:"real", no_external_egress:true, local_operations:[…1…]}` and the downloaded HTML report shows the real receipt. Suggested fix: include `provenance.locality_receipt` in the run DTO or fetch the provenance endpoint when rendering results.
+* **LOW — no education notes for this phylo run.** `explanation.education.notes` is empty, so the new table renders its honest empty state. This is data-dependent, not a UI defect.
+* The redeployed UI disables the local-agent `<option>` when no agent is observed; the harness was adapted to assert the disabled state and the `#route-availability` explanation rather than trying to `selectOption` a disabled option. This is an improvement, not a defect.
+
+**Final blocker status: none.** All requested re-run checks pass; the only remaining items are the two LOW observations above.
+
+---
+
+# 12. Focused follow-up — run DTO locality/education (Worker `f4538286`)
+
+**Result: PASS — 11/11 focused assertions, 0 FAIL.** Short real-Chromium check only (scenario 4 path); the other nine scenarios were **not** re-run. Backend was already connected via heartbeat (`agent_status:connected`, `heavy_analyses_available:true`, basis `agent heartbeat recorded by authenticated agent poll`).
+
+## 12.1 Commands / artifacts
+
+```powershell
+# Focused script (real Chromium, staging Worker):
+& "D:\tools\nodejs\node.exe" "D:\DevCache\Temp\opencode\m6-followup-locality.cjs"
+# transcript: D:\DevCache\Temp\opencode\m6-followup-stdout.txt
+# structured log: D:\DevCache\Temp\opencode\m6-followup-log.json
+```
+
+The script opened `/ai.html`, selected the local-agent route, uploaded `shared/test-cases/phylo_reference.fasta`, entered "build a phylogenetic tree and show the alignment and report", built and approved the plan, and waited for the completed run. Result: `job_d3f177e09e972776`, `execution_mode:"real"`, validation `pass`, duration 6,392 ms.
+
+## 12.2 Exact workspace text observed
+
+`#locality-box` (previously "No locality receipt recorded for this run."):
+
+```text
+Locality receipt Receipt mode real No external egress yes Local operations
+phylogenetics.workflow · step step_1 · backend local-python External transmissions
+No external transmissions (no data left the machine). Consent references
+apr_c978a1b004b905ed approval:plan_4c65fbae4b8cf562:step_1
+```
+
+`#education-box`:
+
+```text
+Education notes No education notes recorded for this run.
+```
+
+Run JSON fetched from the UI's Download JSON link now contains `locality_receipt` (`mode:"real"`, `no_external_egress:true`, one local operation `phylogenetics.workflow` / `step_1` / `local-python`, zero external transmissions) and `education` (`notes` key). The Education notes section is labelled and honestly reports that this particular run produced no flag notes — acceptable per the brief.
+
+## 12.3 Checks
+
+| Check | Result |
+| --- | --- |
+| Phylo plan step `phylogenetics.workflow` | PASS |
+| Education notes section labelled | PASS |
+| Education notes content honest (empty state) | PASS |
+| Locality receipt section labelled | PASS |
+| Receipt mode `real` shown | PASS |
+| Stale "No locality receipt recorded" absent | PASS |
+| Local operation `phylogenetics.workflow`, step 1, local-python | PASS |
+| "No external transmissions (no data left the machine)." | PASS |
+| Consent references labelled and non-secret (approval IDs only) | PASS |
+| Run DTO includes `locality_receipt` with real data | PASS |
+| Run DTO includes `education` | PASS |
+
+Console errors: **none**. Page errors: **none**. Failed requests: **0**. External-host requests: **0**.
+
+**Screenshot refreshed:** `docs/discovery/m6-screenshots/05-phylo-result.png` (27,543 bytes), scrolled to show both the **Education notes** and **Locality receipt** sections with real data. Screenshot count remains 8, all under 500 KB.
+
+**Note:** the first focused run had one harness-only FAIL because it expected "Consent references: None recorded"; the new DTO legitimately supplies approval record IDs. The assertion was made data-agnostic (and checked that no bearer-token/consent-token value is displayed) and the short check re-run: 11/11 PASS. No product defect found. The LOW observation in §11.6 about locality data not being surfaced is now **resolved**.
+

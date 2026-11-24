@@ -35,6 +35,8 @@ export async function handleGetRun(request, env, runId) {
     const artifactRows = await listRows(db, SQL.listArtifactsForRun, [runId]);
     const reportMeta = parseJson(jobRow.report_json);
     const mode = jobRow.execution_mode ?? "real";
+    const storedProvenance = parseJson(jobRow.provenance_json);
+    const storedExplanation = parseJson(jobRow.explanation_json);
 
     return jsonResponse({
       run_id: runId,
@@ -42,7 +44,11 @@ export async function handleGetRun(request, env, runId) {
       jobs: jobRows.map(toJobDto),
       artifacts: artifactRows.map(toArtifactDto),
       validation: parseJson(jobRow.validation_json),
-      explanation: parseJson(jobRow.explanation_json),
+      explanation: storedExplanation,
+      // FR-8.5/FR-8.6: surface the Worker-derived receipt and education notes in
+      // the run DTO so the workspace can show the same evidence as the report.
+      locality_receipt: storedProvenance?.locality_receipt ?? null,
+      education: storedExplanation?.education ?? null,
       report_url: reportMeta?.report_url ?? `/api/ai/runs/${runId}/report`,
       provenance_url: reportMeta?.provenance_url ?? `/api/ai/runs/${runId}/provenance`,
       execution_mode: mode

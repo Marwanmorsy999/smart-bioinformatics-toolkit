@@ -267,6 +267,10 @@ test("end-to-end API: request, plan, approval, authenticated jobs, result, run, 
   assert.equal(runResponse.status, 200);
   const runBody = await runResponse.json();
   assert.equal(runBody.execution_mode, "real");
+  assert.ok(runBody.locality_receipt, "run DTO must expose the derived locality receipt (FR-8.5)");
+  assert.equal(runBody.locality_receipt.mode, "real");
+  assert.deepEqual(runBody.locality_receipt.external_transmissions, []);
+  assert.ok(runBody.education, "run DTO must expose the derived education notes (FR-8.6)");
   assert.equal(runBody.plan.plan_id, created.body.plan_id);
   assert.equal(runBody.jobs[0].status, "succeeded");
   assert.deepEqual(
