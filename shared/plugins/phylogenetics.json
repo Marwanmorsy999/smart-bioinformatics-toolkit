@@ -1,0 +1,206 @@
+{
+  "name": "phylogenetics",
+  "domain": "phylogenetics",
+  "version": "1.0.0",
+  "description": "Real local phylogenetics pipeline: DNA QC, progressive pairwise-aligner MSA, neighbor-joining tree and reproducible report (Biopython).",
+  "backend": "local-python",
+  "entrypoint": "smartbio.plugins.phylogenetics:PhylogeneticsReportPlugin",
+  "tools": [
+    {
+      "id": "phylogenetics.validate",
+      "description": "Parse FASTA with the existing smartbio parser; require at least three unique, non-empty DNA sequences of at least 50 bp. Fails closed.",
+      "available": true,
+      "external_egress": false,
+      "estimated_seconds": 2,
+      "requirements": ["python-package:biopython"],
+      "references": [
+        {
+          "key": "cock2009_biopython",
+          "title": "Biopython: freely available Python tools for computational molecular biology and bioinformatics",
+          "url": "https://doi.org/10.1093/bioinformatics/btp163",
+          "verified": true
+        }
+      ],
+      "limitations": [
+        "Validation accepts the IUPAC DNA alphabet; ambiguous bases are not resolved into a single nucleotide.",
+        "Length and alphabet checks cannot assess sequencing quality or contamination.",
+        "Research use only; this is not a clinical diagnostic result."
+      ],
+      "params_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+      },
+      "input_schema": {
+        "type": "object",
+        "required": ["dataset_id", "fasta_text", "filename"],
+        "properties": {
+          "dataset_id": { "type": "string" },
+          "fasta_text": { "type": "string", "maxLength": 65536 },
+          "filename": { "type": "string" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["phylo_validation.json"],
+        "properties": { "phylo_validation.json": { "type": "string" } }
+      }
+    },
+    {
+      "id": "phylogenetics.align",
+      "description": "Deterministic progressive multiple sequence alignment: UPGMA guide tree from real pairwise-aligner identity distances, then consensus-driven profile merges with Bio.Align.PairwiseAligner (match +2, mismatch -1, gap open -5, gap extend -2).",
+      "available": true,
+      "external_egress": false,
+      "estimated_seconds": 5,
+      "requirements": ["python-package:biopython"],
+      "references": [
+        {
+          "key": "cock2009_biopython",
+          "title": "Biopython: freely available Python tools for computational molecular biology and bioinformatics",
+          "url": "https://doi.org/10.1093/bioinformatics/btp163",
+          "verified": true
+        },
+        {
+          "key": "thompson1994_clustalw",
+          "title": "CLUSTAL W: improving the sensitivity of progressive multiple sequence alignment",
+          "url": "https://doi.org/10.1093/nar/22.22.4673",
+          "verified": true
+        }
+      ],
+      "limitations": [
+        "Progressive multiple sequence alignment is a heuristic and does not guarantee a global optimum.",
+        "The guide tree depends on the fixed scoring scheme; alternative scores may produce a different alignment.",
+        "Conserved columns are counted only where every sequence shares the same non-gap residue."
+      ],
+      "params_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+      },
+      "input_schema": {
+        "type": "object",
+        "required": ["dataset_id", "fasta_text", "filename"],
+        "properties": {
+          "dataset_id": { "type": "string" },
+          "fasta_text": { "type": "string", "maxLength": 65536 },
+          "filename": { "type": "string" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["alignment.fasta", "alignment_summary.json"],
+        "properties": {
+          "alignment.fasta": { "type": "string" },
+          "alignment_summary.json": { "type": "string" }
+        }
+      }
+    },
+    {
+      "id": "phylogenetics.tree",
+      "description": "Real neighbor-joining tree from Biopython identity distances (DistanceCalculator + DistanceTreeConstructor), emitted as Newick, deterministic SVG and validated statistics.",
+      "available": true,
+      "external_egress": false,
+      "estimated_seconds": 5,
+      "requirements": ["python-package:biopython"],
+      "references": [
+        {
+          "key": "cock2009_biopython",
+          "title": "Biopython: freely available Python tools for computational molecular biology and bioinformatics",
+          "url": "https://doi.org/10.1093/bioinformatics/btp163",
+          "verified": true
+        },
+        {
+          "key": "saitou1987_neighbor_joining",
+          "title": "The neighbor-joining method: a new method for reconstructing phylogenetic trees",
+          "url": "https://doi.org/10.1093/oxfordjournals.molbev.a040454",
+          "verified": true
+        }
+      ],
+      "limitations": [
+        "Neighbor joining is a distance-based heuristic, not a maximum-likelihood or Bayesian inference.",
+        "The identity distance model ignores substitution saturation and rate variation.",
+        "An unrooted NJ tree is stored with a trifurcating root; internal branches are hypotheses, not proof of ancestry."
+      ],
+      "params_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+      },
+      "input_schema": {
+        "type": "object",
+        "required": ["dataset_id"],
+        "properties": {
+          "dataset_id": { "type": "string" },
+          "fasta_text": { "type": "string", "maxLength": 65536 },
+          "alignment_text": { "type": "string", "maxLength": 65536 },
+          "filename": { "type": "string" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["tree.nwk", "tree.svg", "tree_stats.json"],
+        "properties": {
+          "tree.nwk": { "type": "string" },
+          "tree.svg": { "type": "string" },
+          "tree_stats.json": { "type": "string" }
+        }
+      }
+    },
+    {
+      "id": "phylogenetics.report",
+      "description": "Reproducible HTML + JSON report bundling input SHA-256, real tool versions, parameters, artifact hashes, literature references and limitations; execution_mode real.",
+      "available": true,
+      "external_egress": false,
+      "estimated_seconds": 10,
+      "requirements": ["python-package:biopython"],
+      "references": [
+        {
+          "key": "cock2009_biopython",
+          "title": "Biopython: freely available Python tools for computational molecular biology and bioinformatics",
+          "url": "https://doi.org/10.1093/bioinformatics/btp163",
+          "verified": true
+        },
+        {
+          "key": "saitou1987_neighbor_joining",
+          "title": "The neighbor-joining method: a new method for reconstructing phylogenetic trees",
+          "url": "https://doi.org/10.1093/oxfordjournals.molbev.a040454",
+          "verified": true
+        },
+        {
+          "key": "thompson1994_clustalw",
+          "title": "CLUSTAL W: improving the sensitivity of progressive multiple sequence alignment",
+          "url": "https://doi.org/10.1093/nar/22.22.4673",
+          "verified": true
+        }
+      ],
+      "limitations": [
+        "This report is for research use only and is not a clinical or diagnostic result.",
+        "Artifact hashes cover the artifacts bundled in this report, not the source FASTA itself.",
+        "Progressive multiple sequence alignment is a heuristic and does not guarantee a global optimum.",
+        "Neighbor joining is a distance-based heuristic, not a maximum-likelihood or Bayesian inference."
+      ],
+      "params_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+      },
+      "input_schema": {
+        "type": "object",
+        "required": ["dataset_id", "fasta_text", "filename"],
+        "properties": {
+          "dataset_id": { "type": "string" },
+          "fasta_text": { "type": "string", "maxLength": 65536 },
+          "filename": { "type": "string" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["phylo_report.json", "phylo_report.html"],
+        "properties": {
+          "phylo_report.json": { "type": "string" },
+          "phylo_report.html": { "type": "string" }
+        }
+      }
+    }
+  ]
+}
