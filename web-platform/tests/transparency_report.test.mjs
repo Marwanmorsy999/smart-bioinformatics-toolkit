@@ -112,7 +112,10 @@ test("no-egress receipt reports an empty external transmission list", () => {
   assert.match(html, /mock/);
 });
 
-test("worker production path reads receipt from provenance and education from explanation", () => {
+test("caller-supplied receipt/education are ignored: only Worker-derived values render", () => {
+  // The result endpoint must derive these from the job row and validation
+  // flags, so a caller copying a receipt into provenance or forged notes into
+  // explanation cannot make them appear in the report.
   const html = render({
     provenance: { locality_receipt: RECEIPT },
     explanation: {
@@ -122,7 +125,9 @@ test("worker production path reads receipt from provenance and education from ex
       education: EDUCATION
     }
   });
-  assert.match(html, /https:\/\/blast\.ncbi\.nlm\.nih\.gov\/Blast\.cgi/);
-  assert.match(html, /98\.65%/);
-  assert.match(html, /smartbio_gc_definition/);
+  assert.equal(html.includes("https://blast.ncbi.nlm.nih.gov/Blast.cgi"), false);
+  assert.equal(html.includes("98.65%"), false);
+  assert.equal(html.includes("smartbio_gc_definition"), false);
+  assert.match(html, /No external transmissions \(no data left the machine\)\./);
+  assert.match(html, /No education notes recorded\./);
 });

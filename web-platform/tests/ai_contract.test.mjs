@@ -511,10 +511,19 @@ test("concurrent approvals create one job and mint at most one BLAST token", asy
   assert.equal(fake.state.tables.audit_events.filter((event) => event.action === "ai_blast_consent_issued").length, 1);
 });
 
-async function queuedJobId(env) {
+async function claimedJobId(env) {
   const created = await createRequest(env);
   const approved = await approve(env, created.body.plan_id, [{ step_id: "step_1", approved: true }], []);
-  return { datasetId: created.body.dataset_id, jobId: approved.body.job_ids[0] };
+  const jobId = approved.body.job_ids[0];
+  // Result submission requires a polled/claimed (running) job in the Worker.
+  const poll = await handlePollJobs(
+    makeGetRequest("/api/ai/jobs", { "X-Agent-Token": "test-agent-token" }),
+    env,
+    { now: NOW }
+  );
+  assert.equal(poll.status, 200);
+  assert.equal((await poll.json()).jobs[0].id, jobId);
+  return { datasetId: created.body.dataset_id, jobId };
 }
 
 async function submit(jobId, datasetId, result, env) {
@@ -529,7 +538,7 @@ async function submit(jobId, datasetId, result, env) {
 test("operator mock mode overrides an agent-reported real result everywhere", async () => {
   const { fake, env } = envWithDb();
   env.AI_EXECUTION_MODE = "mock";
-  const { datasetId, jobId } = await queuedJobId(env);
+  const { datasetId, jobId } = await claimedJobId(env);
   const result = await makeResult(jobId, datasetId); // self-reported "real"
   result.artifacts[0].sha256 = await hashInput(result.artifacts[0].content);
 
@@ -552,7 +561,7 @@ test("operator mock mode overrides an agent-reported real result everywhere", as
 
 test("result submissions without execution_mode are rejected", async () => {
   const { env } = envWithDb();
-  const { datasetId, jobId } = await queuedJobId(env);
+  const { datasetId, jobId } = await claimedJobId(env);
   const result = await makeResult(jobId, datasetId);
   delete result.execution_mode;
   const response = await submit(jobId, datasetId, result, env);
@@ -562,7 +571,7 @@ test("result submissions without execution_mode are rejected", async () => {
 
 test("provenance run_id and tool.id are cross-checked against the job", async () => {
   const { env } = envWithDb();
-  const { datasetId, jobId } = await queuedJobId(env);
+  const { datasetId, jobId } = await claimedJobId(env);
   const base = await makeResult(jobId, datasetId);
 
   const badRun = structuredClone(base);

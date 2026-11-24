@@ -52,10 +52,11 @@ export function buildReportHtml({ job, plan, artifacts, validation, explanation,
   const tool = provenance?.tool ?? {};
   const input = provenance?.input ?? {};
   const timing = provenance?.timing ?? {};
-  // The result endpoint forwards `provenance` and `explanation`; the optional
-  // arguments let callers pass the receipt/education explicitly when available.
-  const receipt = localityReceipt ?? provenance?.locality_receipt ?? null;
-  const educationNotes = education?.notes ?? explanation?.education?.notes ?? [];
+  // Locality and education are trust-boundary claims: only receipts/notes
+  // derived by the Worker from authoritative rows may be rendered. Caller
+  // copies in provenance/explanation are deliberately ignored.
+  const receipt = localityReceipt ?? null;
+  const educationNotes = education?.notes ?? [];
 
   const localOperationRows = (Array.isArray(receipt?.local_operations) ? receipt.local_operations : []).map((op) => `
     <tr><td>${e(op?.name ?? op?.tool_id)}</td><td>${e(op?.step_id)}</td><td>${e(op?.backend)}</td></tr>`).join("");

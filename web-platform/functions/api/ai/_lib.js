@@ -3,6 +3,7 @@
 // Reuses the response/FH patterns from functions/api/blast/_lib.js.
 
 import { SQL as BLAST_SQL, htmlEscape, hashInput, validateFasta } from "../blast/_lib.js";
+import { validateExplanationReferences } from "./reference_ledger.js";
 import { getTool, isKnownTool } from "./registry.js";
 
 export { htmlEscape, hashInput, validateFasta };
@@ -29,8 +30,14 @@ export const SQL = {
   listQueuedJobs: "SELECT * FROM jobs WHERE status = ? ORDER BY created_at ASC LIMIT ?",
   claimJob: "UPDATE jobs SET status = ?, agent_id = ?, started_at = ?, attempts = attempts + 1 WHERE public_id = ? AND status = ?",
   finishJob: "UPDATE jobs SET status = ?, finished_at = ? WHERE public_id = ?",
-  saveJobResult: "UPDATE jobs SET status = ?, finished_at = ?, result_json = ?, validation_json = ?, explanation_json = ?, provenance_json = ?, report_json = ?, execution_mode = ? WHERE public_id = ?",
+  // The trailing status predicates make result submission a conditional
+  // update: only the first writer (the claimed, running job) changes a row.
+  // The extra `status = ?` binding pins the claimed status so both real D1 and
+  // the metadata-driven fake enforce the same guard.
+  saveJobResult: "UPDATE jobs SET status = ?, finished_at = ?, result_json = ?, validation_json = ?, explanation_json = ?, provenance_json = ?, report_json = ?, execution_mode = ? WHERE public_id = ? AND status IN ('queued','running') AND status = ?",
   listJobsForPlan: "SELECT * FROM jobs WHERE plan_id = ? ORDER BY created_at ASC",
+  listApprovalsForPlan: "SELECT * FROM approvals WHERE plan_id = ?",
+  listAuditEvents: "SELECT * FROM audit_events ORDER BY timestamp ASC",
   insertArtifact: "INSERT INTO artifacts (public_id, run_id, name, kind, storage_ref, sha256, bytes, mime, content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   listArtifactsForRun: "SELECT * FROM artifacts WHERE run_id = ? ORDER BY name ASC",
   insertToolRun: "INSERT INTO tool_runs (public_id, job_id, tool_id, tool_version, params_json, input_refs_json, output_refs_json, provenance_json, started_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -52,8 +59,10 @@ export const SQL_META = {
   [SQL.listQueuedJobs]: { op: "select", table: "jobs", where: ["status"], orderBy: "created_at", limit: true },
   [SQL.claimJob]: { op: "claim", table: "jobs", where: ["public_id", "status"], assignments: { status: 0, agent_id: 1, started_at: 2 }, increment: "attempts" },
   [SQL.finishJob]: { op: "update", table: "jobs", where: ["public_id"], assignments: { status: 0, finished_at: 1 } },
-  [SQL.saveJobResult]: { op: "update", table: "jobs", where: ["public_id"], assignments: { status: 0, finished_at: 1, result_json: 2, validation_json: 3, explanation_json: 4, provenance_json: 5, report_json: 6, execution_mode: 7 } },
+  [SQL.saveJobResult]: { op: "update", table: "jobs", where: ["public_id", "status"], assignments: { status: 0, finished_at: 1, result_json: 2, validation_json: 3, explanation_json: 4, provenance_json: 5, report_json: 6, execution_mode: 7 } },
   [SQL.listJobsForPlan]: { op: "select", table: "jobs", where: ["plan_id"], orderBy: "created_at" },
+  [SQL.listApprovalsForPlan]: { op: "select", table: "approvals", where: ["plan_id"] },
+  [SQL.listAuditEvents]: { op: "select", table: "audit_events", where: [], orderBy: "timestamp" },
   [SQL.insertArtifact]: { op: "insert", table: "artifacts", columns: ["public_id", "run_id", "name", "kind", "storage_ref", "sha256", "bytes", "mime", "content", "created_at"] },
   [SQL.listArtifactsForRun]: { op: "select", table: "artifacts", where: ["run_id"], orderBy: "name" },
   [SQL.insertToolRun]: { op: "insert", table: "tool_runs", columns: ["public_id", "job_id", "tool_id", "tool_version", "params_json", "input_refs_json", "output_refs_json", "provenance_json", "started_at", "finished_at"] },
@@ -495,6 +504,9 @@ export function validateResultShape(payload, expectedJobId) {
   if (!Array.isArray(explanation.findings) || !isStringArray(explanation.limitations) || !Array.isArray(explanation.references)) {
     return { valid: false, error: "explanation findings/limitations/references are required." };
   }
+  // Citations are a trust boundary: exact ledger projection or reject.
+  const referencesCheck = validateExplanationReferences(explanation.references);
+  if (!referencesCheck.valid) return referencesCheck;
   if (!["none", "low", "moderate", "high"].includes(explanation.uncertainty)) {
     return { valid: false, error: "explanation.uncertainty is invalid." };
   }

@@ -14,6 +14,7 @@ import {
   hashInput,
   insertRow,
   jsonResponse,
+  listRows,
   makeId,
   nowIso,
   parseJson,
@@ -22,6 +23,9 @@ import {
   runStatement,
   validateResultShape
 } from "../../_lib.js";
+import { projectExplanationReferences } from "../../reference_ledger.js";
+import { deriveLocalityReceipt } from "../../worker_locality.js";
+import { deriveEducationNotes } from "../../worker_education.js";
 import { buildReportHtml } from "../../report.js";
 
 export async function onRequest(context) {
@@ -58,6 +62,11 @@ export async function handleSubmitResult(request, env, jobId, { now = Date.now()
   if (["succeeded", "failed"].includes(jobRow.status)) {
     return errorResponse("Job already has a result.", 409, request);
   }
+  // Results are accepted only from an agent that actually polled and claimed
+  // this job. A queued/unclaimed job cannot produce a result out of thin air.
+  if (jobRow.status !== "running" || typeof jobRow.agent_id !== "string" || !jobRow.agent_id.trim()) {
+    return errorResponse("Job must be claimed (running) before a result is submitted.", 409, request);
+  }
   if (payload.provenance.run_id !== jobId) {
     return errorResponse("provenance.run_id does not match the job.", 400, request);
   }
@@ -79,8 +88,6 @@ export async function handleSubmitResult(request, env, jobId, { now = Date.now()
 
   const createdAt = nowIso(now);
   const mode = computeExecutionMode(payload, env);
-  // Persist the authoritative mode everywhere, not only in the job row.
-  const provenance = { ...payload.provenance, execution_mode: mode };
   const validation = { ...payload.validation, flags: [...payload.validation.flags] };
   if (mode === "mock") {
     validation.flags.push("Results were produced in mock mode; not valid for scientific conclusions.");
@@ -90,12 +97,42 @@ export async function handleSubmitResult(request, env, jobId, { now = Date.now()
   const jobStatus = failed ? "failed" : "succeeded";
 
   let planRow = null;
+  let auditRows = [];
+  let approvalRows = [];
   try {
     planRow = await getRow(db, SQL.getPlan, [jobRow.plan_id]);
+    auditRows = await listRows(db, SQL.listAuditEvents, []);
+    approvalRows = await listRows(db, SQL.listApprovalsForPlan, [jobRow.plan_id]);
   } catch {
-    return errorResponse("Could not read the plan.", 500, request);
+    return errorResponse("Could not read the job context.", 500, request);
   }
   const plan = planRow ? parseJson(planRow.plan_json) : null;
+
+  // Rebuild every trust-boundary claim from authoritative rows. Caller copies
+  // in provenance.locality_receipt / explanation.education are never persisted
+  // or rendered: the receipt is derived from the job, approvals and audits,
+  // the education notes from validation.flags, and citations from the ledger.
+  const inputs = parseJson(jobRow.inputs_json) ?? {};
+  let inputHash = null;
+  if (typeof inputs.fasta_text === "string" && inputs.fasta_text.trim()) {
+    try {
+      inputHash = await hashInput(inputs.fasta_text);
+    } catch {
+      inputHash = null;
+    }
+  }
+  const localityReceipt = deriveLocalityReceipt({
+    jobRow: { ...jobRow, external_services: Array.isArray(plan?.external_services) ? plan.external_services : [] },
+    auditRows,
+    approvalRows,
+    mode,
+    inputHash
+  });
+  const education = deriveEducationNotes(validation);
+  const references = projectExplanationReferences(payload.explanation.references);
+  const explanation = { ...payload.explanation, references, education };
+  // Persist the authoritative mode everywhere, not only in the job row.
+  const provenance = { ...payload.provenance, execution_mode: mode, locality_receipt: localityReceipt };
 
   const reportUrl = `/api/ai/runs/${jobId}/report`;
   const provenanceUrl = `/api/ai/runs/${jobId}/provenance`;
@@ -104,10 +141,12 @@ export async function handleSubmitResult(request, env, jobId, { now = Date.now()
     plan,
     artifacts: payload.artifacts,
     validation,
-    explanation: payload.explanation,
+    explanation,
     provenance,
     mode,
-    createdAt
+    createdAt,
+    localityReceipt,
+    education
   });
   const reportMeta = {
     report_url: reportUrl,
@@ -115,6 +154,30 @@ export async function handleSubmitResult(request, env, jobId, { now = Date.now()
     built_at: createdAt,
     execution_mode: mode
   };
+
+  // Close the job atomically before writing anything else. Two agents can both
+  // read `running` (TOCTOU); only the one whose conditional UPDATE changes a
+  // row may insert artifacts/report/tool_run/audit. The loser gets a 409.
+  let saved;
+  try {
+    saved = await runStatement(db, SQL.saveJobResult, [
+      jobStatus,
+      createdAt,
+      JSON.stringify({ ...payload, execution_mode: mode, provenance, explanation }),
+      JSON.stringify(validation),
+      JSON.stringify(explanation),
+      JSON.stringify(provenance),
+      JSON.stringify(reportMeta),
+      mode,
+      jobId,
+      "running"
+    ]);
+  } catch {
+    return errorResponse("Could not update the job.", 500, request);
+  }
+  if ((saved?.meta?.changes ?? 0) !== 1) {
+    return errorResponse("Job result was already submitted concurrently.", 409, request);
+  }
 
   try {
     for (const artifact of payload.artifacts) {
@@ -143,19 +206,19 @@ export async function handleSubmitResult(request, env, jobId, { now = Date.now()
       payload.provenance.timing?.started_at ?? null,
       payload.provenance.timing?.finished_at ?? null
     ]);
-    for (const reference of payload.explanation.references) {
-      if (!reference || typeof reference.key !== "string" || typeof reference.title !== "string") continue;
+    for (const reference of references) {
+      // Verified status comes from the ledger, never from the submitted flag.
       await insertRow(db, SQL.insertReference, [
         makeId("ref", idFactory),
         reference.key,
         reference.title,
-        typeof reference.url === "string" ? reference.url : null,
+        reference.url,
         null,
         null,
-        reference.verified === true ? "agent" : null,
-        reference.verified === true ? createdAt : null,
+        "ledger",
+        createdAt,
         null,
-        reference.verified === true ? 1 : 0
+        1
       ]);
     }
     await insertRow(db, SQL.insertReportRun, [
@@ -167,17 +230,6 @@ export async function handleSubmitResult(request, env, jobId, { now = Date.now()
       `d1://validation/${jobId}`,
       reportHtml,
       createdAt
-    ]);
-    await runStatement(db, SQL.saveJobResult, [
-      jobStatus,
-      createdAt,
-      JSON.stringify({ ...payload, execution_mode: mode, provenance }),
-      JSON.stringify(validation),
-      JSON.stringify(payload.explanation),
-      JSON.stringify(provenance),
-      JSON.stringify(reportMeta),
-      mode,
-      jobId
     ]);
     await audit(db, {
       actor: "agent",
