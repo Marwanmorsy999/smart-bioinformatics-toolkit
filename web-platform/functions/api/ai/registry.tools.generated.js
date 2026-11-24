@@ -303,6 +303,119 @@ export const TOOLS = [
     ]
   },
   {
+    "id": "phylogenetics.workflow",
+    "name": "phylogenetics.workflow",
+    "description": "Single-job website pipeline: runs the four phylogenetics adapters in order in one workspace and returns all their artifacts, required-artifact declarations and evidence hints. DNA FASTA in; validation, MSA, NJ tree and reproducible report out.",
+    "version": "1.0.0",
+    "backend": "local-python",
+    "domain": "phylogenetics",
+    "available": true,
+    "unavailable_reason": null,
+    "external_egress": false,
+    "requirements": [
+      "python-package:biopython"
+    ],
+    "estimated_seconds": 22,
+    "params_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sequence_type": {
+          "type": "string",
+          "enum": [
+            "dna"
+          ]
+        }
+      }
+    },
+    "input_schema": {
+      "type": "object",
+      "required": [
+        "dataset_id",
+        "fasta_text",
+        "filename"
+      ],
+      "properties": {
+        "dataset_id": {
+          "type": "string"
+        },
+        "fasta_text": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "filename": {
+          "type": "string"
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "required": [
+        "phylo_validation.json",
+        "alignment.fasta",
+        "alignment_summary.json",
+        "tree.nwk",
+        "tree.svg",
+        "tree_stats.json",
+        "phylo_report.json",
+        "phylo_report.html"
+      ],
+      "properties": {
+        "phylo_validation.json": {
+          "type": "string"
+        },
+        "alignment.fasta": {
+          "type": "string"
+        },
+        "alignment_summary.json": {
+          "type": "string"
+        },
+        "tree.nwk": {
+          "type": "string"
+        },
+        "tree.svg": {
+          "type": "string"
+        },
+        "tree_stats.json": {
+          "type": "string"
+        },
+        "phylo_report.json": {
+          "type": "string"
+        },
+        "phylo_report.html": {
+          "type": "string"
+        }
+      }
+    },
+    "references": [
+      {
+        "key": "cock2009_biopython",
+        "title": "Biopython: freely available Python tools for computational molecular biology and bioinformatics",
+        "url": "https://doi.org/10.1093/bioinformatics/btp163",
+        "verified": true
+      },
+      {
+        "key": "saitou1987_neighbor_joining",
+        "title": "The neighbor-joining method: a new method for reconstructing phylogenetic trees",
+        "url": "https://doi.org/10.1093/oxfordjournals.molbev.a040454",
+        "verified": true
+      },
+      {
+        "key": "thompson1994_clustalw",
+        "title": "CLUSTAL W: improving the sensitivity of progressive multiple sequence alignment",
+        "url": "https://doi.org/10.1093/nar/22.22.4673",
+        "verified": true
+      }
+    ],
+    "limitations": [
+      "This composite runs all steps in one job so the website does not need to chain job outputs; it does not change any scientific computation.",
+      "Progressive multiple sequence alignment is a heuristic and does not guarantee a global optimum.",
+      "Neighbor joining is a distance-based heuristic, not a maximum-likelihood or Bayesian inference.",
+      "The identity distance model ignores substitution saturation and rate variation.",
+      "Research use only; this is not a clinical or diagnostic result."
+    ]
+  },
+  {
     "id": "sequence-stats.validate",
     "name": "FASTA Validator",
     "description": "FASTA structure and IUPAC alphabet validation.",

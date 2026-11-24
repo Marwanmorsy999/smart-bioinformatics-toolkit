@@ -871,9 +871,125 @@ class PhylogeneticsReportPlugin(_BasePhylogeneticsAdapter):
         return {"artifacts": artifacts, "tool_run_meta": meta}
 
 
+_PIPELINE = (
+    PhylogeneticsValidatePlugin,
+    PhylogeneticsAlignPlugin,
+    PhylogeneticsTreePlugin,
+    PhylogeneticsReportPlugin,
+)
+
+
+def _unique(items: Any) -> list[Any]:
+    """Preserve order while removing duplicates (used when merging sub-steps)."""
+    return list(dict.fromkeys(items))
+
+
+class PhylogeneticsWorkflowPlugin(_BasePhylogeneticsAdapter):
+    """One-job composite for the website pipeline.
+
+    The browser executes one tool per job and does not chain outputs between
+    steps. This adapter runs the four existing adapters in order inside the
+    *same* workspace, reusing their implementations unchanged, and flattens
+    their artifacts, required-artifact declarations and evidence hints into a
+    single result. All values remain those computed by the sub-adapters.
+    """
+
+    TOOL_ID = "phylogenetics.workflow"
+    _functions = tuple(_unique(
+        function
+        for plugin_cls in _PIPELINE
+        for function in plugin_cls._functions
+    ))
+    _limitations = _unique([
+        limitation
+        for plugin_cls in _PIPELINE
+        for limitation in plugin_cls._limitations
+    ] + [
+        "This composite runs all steps in one job so the website does not need "
+        "to chain job outputs; it does not change any scientific computation.",
+    ])
+
+    def run(
+        self, step: dict[str, Any], inputs: dict[str, Any], context: dict[str, Any]
+    ) -> dict[str, Any]:
+        artifacts: list[dict[str, Any]] = []
+        evidence: list[dict[str, str]] = []
+        required: list[str] = []
+        names: list[str] = []
+        input_file: str | None = None
+        for plugin_cls in _PIPELINE:
+            adapter = plugin_cls()
+            sub_step = {**step, "tool_id": plugin_cls.TOOL_ID}
+            outcome = adapter.run(sub_step, inputs, context)
+            meta = outcome.get("tool_run_meta") or {}
+            if meta.get("status") == "failed":
+                return failure_result(
+                    self,
+                    f"Sub-step {plugin_cls.TOOL_ID} failed: {meta.get('reason', 'unknown reason')}",
+                    limitations=self._limitations,
+                    details={"failed_step": plugin_cls.TOOL_ID},
+                )
+            sub_artifacts = outcome.get("artifacts") or []
+            if not sub_artifacts:
+                return failure_result(
+                    self,
+                    f"Sub-step {plugin_cls.TOOL_ID} produced no artifacts; refusing to report success.",
+                    limitations=self._limitations,
+                    details={"failed_step": plugin_cls.TOOL_ID},
+                )
+            for artifact in sub_artifacts:
+                name = str(artifact.get("name", ""))
+                if name in names:
+                    return failure_result(
+                        self,
+                        f"Sub-step {plugin_cls.TOOL_ID} produced duplicate artifact '{name}'.",
+                        limitations=self._limitations,
+                        details={"failed_step": plugin_cls.TOOL_ID},
+                    )
+                names.append(name)
+                artifacts.append(artifact)
+            evidence.extend(meta.get("evidence_hints") or [])
+            required.extend(meta.get("required_artifacts") or [])
+            if meta.get("input_file"):
+                input_file = str(meta["input_file"])
+
+        parameters = dict(step.get("params") or {})
+        parameters["sequence_type"] = "dna"
+        parameters["pipeline"] = [plugin_cls.TOOL_ID for plugin_cls in _PIPELINE]
+        meta = _meta(
+            self,
+            functions=self._functions,
+            artifacts=artifacts,
+            limitations=self._limitations,
+            evidence=_unique_hints(evidence),
+            required=_unique(required),
+            parameters=parameters,
+            input_file=input_file,
+        )
+        return {"artifacts": artifacts, "tool_run_meta": meta}
+
+
+def _unique_hints(hints: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Deduplicate evidence hints by their full citation triple."""
+    seen: set[tuple[str, str, str]] = set()
+    result: list[dict[str, Any]] = []
+    for hint in hints:
+        key = (
+            str(hint.get("text", "")),
+            str(hint.get("artifact", "")),
+            str(hint.get("field_path", "")),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(hint)
+    return result
+
+
 __all__ = [
     "PhylogeneticsValidatePlugin",
     "PhylogeneticsAlignPlugin",
     "PhylogeneticsTreePlugin",
     "PhylogeneticsReportPlugin",
+    "PhylogeneticsWorkflowPlugin",
 ]

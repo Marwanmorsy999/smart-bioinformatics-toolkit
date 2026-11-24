@@ -36,6 +36,7 @@ from smartbio.plugins.phylogenetics import (
     PhylogeneticsReportPlugin,
     PhylogeneticsTreePlugin,
     PhylogeneticsValidatePlugin,
+    PhylogeneticsWorkflowPlugin,
 )
 
 REFERENCE = ROOT / "shared" / "test-cases" / "phylo_reference.fasta"
@@ -69,6 +70,12 @@ EXPECTED_HASHES = {
         "phylo_report.html": "f6e089399ea58eb4be0dfce2f91e50c7ac4e073962bdf9740add08fd98f78249",
     },
 }
+# The composite must return exactly the same bytes as the four individual tools.
+EXPECTED_HASHES["phylogenetics.workflow"] = {
+    name: digest
+    for tool_hashes in EXPECTED_HASHES.values()
+    for name, digest in tool_hashes.items()
+}
 
 PLUGINS = (
     PhylogeneticsValidatePlugin,
@@ -76,6 +83,7 @@ PLUGINS = (
     PhylogeneticsTreePlugin,
     PhylogeneticsReportPlugin,
 )
+ALL_PLUGINS = PLUGINS + (PhylogeneticsWorkflowPlugin,)
 
 
 def run_plugin(plugin_cls, inputs=None, params=None):
@@ -257,7 +265,7 @@ def test_tree_matches_direct_biopython_computation():
 
 
 def test_artifact_hashes_are_byte_identical_on_repeat_runs():
-    for plugin_cls in PLUGINS:
+    for plugin_cls in ALL_PLUGINS:
         first = hashes(run_plugin(plugin_cls))
         second = hashes(run_plugin(plugin_cls))
         assert first == second
@@ -340,6 +348,79 @@ def test_additional_invalid_cases():
 # --- Provenance, manifest and framework seams ------------------------------
 
 
+def test_workflow_reuses_the_four_adapters_and_combines_metadata():
+    result = run_plugin(PhylogeneticsWorkflowPlugin, params={"sequence_type": "dna"})
+    meta = result["tool_run_meta"]
+    assert meta["status"] == "succeeded"
+    assert meta["tool_id"] == "phylogenetics.workflow"
+    expected_order = [
+        "phylo_validation.json",
+        "alignment.fasta",
+        "alignment_summary.json",
+        "tree.nwk",
+        "tree.svg",
+        "tree_stats.json",
+        "phylo_report.json",
+        "phylo_report.html",
+    ]
+    assert [artifact["name"] for artifact in result["artifacts"]] == expected_order
+    assert meta["required_artifacts"] == expected_order
+    assert len(meta["evidence_hints"]) == 11
+    assert meta["parameters"]["sequence_type"] == "dna"
+    assert meta["parameters"]["pipeline"] == [plugin.TOOL_ID for plugin in PLUGINS]
+    assert meta["limitations"]
+
+    combined = artifacts_by_name(result)
+    for plugin_cls in PLUGINS:
+        for artifact in run_plugin(plugin_cls)["artifacts"]:
+            assert combined[artifact["name"]]["content"] == artifact["content"]
+    if Bio.__version__ == "1.88":
+        assert hashes(result) == EXPECTED_HASHES["phylogenetics.workflow"]
+
+
+def test_workflow_invalid_fasta_fails_closed():
+    cases = invalid_inputs()
+    inputs = {
+        "fasta_text": cases["fewer_than_three"],
+        "filename": "invalid.fasta",
+        "dataset_id": "ds_invalid",
+    }
+    result = run_plugin(PhylogeneticsWorkflowPlugin, inputs=inputs)
+    meta = result["tool_run_meta"]
+    assert meta["status"] == "failed"
+    assert "Sub-step phylogenetics.validate failed" in meta["reason"]
+    assert meta["details"]["failed_step"] == "phylogenetics.validate"
+    assert result["artifacts"] == []
+
+
+def test_workflow_process_job_end_to_end_with_all_artifacts():
+    job = {
+        "id": "job_phylo_workflow",
+        "step_id": "step_1",
+        "tool_id": "phylogenetics.workflow",
+        "params": {"sequence_type": "dna"},
+        "inputs": {
+            "dataset_id": "ds_phylo_known_answer",
+            "fasta_text": FASTA_TEXT,
+            "filename": "phylo_reference.fasta",
+        },
+        "backend": "local-python",
+    }
+    result = process_job(job)
+    assert result["status"] == "succeeded"
+    assert result["validation"]["status"] == "pass"
+    assert len(result["explanation"]["findings"]) >= 2
+    assert check_explanation(result["explanation"], result["artifacts"])["ok"] is True
+    by_name = artifacts_by_name(result)
+    for name in EXPECTED_HASHES["phylogenetics.workflow"]:
+        assert by_name[name]["sha256"] == EXPECTED_HASHES["phylogenetics.workflow"][name]
+    assert "report.html" in by_name
+    if Bio.__version__ == "1.88":
+        assert hashlib.sha256(
+            by_name["phylo_report.json"]["content"].encode("utf-8")
+        ).hexdigest() == EXPECTED_HASHES["phylogenetics.workflow"]["phylo_report.json"]
+
+
 def test_report_bundles_real_hashes_and_versions():
     result = run_plugin(PhylogeneticsReportPlugin)
     report = document(result, "phylo_report.json")
@@ -367,7 +448,7 @@ def test_manifest_references_limitations_and_tool_ids():
     assert manifest["backend"] == "local-python"
     assert manifest["entrypoint"].startswith("smartbio.plugins.phylogenetics:")
     ids = [tool["id"] for tool in manifest["tools"]]
-    assert ids == [plugin.TOOL_ID for plugin in PLUGINS]
+    assert ids == [plugin.TOOL_ID for plugin in ALL_PLUGINS]
     for tool in manifest["tools"]:
         assert tool["available"] is True
         assert tool["external_egress"] is False
@@ -381,7 +462,7 @@ def test_manifest_references_limitations_and_tool_ids():
         assert tool["params_schema"]["type"] == "object"
 
 
-@pytest.mark.parametrize("plugin_cls", PLUGINS)
+@pytest.mark.parametrize("plugin_cls", ALL_PLUGINS)
 def test_evidence_hints_produce_grounded_explanation(plugin_cls):
     result = run_plugin(plugin_cls)
     meta = result["tool_run_meta"]
@@ -398,7 +479,7 @@ def test_evidence_hints_produce_grounded_explanation(plugin_cls):
     assert checked["ok"] is True, checked["errors"]
 
 
-@pytest.mark.parametrize("plugin_cls", PLUGINS)
+@pytest.mark.parametrize("plugin_cls", ALL_PLUGINS)
 def test_agent_end_to_end_grounded_explanation(plugin_cls):
     """The control plane resolves the hints without any tool-specific code."""
     job = {
@@ -421,7 +502,7 @@ def test_agent_end_to_end_grounded_explanation(plugin_cls):
     assert any(artifact["name"] == "report.html" for artifact in result["artifacts"])
 
 
-@pytest.mark.parametrize("plugin_cls", PLUGINS)
+@pytest.mark.parametrize("plugin_cls", ALL_PLUGINS)
 def test_required_artifacts_cannot_silently_disappear(plugin_cls):
     result = run_plugin(plugin_cls)
     required = result["tool_run_meta"]["required_artifacts"]

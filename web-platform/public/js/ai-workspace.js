@@ -9,6 +9,7 @@ const MAX_FASTA_BYTES = 64 * 1024;
 const elements = {
   form: document.querySelector("#request-form"),
   question: document.querySelector("#question"),
+  phyloExample: document.querySelector("#phylo-example"),
   file: document.querySelector("#fasta-file"),
   projectId: document.querySelector("#project-id"),
   fastaText: document.querySelector("#fasta-text"),
@@ -33,6 +34,7 @@ const elements = {
   validationBox: document.querySelector("#validation-box"),
   findingsBox: document.querySelector("#findings-box"),
   limitationsBox: document.querySelector("#limitations-box"),
+  artifactsBox: document.querySelector("#artifacts-box"),
   downloadLinks: document.querySelector("#download-links")
 };
 
@@ -41,6 +43,7 @@ let consentSteps = [];
 let activeJobId = null;
 let pollTimer = null;
 let lastRun = null;
+let artifactUrls = [];
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -70,8 +73,14 @@ function stopPolling() {
   }
 }
 
+function releaseArtifactUrls() {
+  for (const url of artifactUrls) URL.revokeObjectURL(url);
+  artifactUrls = [];
+}
+
 function resetPanels() {
   stopPolling();
+  releaseArtifactUrls();
   currentPlan = null;
   consentSteps = [];
   activeJobId = null;
@@ -86,6 +95,7 @@ function resetPanels() {
   elements.validationBox.replaceChildren();
   elements.findingsBox.replaceChildren();
   elements.limitationsBox.replaceChildren();
+  elements.artifactsBox.replaceChildren();
   elements.downloadLinks.replaceChildren();
   elements.consentBox.hidden = true;
   elements.consentCheck.checked = false;
@@ -151,6 +161,9 @@ async function submitRequest(event) {
 function humanIntent(plan) {
   if (plan.intent === "identify_taxa") {
     return "You asked about taxonomic identification. This MVP can validate and profile the FASTA, but real taxa calls need BLAST hits from a local database. No taxa result will be claimed.";
+  }
+  if (plan.intent === "phylogenetics") {
+    return "You asked for a phylogenetic analysis. One local tool will align the sequences, build a neighbor-joining tree and produce a reproducible report. This is research-use output, not a publication-grade tree.";
   }
   return "You asked for FASTA validation and statistics. The plan will run one local, deterministic tool with the parameters shown below.";
 }
@@ -315,6 +328,26 @@ function renderRun(run) {
   for (const limitation of limitations) limitationList.append(el("li", null, limitation));
   elements.limitationsBox.replaceChildren(el("h4", null, "Limitations"), limitationList);
 
+  // Render emitted artifacts generically so any tool's named outputs (for
+  // example a FASTA alignment, a Newick tree, an SVG or an HTML report) are
+  // visible and downloadable without tool-specific branching here.
+  releaseArtifactUrls();
+  const artifactList = el("ul", "artifact-list");
+  for (const artifact of run.artifacts || []) {
+    const size = typeof artifact.bytes === "number" ? `${artifact.bytes} bytes` : "size unknown";
+    const item = el("li", null, `${artifact.name} · ${artifact.kind} · ${size}`);
+    if (typeof artifact.content === "string") {
+      const url = URL.createObjectURL(new Blob([artifact.content], { type: "text/plain;charset=utf-8" }));
+      artifactUrls.push(url);
+      const link = el("a", "artifact-link", "Download");
+      link.href = url;
+      link.download = artifact.name;
+      item.append(" ", link);
+    }
+    artifactList.append(item);
+  }
+  elements.artifactsBox.replaceChildren(el("h4", null, "Artifacts"), artifactList);
+
   const links = el("div", "download-links-row");
   const jsonLink = el("a", "secondary-button small-button", "Download JSON");
   jsonLink.href = `/api/ai/runs/${run.run_id}`;
@@ -365,6 +398,11 @@ function downloadCsv(run) {
   URL.revokeObjectURL(url);
 }
 
+elements.phyloExample.addEventListener("click", () => {
+  elements.question.value = elements.phyloExample.dataset.question;
+  elements.question.focus();
+  hideError();
+});
 elements.form.addEventListener("submit", submitRequest);
 elements.approve.addEventListener("click", approvePlan);
 elements.decline.addEventListener("click", declinePlan);

@@ -47,7 +47,12 @@
             <div class="field-group">
               <label for="question">What would you like to do?</label>
               <textarea id="question" rows="3" required aria-describedby="question-help" placeholder="e.g. Validate my FASTA and calculate GC content"></textarea>
-              <small id="question-help">Use words such as validate, check, profile, stats or GC; or identify, taxa, taxonomy, classify, BLAST.</small>
+              <small id="question-help">Use words such as validate, check, profile, stats or GC; identify, taxa, taxonomy, classify, BLAST; or tree, phylogenetic, alignment, evolutionary.</small>
+            </div>
+
+            <div class="action-row" role="group" aria-label="Example questions">
+              <span class="example-label">Example prompt:</span>
+              <button id="phylo-example" type="button" class="secondary-button small-button" data-question="Build a phylogenetic tree from my FASTA and show me the alignment and report">Phylogenetics · build a tree</button>
             </div>
 
             <div class="input-grid">
@@ -104,6 +109,7 @@
           <div id="validation-box" class="verdict-box"></div>
           <div id="findings-box"></div>
           <div id="limitations-box"></div>
+          <div id="artifacts-box"></div>
           <div id="download-links" class="download-links"></div>
         </section>
       </div>

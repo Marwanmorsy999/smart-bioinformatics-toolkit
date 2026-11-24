@@ -28,7 +28,10 @@ report. The original 16S toolkit is preserved and reused as the first analysis p
 - Market and plan: [`COMPETITOR_ANALYSIS.md`](COMPETITOR_ANALYSIS.md), [`IMPLEMENTATION_ROADMAP.md`](IMPLEMENTATION_ROADMAP.md)
 - New AI workspace: `/ai.html` (plan review → approval → real local execution → validation → explanation → report)
 - Exact MVP wire contract: [`shared/AI_PLATFORM_CONTRACT.md`](shared/AI_PLATFORM_CONTRACT.md)
-- Reproducible demo: [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md); independent verification: [`docs/discovery/TEST_REPORT.md`](docs/discovery/TEST_REPORT.md)
+- Reproducible demo: [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md); independent M1–M4 verification: [`docs/discovery/TEST_REPORT.md`](docs/discovery/TEST_REPORT.md)
+- M5 plugin authoring: [`docs/plugins/PLUGIN_AUTHORING.md`](docs/plugins/PLUGIN_AUTHORING.md); phylogenetics tool research: [`docs/plugins/PHYLOGENETICS_TOOLING.md`](docs/plugins/PHYLOGENETICS_TOOLING.md); browser demo: [`docs/plugins/PHYLOGENETICS_DEMO.md`](docs/plugins/PHYLOGENETICS_DEMO.md)
+- M5 independent verification: [`docs/discovery/TEST_REPORT_M5.md`](docs/discovery/TEST_REPORT_M5.md); final report: [`docs/MILESTONE_M5_FINAL_REPORT.md`](docs/MILESTONE_M5_FINAL_REPORT.md)
+- Dataset transport and consent: [`docs/DATA_TRANSPORT.md`](docs/DATA_TRANSPORT.md) — no local dataset is uploaded to R2; artifacts and reports are stored in D1 today.
 
 The AI planner and explainer are **deterministic by default** — no LLM key or paid service
 is required. All scientific values come from the existing `smartbio` engine, never from a

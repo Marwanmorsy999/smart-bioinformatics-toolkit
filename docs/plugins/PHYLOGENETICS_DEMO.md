@@ -8,8 +8,15 @@ The plugin runs entirely locally through the M2 adapter pattern. Tool IDs:
 | `phylogenetics.align` | `PhylogeneticsAlignPlugin` | `alignment.fasta`, `alignment_summary.json` |
 | `phylogenetics.tree` | `PhylogeneticsTreePlugin` | `tree.nwk`, `tree.svg`, `tree_stats.json` |
 | `phylogenetics.report` | `PhylogeneticsReportPlugin` | `phylo_report.json`, `phylo_report.html` |
+| `phylogenetics.workflow` | `PhylogeneticsWorkflowPlugin` | all eight artifacts above, in pipeline order |
 
-All four are declared in `shared/plugins/phylogenetics.json` with
+The browser executes one tool per job and does not chain step outputs, so
+`phylogenetics.workflow` runs the four adapters in order in the **same**
+workspace and returns their combined artifacts, `required_artifacts` and
+`evidence_hints`. Its eight artifact hashes are byte-identical to the four
+individual tools (see below).
+
+All five are declared in `shared/plugins/phylogenetics.json` with
 `backend: local-python`, `external_egress: false`,
 `requirements: ["python-package:biopython"]`, references, limitations, and
 honest `estimated_seconds`. Auto-discovery registers all four when Biopython is
@@ -36,7 +43,10 @@ On Linux/macOS the equivalent test command is:
 cd python-engine && PYTHONPATH=./src python -m pytest tests/test_phylogenetics_plugin.py -v
 ```
 
-Latest run: **32 passed** (Python 3.14.8, pytest 8.4.2, Biopython 1.88).
+Latest run: **38 passed** for this file (Python 3.14.8, pytest 8.4.2,
+Biopython 1.88); full Python suite **231 passed**, Worker suite **138 passed**.
+`python scripts/generate_plugin_registry.py` and `python scripts/check_plugins.py`
+both succeed with the composite tool included.
 
 ## Reference data design (`shared/test-cases/phylo_reference.fasta`)
 

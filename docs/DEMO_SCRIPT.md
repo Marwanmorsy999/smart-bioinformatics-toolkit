@@ -74,6 +74,18 @@ wrangler dev --local
 
 Flow in the UI: paste/upload FASTA → type a question → review the generated plan → Approve or Decline → poll status → read results, validation flags, limitations and explanation → download JSON/CSV/HTML/provenance. The UI always displays an `execution_mode` badge; a queued job without a connected agent stays visibly "queued" rather than showing invented results.
 
+## C2. Phylogenetics on the website (browser only)
+
+Start the Worker and D1 as in section C, then open `http://localhost:8787/ai.html`.
+
+1. Upload or paste a DNA FASTA with at least three unique sequences of 50+ bp.
+2. Click the **Phylogenetics · build a tree** example prompt — it fills the question box with "Build a phylogenetic tree from my FASTA and show me the alignment and report" — or type your own request using words such as *tree*, *phylogenetic*, *alignment* or *evolutionary*.
+3. Click **Build plan** and review it. The plan has exactly one local step, `phylogenetics.workflow`, with `sequence_type: dna`, no external egress and no consent requirement. If that composite tool is not registered on this deployment, the workspace shows "Phylogenetic analysis is not available on this deployment." and creates no plan or job.
+4. Click **Approve and queue jobs**. A connected local execution agent claims the job; the page polls until a validated result arrives.
+5. In the result panel, read the explanation, validation and limitations. The Artifacts list shows `alignment.fasta`, `tree.nwk`, `tree.svg` and `phylo_report.html` with individual download links, alongside the overall JSON, CSV, HTML report and provenance links.
+
+This is a browser-only flow against the deployed Worker — no `--job-file` CLI step is needed. The alignment is a progressive heuristic and the tree is neighbor-joining from identity distances: research use only, not a clinical result and not a publication-grade tree.
+
 ## D. Historical benchmark — DO NOT QUOTE UNTIL REGENERATED
 
 Earlier docs in this repository quoted held-out results (top-hit 143.3 wrong/200; 98.65% cutoff 38.0 wrong/87.7 calls; toolkit verdict 12.7 wrong/49.7 calls, 150.3 abstentions) and referred to `benchmark_data/RESULTS.md`.
