@@ -444,7 +444,7 @@ export function analyzeBlast(parsed, options = {}) {
       valid_rows: parsed.parsed_rows || 0,
       malformed_rows: parsed.malformed_rows || 0,
       unique_queries: Object.keys(byQuery).length,
-      total_queries: Object.keys(byQuery).length,
+      total_queries: Object.keys(byQuery).length + noHitQueries.length,
       queries_with_no_hits: noHitQueries.length,
       passing_rows: passingCount,
       displayed_rows: filteredRows.length,

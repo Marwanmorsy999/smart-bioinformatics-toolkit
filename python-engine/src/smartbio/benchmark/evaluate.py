@@ -73,6 +73,8 @@ def wilson_interval(successes: int, trials: int, z: float = 1.959964) -> tuple[f
     """Wilson score 95% confidence interval for a proportion (two-sided 95%)."""
     if trials <= 0:
         return None
+    if successes < 0 or successes > trials:
+        raise ValueError("successes must be between 0 and trials")
     phat = successes / trials
     z2 = z * z
     denom = 1.0 + z2 / trials
@@ -157,7 +159,7 @@ def evaluate_benchmark(
         if r["top_hit_species"] is not None:
             for e in (entries[r["query_id"]]["consensus"].get("evidence") or []):
                 v = (e.get("lineage") or {}).get("ranks", {}).get("species", {}) or {}
-                if v.get("name", "").lower() == r["top_hit_species"].lower():
+                if _norm(v.get("name", "")) == _norm(r["top_hit_species"]):
                     top_pid = e.get("pident")
                     break
         cutoff_call = r["top_hit_species"] if top_pid is not None and top_pid >= DEFAULT_SPECIES_THRESHOLD else None

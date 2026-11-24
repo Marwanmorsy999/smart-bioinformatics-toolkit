@@ -1,4 +1,4 @@
-"""Benchmark tooling tests using SYNTHETIC sequences.
+﻿"""Benchmark tooling tests using SYNTHETIC sequences.
 
 BLAST+ is not required: a tiny same-length identity search stands in for it so
 the full chain (queries -> hits -> taxonomy -> verdict -> evaluation) runs
@@ -195,3 +195,47 @@ def test_missing_results_are_reported_not_hidden():
     report = evaluate_benchmark(analysis, {"q1": "A b"})
     assert report["n_evaluated"] == 0
     assert report["truth_without_result"] == ["q1"]
+
+from smartbio.benchmark.evaluate import wilson_interval, evaluate_benchmark
+
+
+def test_wilson_interval_bounds_and_input_validation():
+    lo, hi = wilson_interval(5, 10)
+    assert 0 <= lo <= 0.5 <= hi <= 1
+    assert wilson_interval(0, 5) == (0.0, 0.0) or wilson_interval(0, 5)[0] == 0.0
+    assert wilson_interval(3, 3)[1] == 1.0
+    assert wilson_interval(1, 0) is None
+    with pytest.raises(ValueError):
+        wilson_interval(6, 5)
+    with pytest.raises(ValueError):
+        wilson_interval(-1, 5)
+
+
+def test_cutoff_baseline_and_wilson_in_report():
+    analysis = {"per_query": {
+        "q1": {
+            "consensus": {"evidence": [{"bitscore": 10, "pident": 99.5, "lineage": {"ranks": {"species": {"name": "Escherichia  coli"}}}}], "status": "species_agreement"},
+            "verdict": {"status": "species_supported", "reported_taxon": "Escherichia coli", "reported_rank": "species", "caution_flags": [], "difficult_groups": [], "evidence_summary": {"top_identity": 99.5}},
+        },
+        "q2": {
+            "consensus": {"evidence": [{"bitscore": 10, "pident": 97.0, "lineage": {"ranks": {"species": {"name": "Escherichia coli"}}}}], "status": "species_agreement"},
+            "verdict": {"status": "below_screening_threshold", "reported_taxon": "Escherichia", "reported_rank": "genus", "caution_flags": [], "difficult_groups": [], "evidence_summary": {"top_identity": 97.0}},
+        },
+    }}
+    # minimal verdict for q1
+    analysis["per_query"]["q1"]["verdict"] = {"status": "species_supported", "reported_taxon": "Escherichia coli", "reported_rank": "species", "caution_flags": [], "difficult_groups": [], "evidence_summary": {"top_identity": 99.5}}
+    report = evaluate_benchmark(analysis, {"q1": "Escherichia coli", "q2": "Escherichia coli"})
+    c = report["top_hit_cutoff_method"]
+    assert c["species_calls"] == 1 and c["wrong"] == 0
+    assert report["top_hit_method"]["wilson_95pct_ci_on_correct_rate"] is not None
+    assert report["verdict_method"]["wilson_95pct_ci_on_correct_rate"] is not None
+
+
+def test_total_queries_includes_no_hit_queries():
+    from smartbio.blast import parse_blast_text, analyze_blast
+    parsed = parse_blast_text("", schema="standard")
+    rep = analyze_blast(parsed, query_ids=["q1", "q2"])
+    assert rep["summary"]["total_queries"] == 2
+    assert rep["summary"]["queries_with_no_hits"] == 2
+    assert rep["summary"]["unique_queries"] == 0
+

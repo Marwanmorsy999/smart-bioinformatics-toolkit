@@ -530,7 +530,7 @@ def analyze_blast(
             "valid_rows": parsed.get("parsed_rows", sum(1 for r in parsed.get("rows", []) if r.get("valid"))),
             "malformed_rows": parsed.get("malformed_rows", sum(1 for r in parsed.get("rows", []) if not r.get("valid"))),
             "unique_queries": len(by_query),
-            "total_queries": len(by_query),
+            "total_queries": len(by_query) + len(no_hit_queries),
             "queries_with_no_hits": len(no_hit_queries),
             "passing_rows": passing_count,
             "displayed_rows": len(filtered_rows),
