@@ -1,0 +1,7 @@
+﻿/* Risk-coverage chart styles (external; CSP forbids inline styles). */
+#chart { max-width: 100%; overflow-x: auto; }
+#chart svg { max-width: 100%; height: auto; }
+.legend-call { color: #2b6cb0; }
+.legend-wrong { color: #c53030; }
+#rc-table { border-collapse: collapse; margin-top: 1rem; }
+#rc-table th, #rc-table td { border: 1px solid #cbd5e0; padding: 0.35rem 0.6rem; text-align: left; }

@@ -1,0 +1,13 @@
+{
+  "description": "Synthetic CSV-injection test vectors shared by Python and JS (not benchmark data).",
+  "cases": [
+    {"input": "=1+1", "expected": "'=1+1"},
+    {"input": "@SUM(A1)", "expected": "'@SUM(A1)"},
+    {"input": "+cmd", "expected": "'+cmd"},
+    {"input": "-2", "expected": "'-2"},
+    {"input": "normal text", "expected": "normal text"},
+    {"input": null, "expected": ""},
+    {"input": "a,b", "expected": "\"a,b\""},
+    {"input": "=HYPERLINK(\"x\")", "expected": "\"'=HYPERLINK(\"\"x\"\")\""}
+  ]
+}
