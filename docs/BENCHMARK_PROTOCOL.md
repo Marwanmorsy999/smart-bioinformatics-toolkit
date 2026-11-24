@@ -39,3 +39,21 @@ The script fails loudly if BLAST+ or required inputs are missing. No real number
 - Simulated substitutions are not real sequencing error or real strain variation.
 - Held-out species from one database release says nothing about other databases.
 - Truth comes from FASTA headers, which can themselves be wrong.
+
+## Verified real pipeline (executed 2026-11-24; see results in benchmark_data/RESULTS.md)
+
+The draft steps above are superseded by the following verified chain. The 2026-11-24 NCBI taxdump contains `nodes.dmp` and `names.dmp` but **no** `rankedlineage.dmp`; the accession-to-taxid file was extracted from `bacteria.16SrRNA.gbff.gz` (`/db_xref="taxon:NNN"` fields).
+
+```bash
+# 1. taxonomy map (nodes + names, fail-loud if neither name source supplied)
+python scripts/build_taxonomy_map.py --nodes benchmark_data/taxdump_extract/nodes.dmp --names benchmark_data/taxdump_extract/names.dmp --accessions benchmark_data/accession2taxid.tsv --output benchmark_data/taxonomy_map.tsv
+# 2. taxid map for makeblastdb (requires makeblastdb -parse_seqids, handled by run_benchmark.py)
+#    benchmark_data/taxid_map.tsv: accession<TAB>taxid, header removed
+# 3. full pipeline (held-out headline; 5 seeds; several lengths/rates/indel)
+python scripts/run_benchmark.py --reference benchmark_data/bacteria.16SrRNA.fna --taxonomy-map benchmark_data/taxonomy_map.tsv --taxid-map benchmark_data/taxid_map.tsv --out-dir benchmark_data/benchmark_runs_expanded/heldout_L500_s0.5 --mode heldout --seeds 1,2,3,4,5 --n 200 --length 500 --substitution-rate 0.005
+# add --length 300 / 1000, --substitution-rate 0.01, --indel-rate 0.01 for other conditions
+# 4. regenerate RESULTS.md from saved JSON (never hand-edit)
+python scripts/generate_results.py
+```
+
+Saved raw outputs and exact commands (logs) are under `benchmark_data/`: `benchmark_runs_heldout4/`, `benchmark_runs_noisy2/`, `benchmark_runs_expanded/`, `run_*.log`. `RESULTS.md` is generated from these by `scripts/generate_results.py`.
