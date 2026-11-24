@@ -2,6 +2,16 @@
 // scientific values come from validated agent results, never from this file.
 
 import { safeCsvCell } from "./csv-safe.js";
+import {
+  ROUTE_AGENT,
+  ROUTE_BROWSER,
+  browserRecordsCsv,
+  browserSummaryText,
+  decideExecution,
+  describeBackendStatus,
+  executionBadge,
+  runBrowserProfile
+} from "./ai-execution.js";
 
 const POLL_MS = 3000;
 const MAX_FASTA_BYTES = 64 * 1024;
@@ -17,6 +27,11 @@ const elements = {
   error: document.querySelector("#input-error"),
   status: document.querySelector("#status-line"),
   mode: document.querySelector("#execution-mode"),
+  backendBadge: document.querySelector("#backend-badge"),
+  backendStatus: document.querySelector("#backend-status"),
+  backendDetail: document.querySelector("#backend-detail"),
+  executionRoute: document.querySelector("#execution-route"),
+  sequenceType: document.querySelector("#sequence-type"),
   planPanel: document.querySelector("#plan-panel"),
   planHuman: document.querySelector("#plan-human"),
   planConfidence: document.querySelector("#plan-confidence"),
@@ -44,6 +59,12 @@ let activeJobId = null;
 let pollTimer = null;
 let lastRun = null;
 let artifactUrls = [];
+let backendStatus = {
+  execution_mode: "unknown",
+  agent_status: "not_connected",
+  agent_observation_basis: "backend status has not been checked"
+};
+let backendDescription = describeBackendStatus(backendStatus);
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -64,6 +85,39 @@ function hideError() {
 
 function setStatus(message) {
   elements.status.textContent = message;
+}
+
+function currentRoute() {
+  return elements.executionRoute?.value === ROUTE_AGENT ? ROUTE_AGENT : ROUTE_BROWSER;
+}
+
+function renderBackendStatus() {
+  elements.backendStatus.textContent = backendDescription.message;
+  elements.backendStatus.classList.toggle("available", backendDescription.connected);
+  elements.backendDetail.textContent = backendDescription.detail;
+  elements.backendBadge.textContent = backendDescription.connected
+    ? "Backend: local agent observed"
+    : "Backend: no local agent observed";
+  elements.mode.textContent = executionBadge(currentRoute(), backendDescription);
+  elements.mode.classList.toggle("unavailable", currentRoute() === ROUTE_AGENT && !backendDescription.connected);
+}
+
+async function refreshBackendStatus() {
+  try {
+    backendStatus = await fetchJson("/api/ai/backend");
+  } catch (error) {
+    // Fail closed: an unreachable status endpoint is never evidence of a
+    // connected backend.
+    backendStatus = {
+      execution_mode: "unknown",
+      agent_status: "not_connected",
+      heavy_analyses_available: false,
+      agent_observation_basis: `backend status check failed: ${error.message}`
+    };
+  }
+  backendDescription = describeBackendStatus(backendStatus);
+  renderBackendStatus();
+  return backendStatus;
 }
 
 function stopPolling() {
@@ -134,9 +188,43 @@ async function submitRequest(event) {
     return;
   }
 
+  const decision = decideExecution({
+    requestText: question,
+    route: currentRoute(),
+    backend: backendStatus
+  });
+  if (decision.action === "blocked") {
+    showError(decision.message);
+    setStatus("");
+    return;
+  }
+
   elements.build.disabled = true;
-  setStatus("Validating input and building a plan…");
   try {
+    if (decision.action === "browser-profile") {
+      // No Worker request, no agent, no simulated output: numbers are read
+      // from the existing browser validation/statistics modules.
+      setStatus("Running browser-local validation and statistics…");
+      const report = runBrowserProfile(fasta, elements.sequenceType.value);
+      renderBrowserResult(report);
+      elements.mode.textContent = "Execution: browser-local";
+      setStatus(report.complete
+        ? "Completed in your browser; no Worker or agent was used."
+        : "Completed with validation issues shown below; no Worker or agent was used.");
+      return;
+    }
+
+    // Agent route: re-check immediately before queueing so a stale page cannot
+    // claim a backend that has gone away.
+    setStatus("Checking local agent availability…");
+    const latest = await refreshBackendStatus();
+    const recheck = decideExecution({ requestText: question, route: ROUTE_AGENT, backend: latest });
+    if (recheck.action === "blocked") {
+      showError(recheck.message);
+      setStatus("");
+      return;
+    }
+    setStatus("Validating input and building a plan…");
     const body = await fetchJson("/api/ai/requests", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -147,7 +235,7 @@ async function submitRequest(event) {
         project_id: elements.projectId.value.trim() || undefined
       })
     });
-    elements.mode.textContent = `Execution mode: ${body.execution_mode || "real"}`;
+    elements.mode.textContent = executionBadge(ROUTE_AGENT, backendDescription);
     renderPlan(body.plan, body.preflight);
     setStatus(`Plan ready (${body.plan.plan_id}). Review it before approving.`);
   } catch (error) {
@@ -214,6 +302,76 @@ function renderPlan(plan, preflight) {
     elements.consentBox.hidden = true;
     elements.consentLabel.textContent = "";
   }
+}
+
+function renderBrowserResult(report) {
+  elements.resultsPanel.hidden = false;
+  elements.resultMode.textContent = "Execution: browser-local";
+  elements.resultMode.classList.remove("mock", "unavailable");
+  elements.resultSummary.textContent = browserSummaryText(report);
+
+  const validation = report.validation;
+  const issues = [
+    ...(validation.file_errors || []).map((issue) => `${issue.code}: ${issue.message}`),
+    ...(validation.records || []).filter((record) => !record.valid)
+      .flatMap((record) => record.errors.map((issue) => `${record.id || `record ${record.record_number}`}: ${issue.code}`))
+  ];
+  elements.validationBox.replaceChildren(
+    el("p", "verdict-head", `Validation: ${report.complete ? "pass" : "needs attention"}`),
+    el("p", null, `Records: ${validation.valid_records}/${validation.total_records} valid · ${validation.invalid_records} invalid.`),
+    el("p", null, issues.length ? `Issues: ${issues.join("; ")}` : "Issues: none")
+  );
+
+  const table = el("table", "stats-table");
+  const header = el("tr");
+  for (const column of ["ID", "Length", "GC %", "Ambiguous", "Canonical"]) {
+    header.append(el("th", null, column));
+  }
+  const head = el("thead");
+  head.append(header);
+  table.append(head);
+  const body = el("tbody");
+  for (const row of report.records) {
+    const tr = el("tr");
+    tr.append(
+      el("td", null, row.id),
+      el("td", null, row.length),
+      el("td", null, row.gc_percent ?? "n/a"),
+      el("td", null, row.ambiguous_count),
+      el("td", null, row.canonical_count)
+    );
+    body.append(tr);
+  }
+  table.append(body);
+  elements.findingsBox.replaceChildren(el("h4", null, "Per-record statistics"), table);
+
+  const limitationList = el("ul");
+  for (const limitation of report.limitations) limitationList.append(el("li", null, limitation));
+  elements.limitationsBox.replaceChildren(el("h4", null, "Limitations"), limitationList);
+  elements.artifactsBox.replaceChildren(
+    el("h4", null, "Artifacts"),
+    el("p", null, "None — computed in this page from the FASTA you supplied; nothing was uploaded.")
+  );
+
+  if (report.records.length > 0) {
+    const csvButton = el("button", "secondary-button small-button", "Download CSV (browser-local)");
+    csvButton.type = "button";
+    csvButton.addEventListener("click", () => downloadText(browserRecordsCsv(report), "smartbio-browser-profile.csv", "text/csv;charset=utf-8"));
+    elements.downloadLinks.replaceChildren(csvButton);
+  } else {
+    elements.downloadLinks.replaceChildren();
+  }
+}
+
+function downloadText(text, filename, type) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const link = el("a");
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 async function approvePlan() {
@@ -305,8 +463,11 @@ async function pollRun() {
 
 function renderRun(run) {
   elements.resultsPanel.hidden = false;
-  elements.resultMode.textContent = `Execution mode: ${run.execution_mode || "real"}`;
+  elements.resultMode.textContent = run.execution_mode === "mock"
+    ? "Execution: local agent — mock (not scientific evidence)"
+    : "Execution: local agent";
   elements.resultMode.classList.toggle("mock", run.execution_mode === "mock");
+  elements.resultMode.classList.remove("unavailable");
   elements.resultSummary.textContent = run.explanation?.summary || "No explanation was supplied.";
 
   const validation = run.validation || {};
@@ -419,3 +580,9 @@ elements.file.addEventListener("change", () => {
     hideError();
   }).catch(() => showError("The selected file could not be read as text."));
 });
+elements.executionRoute.addEventListener("change", () => {
+  renderBackendStatus();
+  hideError();
+});
+renderBackendStatus();
+refreshBackendStatus();

@@ -3,10 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="A modular, browser-based bioinformatics toolkit. Validate FASTA files and calculate sequence statistics locally. Research use only.">
+  <meta name="description" content="Validate FASTA files, compute sequence statistics and review taxonomic evidence in one browser-based research workspace. Research use only.">
   <meta name="theme-color" content="#0f2740">
   <title>Smart Bioinformatics Toolkit</title>
   <link rel="stylesheet" href="css/main.css">
+  <link rel="stylesheet" href="css/components.css">
 </head>
 <body>
   <a class="skip-link" href="#home">Skip to main content</a>
@@ -18,6 +19,7 @@
     </a>
     <nav class="top-nav" aria-label="Main navigation">
       <a class="active" href="#tools" aria-current="location">Tools</a>
+      <a href="#capabilities">Capabilities</a>
       <a href="#workflow">How it works</a>
       <a href="#about">About</a>
     </nav>
@@ -25,19 +27,27 @@
   </header>
 
   <main id="home" tabindex="-1">
-    <section class="hero">
+    <section id="hero" class="hero">
       <div class="hero-inner">
         <div class="hero-copy">
-          <p class="eyebrow">A modular workspace for sequence analysis</p>
-          <h1>Small bioinformatics tasks.<br><span>One simple workspace.</span></h1>
-          <p class="hero-description">Use one tool and leave, or connect tools into a larger analysis. Start by validating FASTA sequences or calculating sequence statistics.</p>
-          <a class="primary-link" href="#tools">Explore the tools <span aria-hidden="true">→</span></a>
-          <p class="small">Research use only. Results require independent interpretation.</p>
+          <p class="eyebrow section-kicker">Sequence analysis, made inspectable</p>
+          <h1>Check your sequences.<br><span>Keep the evidence.</span></h1>
+          <p class="hero-description">Validate FASTA files, calculate sequence statistics and review taxonomic evidence in one browser-based workspace — with research-use caveats kept visible at every step.</p>
+          <div class="hero-actions">
+            <a class="primary-link" href="#tools">Open the FASTA tools <span aria-hidden="true">→</span></a>
+            <a class="secondary-link" href="ai.html">Try the AI workspace</a>
+            <a class="text-link" href="#workflow">See the 4-step workflow</a>
+          </div>
+          <ul class="hero-proof" aria-label="Workspace properties">
+            <li>Runs in your browser</li>
+            <li>No account required</li>
+            <li>Downloadable outputs</li>
+          </ul>
         </div>
         <div class="hero-art" aria-hidden="true">
           <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div>
           <div class="dna-card">
-            <div class="dna-heading"><span class="mini-dot"></span> SEQUENCE WORKSPACE</div>
+            <div class="dna-heading"><span class="hero-art-head"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h10M4 17h13"/></svg> SEQUENCE WORKSPACE</span></div>
             <div class="sequence-line"><span>01</span><b>ATGCGTACGTAGCTAG</b></div>
             <div class="sequence-line"><span>02</span><b>GCTAGCATCGATCGTA</b></div>
             <div class="sequence-line"><span>03</span><b>TTAGCGATCGGATCGA</b></div>
@@ -57,10 +67,61 @@
       <p><strong>Standalone tools process locally.</strong> FASTA parsing, validation and statistics stay in your browser. The optional <a href="ai.html">AI workspace</a> sends FASTA to the Worker only after you submit a request.</p>
     </section>
 
+    <section id="capabilities" class="section-block capabilities-section">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow section-kicker">Capabilities</p>
+          <h2>Four ways to examine your data</h2>
+          <p class="section-lede">Each capability has a defined input, an inspectable output and an explicit research-use limit. Use one or combine several.</p>
+        </div>
+      </div>
+      <div class="capability-grid">
+        <article class="capability-card">
+          <span class="capability-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.6-3 8.3-7 10-4-1.7-7-5.4-7-10V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></span>
+          <h3>FASTA validation</h3>
+          <p>Check record structure, duplicate identifiers and alphabet compliance for DNA or protein sequences.</p>
+          <a class="card-link" href="#tools">Open the validator</a>
+        </article>
+        <article class="capability-card">
+          <span class="capability-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 20V10m5 10V4m5 16v-7m5 7V8"/></svg></span>
+          <h3>Sequence statistics</h3>
+          <p>Compute length, GC content, ambiguous bases and N50 with per-record detail you can export.</p>
+          <a class="card-link" href="#tools">Calculate statistics</a>
+        </article>
+        <article class="capability-card">
+          <span class="capability-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></svg></span>
+          <h3>BLAST results</h3>
+          <p>Filter and summarise BLAST TSV output by identity, coverage and e-value without uploading it.</p>
+          <a class="card-link" href="blast.html">Analyze BLAST results</a>
+        </article>
+        <article class="capability-card">
+          <span class="capability-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="6" cy="5" r="2"/><circle cx="18" cy="7" r="2"/><circle cx="12" cy="19" r="2"/><path d="M7.7 6.4L11 17m5.4-9.1L13 17M8 5h8"/></svg></span>
+          <h3>Taxonomy consensus</h3>
+          <p>Derive a rank-aware consensus from BLAST hits and see exactly which evidence limits the call.</p>
+          <a class="card-link" href="taxonomy.html">Review taxonomy</a>
+        </article>
+        <article class="capability-card">
+          <span class="capability-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3l1.7 4.6L18 9l-4.3 1.4L12 15l-1.7-4.6L6 9l4.3-1.4L12 3z"/><path d="M18 15l.8 2.2L21 18l-2.2.8L18 21l-.8-2.2L15 18l2.2-.8L18 15z"/></svg></span>
+          <h3>AI research workspace</h3>
+          <p>Describe a question, review the exact plan, approve execution and inspect validated output.</p>
+          <a class="card-link" href="ai.html">Open AI workspace</a>
+        </article>
+        <article class="capability-card">
+          <span class="capability-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 18a8 8 0 1 1 16 0"/><path d="M12 18l4-5"/></svg></span>
+          <h3>Benchmark transparency</h3>
+          <p>Read how the tools are evaluated and which limitations are known before trusting an output.</p>
+          <a class="card-link" href="benchmark.html">View benchmarks</a>
+        </article>
+      </div>
+    </section>
+
     <section id="tools" class="section-block">
       <div class="section-heading">
-        <div><p class="eyebrow">Choose one task</p><h2>What would you like to do?</h2></div>
-        <p class="section-note">No account. No mandatory pipeline. Use either tool independently.</p>
+        <div>
+          <p class="eyebrow section-kicker">Choose one task</p>
+          <h2>What would you like to do?</h2>
+          <p class="section-lede">No account. No mandatory pipeline. Use either tool independently.</p>
+        </div>
       </div>
 
       <div class="tool-layout">
@@ -131,25 +192,107 @@
           </section>
         </section>
       </div>
-    </section>
 
-    <section id="workflow" class="how-section">
-      <div class="section-heading"><div><p class="eyebrow">Designed for independent tasks</p><h2>Simple now. Connected later.</h2></div><p class="section-note">Each tool will have its own input and downloadable output. Later, outputs can be passed to the next tool.</p></div>
-      <div class="steps-grid">
-        <article class="step-card"><span aria-hidden="true">01</span><h3>Choose a task</h3><p>Open only the tool you need. A full workflow is optional.</p></article>
-        <article class="step-card"><span aria-hidden="true">02</span><h3>Run the analysis</h3><p>Use clear defaults, with advanced settings added only when needed.</p></article>
-        <article class="step-card"><span aria-hidden="true">03</span><h3>Keep your result</h3><p>Review the output and download it in a reusable format.</p></article>
+      <div class="empty-state" role="note">
+        <span class="empty-state-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16v12H4z"/><path d="M4 7l2-3h12l2 3M8 12h8"/></svg></span>
+        <div><h3>Nothing calculated yet</h3><p>Load a FASTA file or paste a sequence, then choose <strong>Validate FASTA</strong> or <strong>Calculate statistics</strong>. Results, warnings and export actions appear in the workspace above — nothing is sent to a server for these standalone tools.</p></div>
+      </div>
+
+      <div class="output-grid" aria-label="What each analysis returns">
+        <article class="output-card"><span class="state-pill is-current">Validation output</span><h3>Per-record checks</h3><p>Each record is marked valid or invalid with a specific code, so you can trace every warning back to its input.</p></article>
+        <article class="output-card"><span class="state-pill is-supported">Statistics output</span><h3>Measured values</h3><p>Length, GC%, composition and N50 are computed locally and can be downloaded as JSON or CSV.</p></article>
+        <article class="output-card"><span class="state-pill is-restricted">Research-use limit</span><h3>Interpretation stays with you</h3><p>Outputs are screening evidence. They do not establish identity, pathogenicity or a clinical conclusion.</p></article>
       </div>
     </section>
 
+    <section id="workflow" class="how-section">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow section-kicker">Designed for independent tasks</p>
+          <h2>Simple now. Connected later.</h2>
+          <p class="section-lede">Standalone tools run on their own. The AI workspace adds a four-stage path when you need a heavier analysis, with approval before any external work.</p>
+        </div>
+      </div>
+      <div class="workflow-strip" aria-label="Four-stage research workflow">
+        <article class="workflow-stage" data-state="current">
+          <span class="stage-label">Stage 01</span><h3>Plan</h3>
+          <p>Describe the question. A plan lists the exact tools and parameters before anything runs.</p>
+          <span class="stage-state">You start here</span>
+        </article>
+        <article class="workflow-stage" data-state="gated">
+          <span class="stage-label">Stage 02</span><h3>Approve</h3>
+          <p>Review steps and data egress. Heavy tools wait for explicit consent and approval.</p>
+          <span class="stage-state">Consent required</span>
+        </article>
+        <article class="workflow-stage" data-state="queued">
+          <span class="stage-label">Stage 03</span><h3>Execute</h3>
+          <p>Approved jobs run in order. Status, parameters and limitations remain visible throughout.</p>
+          <span class="stage-state">After approval</span>
+        </article>
+        <article class="workflow-stage" data-state="verified">
+          <span class="stage-label">Stage 04</span><h3>Validate</h3>
+          <p>Inspect findings, evidence and caveats, then download artifacts with their report.</p>
+          <span class="stage-state">Evidence retained</span>
+        </article>
+      </div>
+      <ul class="workflow-legend" aria-label="Workflow state legend">
+        <li class="legend-current">Start</li>
+        <li class="legend-gated">Requires consent</li>
+        <li class="legend-queued">Queued work</li>
+        <li class="legend-verified">Reviewed output</li>
+      </ul>
+    </section>
+
     <section id="about" class="about-section">
-      <div><p class="eyebrow">Project status</p><h2>Milestone 01</h2><p>This is the first working foundation: FASTA validation and sequence statistics in the browser, with a matching Python command-line implementation in the repository.</p></div>
+      <div>
+        <p class="eyebrow section-kicker">Project status</p>
+        <h2>Transparent by design</h2>
+        <p>This working foundation provides FASTA validation and sequence statistics in the browser, with a matching Python command-line implementation in the repository. Every result carries its limitations so it can be judged on its evidence.</p>
+      </div>
       <div class="about-points"><p><span aria-hidden="true">✓</span> No frontend framework</p><p><span aria-hidden="true">✓</span> No upload to a server</p><p><span aria-hidden="true">✓</span> DNA and protein modes</p><p><span aria-hidden="true">✓</span> CSV and JSON exports</p></div>
     </section>
   </main>
 
-  <footer class="footer"><span>Smart Bioinformatics Toolkit <span class="footer-muted">· Milestone 0.1.0</span></span><span>Research use only · Not for clinical diagnosis</span></footer>
+  <footer class="site-footer">
+    <div class="footer-grid">
+      <div>
+        <div class="footer-brand">
+          <span class="brand-mark" aria-hidden="true">S<span>Bio</span></span>
+          <span class="brand-name">Smart Bioinformatics <span>Toolkit</span></span>
+        </div>
+        <p>A modular, browser-first research workspace for sequence checks. Inspect the inputs, keep the outputs, and read the caveats.</p>
+      </div>
+      <div>
+        <h2 class="footer-heading">Tools</h2>
+        <ul class="footer-links">
+          <li><a href="#tools">FASTA validator</a></li>
+          <li><a href="blast.html">BLAST results</a></li>
+          <li><a href="taxonomy.html">Taxonomy consensus</a></li>
+          <li><a href="ai.html">AI workspace</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2 class="footer-heading">Learn</h2>
+        <ul class="footer-links">
+          <li><a href="#workflow">How it works</a></li>
+          <li><a href="benchmark.html">Benchmarks</a></li>
+          <li><a href="#about">Project status</a></li>
+          <li><a href="#capabilities">Capabilities</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2 class="footer-heading">Principles</h2>
+        <ul class="footer-links">
+          <li><a href="#tools">Local processing</a></li>
+          <li><a href="ai.html">Plan before execution</a></li>
+          <li><a href="#workflow">Visible evidence</a></li>
+          <li><a href="#about">Research use only</a></li>
+        </ul>
+      </div>
+    </div>
+    <p class="footer-disclaimer"><strong>Research-use disclaimer.</strong> This toolkit produces screening evidence for research and teaching. It is not a diagnostic device, does not establish organism identity or pathogenicity, and is not validated for clinical, forensic or regulatory decisions. All outputs require independent interpretation by a qualified user.</p>
+    <div class="footer-bottom"><span>Smart Bioinformatics Toolkit · Milestone 0.5.0</span><span>No external fonts, images or CDNs · Static, framework-free pages</span></div>
+  </footer>
   <script type="module" src="js/app.js"></script>
 </body>
 </html>
-

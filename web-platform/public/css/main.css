@@ -26,14 +26,26 @@
   --info-bg: #e9f3f8;
   --focus: #0b6159;
   --focus-on-dark: #a9ecdf;
+  /* Visual-system extensions: darker anchors, stronger borders and a spacing rhythm. */
+  --navy-deep: #0b1f34;
+  --teal-deep: #0b5f59;
+  --border-strong: #b9cdd6;
+  --surface-alt: #eef5f7;
   --radius-sm: 8px;
   --radius: 12px;
   --radius-lg: 18px;
+  --radius-xl: 24px;
   --shadow-sm: 0 1px 2px rgba(15, 39, 64, .06);
   --shadow: 0 12px 32px rgba(15, 39, 64, .08);
+  --shadow-md: 0 16px 36px rgba(15, 39, 64, .11);
   --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   --maxw: 1180px;
+  --space-xs: 8px;
+  --space-sm: 14px;
+  --space-md: 22px;
+  --space-lg: 34px;
+  --space-xl: 56px;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -476,7 +488,13 @@ caption { text-align: left; padding: 10px 12px; color: var(--muted); font-size: 
   background: var(--success-bg); color: var(--success);
   font-size: .7rem; font-weight: 800; white-space: nowrap;
 }
-.badge-mode.mock { background: var(--warning-bg); color: var(--warning); }
+.badge-mode.mock, .badge-mode.unavailable { background: var(--warning-bg); color: var(--warning); }
+.backend-status {
+  max-width: 1120px; margin: 0 auto 18px; padding: 12px 14px; border-radius: var(--radius-sm);
+  background: var(--warning-bg); border: 1px solid #ecd5a7; color: var(--ink); font-size: .875rem;
+}
+.backend-status.available { background: var(--success-bg); border-color: #b9dfcf; }
+.backend-detail { max-width: 1120px; margin: -8px auto 18px; font-size: .75rem; color: var(--muted); }
 .status-line { margin: 14px 0 0; font-size: .8125rem; color: var(--ink-soft); min-height: 1.3em; }
 .status-line:empty { margin: 0; min-height: 0; }
 .plan-meta { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
