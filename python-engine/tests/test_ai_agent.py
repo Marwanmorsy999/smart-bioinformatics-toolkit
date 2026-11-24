@@ -132,6 +132,10 @@ def test_poll_and_run_posts_result_once(monkeypatch, tmp_path):
         key.lower() == "x-agent-token" and value == "agent-token"
         for key, value in calls[0].headers.items()
     )
+    assert any(
+        key.lower() == "user-agent" and value == "smart-bioinformatics-toolkit-agent/1.0"
+        for key, value in calls[0].headers.items()
+    )
     assert calls[1].full_url == f"http://worker.test/api/ai/jobs/{job['id']}/result"
     posted = json.loads(calls[1].data.decode("utf-8"))
     assert posted["execution_mode"] == "real"

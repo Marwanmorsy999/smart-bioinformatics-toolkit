@@ -35,6 +35,8 @@ from smartbio.plugins import MAX_TEXT_BYTES, safe_filename
 
 DEFAULT_TIMEOUT = 30
 POLL_INTERVAL_SECONDS = 5
+# Cloudflare challenges urllib's default User-Agent on agent polling requests.
+AGENT_USER_AGENT = "smart-bioinformatics-toolkit-agent/1.0"
 _TEXT_INPUT_KEYS = (
     "fasta_text",
     "tsv_text",
@@ -310,7 +312,11 @@ def _request_json(
     data: dict[str, Any] | None = None,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> Any:
-    headers = {"Accept": "application/json", "X-Agent-Token": token}
+    headers = {
+        "Accept": "application/json",
+        "X-Agent-Token": token,
+        "User-Agent": AGENT_USER_AGENT,
+    }
     body: bytes | None = None
     if data is not None:
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
