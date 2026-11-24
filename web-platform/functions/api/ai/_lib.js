@@ -3,7 +3,7 @@
 // Reuses the response/FH patterns from functions/api/blast/_lib.js.
 
 import { SQL as BLAST_SQL, htmlEscape, hashInput, validateFasta } from "../blast/_lib.js";
-import { isKnownTool } from "./registry.js";
+import { getTool, isKnownTool } from "./registry.js";
 
 export { htmlEscape, hashInput, validateFasta };
 
@@ -343,12 +343,39 @@ export function validateApprovalsPayload(payload) {
   return { valid: true, error: null };
 }
 
+// Artifacts the local agent adds for every job, or that the shared wire
+// contract names explicitly (shared/AI_PLATFORM_CONTRACT.md §3), rather than
+// through a tool's output_schema. These are generic: no tool id is involved.
+const AGENT_GENERATED_ARTIFACTS = new Set(["report.html", "analysis.json"]);
+const EXECUTION_MODES = new Set(["real", "mock"]);
+
+// A declared output (e.g. "validation") may be delivered as the logical key
+// itself or serialized to a file (e.g. "validation.json"). Both forms satisfy
+// the same declaration; no tool-specific name list is needed.
+function matchesDeclaredName(artifactName, declaredName) {
+  if (artifactName === declaredName) return true;
+  const dot = artifactName.lastIndexOf(".");
+  return dot > 0 && artifactName.slice(0, dot) === declaredName;
+}
+
+function matchesJsonType(value, type) {
+  switch (type) {
+    case "object": return value !== null && typeof value === "object" && !Array.isArray(value);
+    case "array": return Array.isArray(value);
+    case "number": return typeof value === "number" && Number.isFinite(value);
+    case "integer": return Number.isInteger(value);
+    case "boolean": return typeof value === "boolean";
+    case "string": return typeof value === "string";
+    default: return true; // unconstrained when the schema has no known type
+  }
+}
+
 export function validateResultShape(payload, expectedJobId) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return { valid: false, error: "Result must be an object." };
   if (typeof payload.job_id !== "string") return { valid: false, error: "job_id is required." };
   if (payload.job_id !== expectedJobId) return { valid: false, error: "job_id does not match the URL." };
   if (!["succeeded", "failed"].includes(payload.status)) return { valid: false, error: "status must be succeeded or failed." };
-  if (!["real", "mock"].includes(payload.execution_mode)) return { valid: false, error: "execution_mode must be real or mock." };
+  if (!EXECUTION_MODES.has(payload.execution_mode)) return { valid: false, error: "execution_mode must be real or mock." };
   if (!Array.isArray(payload.artifacts) || payload.artifacts.length > 20) {
     return { valid: false, error: "artifacts must be an array with at most 20 entries." };
   }
@@ -367,17 +394,90 @@ export function validateResultShape(payload, expectedJobId) {
 
   const provenance = payload.provenance;
   if (!provenance || typeof provenance !== "object" || Array.isArray(provenance)) return { valid: false, error: "provenance must be an object." };
-  if (typeof provenance.run_id !== "string" || typeof provenance.step_id !== "string") {
-    return { valid: false, error: "provenance run_id and step_id are required." };
+  if (typeof provenance.run_id !== "string" || !provenance.run_id) return { valid: false, error: "provenance.run_id is required." };
+  if (typeof provenance.step_id !== "string" || !provenance.step_id) return { valid: false, error: "provenance.step_id is required." };
+  if (!provenance.tool || typeof provenance.tool.id !== "string" || !provenance.tool.id) {
+    return { valid: false, error: "provenance.tool.id is required." };
   }
-  if (!provenance.tool || typeof provenance.tool.id !== "string") return { valid: false, error: "provenance.tool.id is required." };
+  if (typeof provenance.tool.version !== "string" || !provenance.tool.version) {
+    return { valid: false, error: "provenance.tool.version is required." };
+  }
+  if (typeof provenance.tool.backend !== "string" || !provenance.tool.backend) {
+    return { valid: false, error: "provenance.tool.backend is required." };
+  }
   if (!provenance.input || typeof provenance.input.dataset_id !== "string") return { valid: false, error: "provenance.input.dataset_id is required." };
+  // A missing hash means "not computed"; the key itself is always required.
+  if (!Object.hasOwn(provenance.input, "sha256")) return { valid: false, error: "provenance.input.sha256 must be present (may be null)." };
   if (!provenance.parameters || typeof provenance.parameters !== "object" || Array.isArray(provenance.parameters)) {
     return { valid: false, error: "provenance.parameters must be an object." };
   }
   if (!provenance.database || typeof provenance.database !== "object") return { valid: false, error: "provenance.database is required." };
   if (!provenance.output || !isStringArray(provenance.output.artifact_names)) return { valid: false, error: "provenance.output.artifact_names must be strings." };
+  if (typeof provenance.output.sha256 !== "string" || !provenance.output.sha256) {
+    return { valid: false, error: "provenance.output.sha256 is required." };
+  }
   if (!provenance.timing || typeof provenance.timing !== "object") return { valid: false, error: "provenance.timing is required." };
+  if (typeof provenance.timing.started_at !== "string" || !provenance.timing.started_at) {
+    return { valid: false, error: "provenance.timing.started_at is required." };
+  }
+  if (typeof provenance.timing.finished_at !== "string" || !provenance.timing.finished_at) {
+    return { valid: false, error: "provenance.timing.finished_at is required." };
+  }
+  if (!EXECUTION_MODES.has(provenance.execution_mode)) {
+    return { valid: false, error: "provenance.execution_mode must be real or mock." };
+  }
+
+  // Output contracts are read from the registry, never hardcoded per tool.
+  const tool = getTool(provenance.tool.id);
+  if (!tool) return { valid: false, error: `Unknown provenance.tool.id: ${provenance.tool.id}` };
+  const outputSchema = tool.output_schema ?? {};
+  const properties = outputSchema.properties ?? {};
+  const declaredNames = [...new Set([...Object.keys(properties), ...(isStringArray(outputSchema.required) ? outputSchema.required : [])])];
+  for (const artifact of payload.artifacts) {
+    const allowed = declaredNames.some((name) => matchesDeclaredName(artifact.name, name)) || AGENT_GENERATED_ARTIFACTS.has(artifact.name);
+    if (!allowed) {
+      return { valid: false, error: `Unexpected artifact name: ${artifact.name} (not declared in output_schema.properties).` };
+    }
+  }
+  // Failed steps legitimately emit only the generic report; declarations
+  // describe successful outputs.
+  if (payload.status === "succeeded") {
+    for (const name of outputSchema.required ?? []) {
+      if (typeof name !== "string" || !name) return { valid: false, error: "output_schema.required must contain names." };
+      const inArtifacts = payload.artifacts.some((artifact) => matchesDeclaredName(artifact.name, name));
+      const inProvenance = provenance.output.artifact_names.some((submitted) => matchesDeclaredName(submitted, name));
+      if (!inArtifacts || !inProvenance) {
+        return { valid: false, error: `Missing declared output: ${name} (artifacts and provenance.output.artifact_names must both contain it).` };
+      }
+      const type = properties[name]?.type;
+      if (["object", "array", "number", "integer", "boolean"].includes(type)) {
+        const jsonArtifact = payload.artifacts.some((artifact) => (
+          matchesDeclaredName(artifact.name, name) && (artifact.kind === "json" || artifact.name.endsWith(".json"))
+        ));
+        if (!jsonArtifact) {
+          return { valid: false, error: `Declared output ${name} must be delivered as a JSON artifact.` };
+        }
+      }
+    }
+  }
+  for (const [name, rule] of Object.entries(properties)) {
+    const type = rule?.type;
+    if (!["object", "array", "number", "integer", "boolean", "string"].includes(type)) continue;
+    for (const artifact of payload.artifacts) {
+      if (!matchesDeclaredName(artifact.name, name)) continue;
+      if (artifact.kind !== "json" && !artifact.name.endsWith(".json")) continue;
+      let value;
+      try {
+        value = JSON.parse(artifact.content);
+      } catch {
+        return { valid: false, error: `Declared output ${name} in artifact ${artifact.name} is not valid JSON.` };
+      }
+      if (type === "string") continue; // serialized text documents are strings on the wire
+      if (!matchesJsonType(value, type)) {
+        return { valid: false, error: `Declared output ${name} in artifact ${artifact.name} must be a JSON ${type}.` };
+      }
+    }
+  }
 
   const validation = payload.validation;
   if (!validation || !["pass", "warn", "fail"].includes(validation.status)) {

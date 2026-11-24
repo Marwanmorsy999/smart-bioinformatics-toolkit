@@ -47,6 +47,7 @@ def build_report_html(
     validation: dict[str, Any] | None,
     explanation: dict[str, Any] | None,
     provenance: dict[str, Any] | None,
+    education: dict[str, Any] | None = None,
 ) -> str:
     """Build an escaped, dependency-free HTML report for one job."""
     plan = plan or {}
@@ -55,6 +56,8 @@ def build_report_html(
     validation = validation or {}
     explanation = explanation or {}
     provenance = provenance or {}
+    education = education or {}
+    locality = provenance.get("locality_receipt") or {}
 
     parts: list[str] = []
     parts.append("<!DOCTYPE html>")
@@ -212,6 +215,66 @@ def build_report_html(
                 f"{ref.get('key')} — {ref.get('title')} ({ref.get('url')}); verified: {ref.get('verified')}"
                 for ref in explanation.get("references") or []
             ]
+        )
+    )
+
+    # Locality receipt (FR-8.5)
+    parts.append("<h2>Data locality</h2>")
+    parts.append(
+        _table(
+            ["Field", "Value"],
+            [
+                ["Execution mode", locality.get("mode")],
+                ["No external egress", locality.get("no_external_egress")],
+            ],
+        )
+    )
+    parts.append("<p><strong>Local operations:</strong></p>")
+    parts.append(
+        _list(
+            [
+                f"{item.get('name')} — {item.get('backend')}"
+                for item in locality.get("local_operations") or []
+            ]
+        )
+    )
+    parts.append("<p><strong>External transmissions:</strong></p>")
+    parts.append(
+        _table(
+            ["Step", "Destination", "Bytes sent", "Input SHA-256", "Consent ref", "Timestamp"],
+            [
+                [
+                    item.get("step_id"),
+                    item.get("destination"),
+                    item.get("bytes_sent"),
+                    item.get("input_sha256"),
+                    item.get("consent"),
+                    item.get("timestamp"),
+                ]
+                for item in locality.get("external_transmissions") or []
+            ],
+        )
+    )
+    parts.append("<p><strong>Consent records:</strong></p>")
+    parts.append(_list(locality.get("consent_records")))
+
+    # Education notes (FR-8.6)
+    parts.append("<h2>Education notes</h2>")
+    notes = education.get("notes") if isinstance(education, dict) else None
+    if isinstance(education, list):
+        notes = education
+    parts.append(
+        _table(
+            ["Rule / threshold", "Why insufficient", "What would help", "Verified reference"],
+            [
+                [
+                    note.get("rule_or_threshold"),
+                    note.get("why_insufficient"),
+                    note.get("what_would_help"),
+                    note.get("verified_reference"),
+                ]
+                for note in notes or []
+            ],
         )
     )
 

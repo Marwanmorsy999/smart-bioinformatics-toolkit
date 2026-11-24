@@ -48,10 +48,16 @@ async function artifact(name, kind, content) {
 }
 
 async function phyloResult(jobId, datasetId) {
+  // phylogenetics.workflow declares eight outputs; submit all of them so the
+  // result matches output_schema.required at the Worker gate.
   const artifacts = [
+    await artifact("phylo_validation.json", "json", '{"sequence_count":3,"min_length_bp":12}'),
     await artifact("alignment.fasta", "fasta", ">seq1\nACGTACGTACGT\n>seq2\nACGTTCGTACGT\n>seq3\nACGTACGTTCGT\n"),
+    await artifact("alignment_summary.json", "json", '{"aligned_records":3}'),
     await artifact("tree.nwk", "newick", "(seq1:0.05,seq2:0.10,seq3:0.10);\n"),
     await artifact("tree.svg", "svg", '<svg xmlns="http://www.w3.org/2000/svg"><text>tree</text></svg>'),
+    await artifact("tree_stats.json", "json", '{"taxa_count":3}'),
+    await artifact("phylo_report.json", "json", '{"input_sha256":"abc"}'),
     await artifact("phylo_report.html", "html", "<html><body>phylo report</body></html>")
   ];
   return {
@@ -222,7 +228,10 @@ test("website request → approve → real result → run/report/provenance retu
   assert.equal(run.jobs[0].status, "succeeded");
   assert.deepEqual(
     new Set(run.artifacts.map((item) => item.name)),
-    new Set(["alignment.fasta", "tree.nwk", "tree.svg", "phylo_report.html"])
+    new Set([
+      "phylo_validation.json", "alignment.fasta", "alignment_summary.json", "tree.nwk",
+      "tree.svg", "tree_stats.json", "phylo_report.json", "phylo_report.html"
+    ])
   );
   assert.ok(run.artifacts.every((item) => typeof item.content === "string" && item.content.length > 0));
   assert.equal(run.validation.status, "pass");
@@ -230,7 +239,10 @@ test("website request → approve → real result → run/report/provenance retu
   const reportResponse = await handleGetReport(makeGetRequest(`/api/ai/runs/${jobId}/report`), env, jobId);
   assert.equal(reportResponse.status, 200);
   const html = await reportResponse.text();
-  for (const name of ["alignment.fasta", "tree.nwk", "tree.svg", "phylo_report.html"]) {
+  for (const name of [
+    "phylo_validation.json", "alignment.fasta", "alignment_summary.json", "tree.nwk",
+    "tree.svg", "tree_stats.json", "phylo_report.json", "phylo_report.html"
+  ]) {
     assert.ok(html.includes(name), `report omits artifact ${name}`);
   }
   assert.match(html, /Reproducibility/);
@@ -245,7 +257,10 @@ test("website request → approve → real result → run/report/provenance retu
   assert.equal(provenance.execution_mode, "real");
   assert.deepEqual(
     new Set(provenance.output.artifact_names),
-    new Set(["alignment.fasta", "tree.nwk", "tree.svg", "phylo_report.html"])
+    new Set([
+      "phylo_validation.json", "alignment.fasta", "alignment_summary.json", "tree.nwk",
+      "tree.svg", "tree_stats.json", "phylo_report.json", "phylo_report.html"
+    ])
   );
 });
 

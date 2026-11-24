@@ -20,11 +20,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from smartbio.aiagent.education import build_education
 from smartbio.aiagent.explanation import (
     apply_llm_phrasing,
     build_explanation,
     check_explanation,
 )
+from smartbio.aiagent.locality import build_locality_receipt
 from smartbio.aiagent.plugins import get_plugin
 from smartbio.aiagent.provenance import build_provenance
 from smartbio.aiagent.report import build_report_html
@@ -226,6 +228,22 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
         }
 
     finished_at = _now()
+    # FR-8.5 / FR-8.6 are computed by the agent, never by a plugin. Both are
+    # additive: existing result/provenance fields keep their exact shape.
+    locality_receipt = build_locality_receipt(
+        job,
+        step,
+        execution_mode=execution_mode,
+        input_hash=_input_hash(inputs),
+        tool_run_meta=tool_run_meta,
+        now=finished_at,
+    )
+    education = build_education(step, artifacts, validation)
+    # The Worker's report builder is handed `explanation` only; mirror the
+    # education notes there as an extra field so its Education section renders
+    # without changing the Worker's result endpoint.
+    explanation["education"] = education
+
     # The report embeds a provenance snapshot. That snapshot is taken before
     # report.html exists; the submitted provenance below covers every artifact.
     report_provenance = build_provenance(
@@ -238,8 +256,15 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
         input_hash=_input_hash(inputs),
         execution_mode=execution_mode,
     )
+    report_provenance["locality_receipt"] = locality_receipt
     report_html = build_report_html(
-        plan, [job], artifacts, validation, explanation, report_provenance
+        plan,
+        [job],
+        artifacts,
+        validation,
+        explanation,
+        report_provenance,
+        education=education,
     )
     artifacts.append(
         {
@@ -260,6 +285,7 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
         input_hash=_input_hash(inputs),
         execution_mode=execution_mode,
     )
+    provenance["locality_receipt"] = locality_receipt
 
     plugin_ok = tool_run_meta.get("status") != "failed"
     status = "succeeded" if plugin_ok and validation["status"] != "fail" else "failed"
@@ -271,6 +297,8 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
         "provenance": provenance,
         "validation": validation,
         "explanation": explanation,
+        "education": education,
+        "locality_receipt": locality_receipt,
         "logs": logs,
     }
 

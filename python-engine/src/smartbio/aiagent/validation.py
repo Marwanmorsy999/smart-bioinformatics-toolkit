@@ -113,6 +113,23 @@ def validate(
             else:
                 documents[name] = decoded
 
+    # Adapter-declared outputs are documented as JSON documents. Presence and
+    # emptiness are checked above; here a declared JSON artifact must decode to
+    # an object, never to a bare list/scalar. The rule is name-driven so new
+    # adapters need no change to this module.
+    rules.append("declared_json_objects")
+    for name in required_names:
+        artifact = by_name.get(name)
+        if artifact is None or not str(artifact.get("content", "")).strip():
+            continue
+        if artifact.get("kind") != "json" and not name.endswith(".json"):
+            continue
+        decoded = documents.get(name)
+        if decoded is None:
+            continue  # invalid_json is already reported above
+        if not isinstance(decoded, dict):
+            fail(f"declared_artifact_not_object:{name}")
+
     rules.append("sha256_consistency")
     for name, artifact in by_name.items():
         expected = artifact.get("sha256")

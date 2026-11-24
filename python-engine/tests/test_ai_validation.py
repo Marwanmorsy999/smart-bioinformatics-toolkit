@@ -36,7 +36,10 @@ def _profile_artifacts(tmp_path):
 
 
 def _with_json(artifacts, name, document):
-    content = json.dumps(document, indent=2, ensure_ascii=False)
+    return _with_content(artifacts, name, json.dumps(document, indent=2, ensure_ascii=False))
+
+
+def _with_content(artifacts, name, content):
     updated = []
     for artifact in artifacts:
         if artifact["name"] == name:
@@ -97,6 +100,46 @@ def test_validation_never_modifies_scientific_values(tmp_path):
     before = copy.deepcopy(artifacts)
     validate(_profile_step(), artifacts)
     assert artifacts == before
+
+
+def test_declared_required_artifacts_from_meta_must_be_present_and_nonempty(tmp_path):
+    artifacts = _profile_artifacts(tmp_path)
+    meta = {"required_artifacts": ["validation.json", "statistics.json"]}
+    assert validate(_profile_step(), artifacts, meta)["status"] == "pass"
+
+    missing = [a for a in artifacts if a["name"] != "statistics.json"]
+    result = validate(_profile_step(), missing, meta)
+    assert result["status"] == "fail"
+    assert "missing_artifact:statistics.json" in result["flags"]
+
+    empty = _with_content(artifacts, "statistics.json", "   ")
+    result = validate(_profile_step(), empty, meta)
+    assert result["status"] == "fail"
+    assert "empty_artifact:statistics.json" in result["flags"]
+
+    # No meta: the legacy per-tool union still applies (backward compatible).
+    assert "required_artifacts_present" in validate(_profile_step(), artifacts)["checked_rules"]
+
+
+def test_declared_json_artifact_must_decode_to_object(tmp_path):
+    artifacts = _profile_artifacts(tmp_path)
+    meta = {"required_artifacts": ["validation.json"]}
+
+    result = validate(_profile_step(), _with_json(artifacts, "validation.json", [1, 2]), meta)
+    assert result["status"] == "fail"
+    assert "declared_artifact_not_object:validation.json" in result["flags"]
+    assert "declared_json_objects" in result["checked_rules"]
+
+    result = validate(_profile_step(), _with_content(artifacts, "validation.json", "{not json"), meta)
+    assert result["status"] == "fail"
+    assert "invalid_json:validation.json" in result["flags"]
+
+
+def test_execution_mode_label_from_meta_is_checked(tmp_path):
+    artifacts = _profile_artifacts(tmp_path)
+    result = validate(_profile_step(), artifacts, {"execution_mode": "simulated"})
+    assert result["status"] == "fail"
+    assert "invalid_execution_mode:simulated" in result["flags"]
 
 
 def test_taxonomy_verdict_without_evidence_fails():

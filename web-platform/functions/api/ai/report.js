@@ -4,13 +4,20 @@
 import { htmlEscape } from "./_lib.js";
 
 const e = (value) => htmlEscape(value ?? "");
+// Consent references are redacted a second time at render time: a bearer token
+// must never reach the HTML report even if a caller supplies a malformed one.
+const safeRef = (value) => {
+  const text = String(value ?? "");
+  if (/^(consent_|tk_|sk_|bearer\s)/i.test(text) || /^[a-f0-9]{32,}$/i.test(text)) return "[redacted]";
+  return e(text);
+};
 const list = (values, fallback = "None recorded.") => {
   const items = Array.isArray(values) ? values.filter((v) => typeof v === "string" && v.trim()) : [];
   if (!items.length) return `<p>${fallback}</p>`;
   return `<ul>${items.map((item) => `<li>${e(item)}</li>`).join("")}</ul>`;
 };
 
-export function buildReportHtml({ job, plan, artifacts, validation, explanation, provenance, mode, createdAt }) {
+export function buildReportHtml({ job, plan, artifacts, validation, explanation, provenance, mode, createdAt, localityReceipt, education }) {
   const artifactRows = (Array.isArray(artifacts) ? artifacts : []).map((artifact) => `
     <tr>
       <td>${e(artifact.name)}</td>
@@ -45,6 +52,31 @@ export function buildReportHtml({ job, plan, artifacts, validation, explanation,
   const tool = provenance?.tool ?? {};
   const input = provenance?.input ?? {};
   const timing = provenance?.timing ?? {};
+  // The result endpoint forwards `provenance` and `explanation`; the optional
+  // arguments let callers pass the receipt/education explicitly when available.
+  const receipt = localityReceipt ?? provenance?.locality_receipt ?? null;
+  const educationNotes = education?.notes ?? explanation?.education?.notes ?? [];
+
+  const localOperationRows = (Array.isArray(receipt?.local_operations) ? receipt.local_operations : []).map((op) => `
+    <tr><td>${e(op?.name ?? op?.tool_id)}</td><td>${e(op?.step_id)}</td><td>${e(op?.backend)}</td></tr>`).join("");
+  const transmissionRows = (Array.isArray(receipt?.external_transmissions) ? receipt.external_transmissions : []).map((tx) => `
+    <tr>
+      <td>${e(tx?.step_id)}</td>
+      <td>${e(tx?.destination)}</td>
+      <td>${e(tx?.bytes_sent)}</td>
+      <td><code>${e(tx?.input_sha256)}</code></td>
+      <td>${safeRef(tx?.consent)}</td>
+      <td>${e(tx?.timestamp)}</td>
+    </tr>`).join("");
+  const consentRecordItems = (Array.isArray(receipt?.consent_records) ? receipt.consent_records : [])
+    .map((ref) => `<li>${safeRef(ref)}</li>`).join("");
+  const educationNoteRows = (Array.isArray(educationNotes) ? educationNotes : []).map((note) => `
+    <tr>
+      <td>${e(note?.rule_or_threshold)}</td>
+      <td>${e(note?.why_insufficient)}</td>
+      <td>${e(note?.what_would_help)}</td>
+      <td>${note?.verified_reference ? e(note.verified_reference) : "None (no verified reference)"}</td>
+    </tr>`).join("");
 
   return `<!doctype html>
 <html lang="en">
@@ -111,6 +143,22 @@ export function buildReportHtml({ job, plan, artifacts, validation, explanation,
     </tbody>
   </table>
   <p class="note">To reproduce, run the registered tool with the exact parameters and dataset hash above through the local execution agent. Artifact hashes are verified before display.</p>
+
+  <h2>Data locality</h2>
+  <table>
+    <tbody>
+      <tr><th scope="row">Receipt mode</th><td>${e(receipt?.mode ?? "not recorded")}</td></tr>
+      <tr><th scope="row">No external egress</th><td>${e(receipt?.no_external_egress)}</td></tr>
+    </tbody>
+  </table>
+  <p>Local operations:</p>
+  ${localOperationRows ? `<table><thead><tr><th scope="col">Tool / step</th><th scope="col">Step id</th><th scope="col">Backend</th></tr></thead><tbody>${localOperationRows}</tbody></table>` : "<p>No local operations recorded.</p>"}
+  <p>External transmissions:</p>
+  ${transmissionRows ? `<table><thead><tr><th scope="col">Step</th><th scope="col">Destination</th><th scope="col">Bytes sent</th><th scope="col">Input SHA-256</th><th scope="col">Consent ref</th><th scope="col">Timestamp</th></tr></thead><tbody>${transmissionRows}</tbody></table>` : "<p>No external transmissions (no data left the machine).</p>"}
+  <p>Consent records:</p>${consentRecordItems ? `<ul>${consentRecordItems}</ul>` : "<p>None recorded.</p>"}
+
+  <h2>Education notes</h2>
+  ${educationNoteRows ? `<table><thead><tr><th scope="col">Rule / threshold</th><th scope="col">Why insufficient</th><th scope="col">What would help</th><th scope="col">Verified reference</th></tr></thead><tbody>${educationNoteRows}</tbody></table>` : "<p>No education notes recorded.</p>"}
 
   <h2>Limitations</h2>
   ${list(limitations)}

@@ -46,13 +46,19 @@ async function approve(env, planId, approvals, consents) {
   return { response, body: await response.json() };
 }
 
-function makeResult(jobId, datasetId, overrides = {}) {
-  const content = JSON.stringify({ validation: { summary: { total_records: 2 } }, statistics: { summary: { gc_percent_mean: 50 } } });
+async function makeResult(jobId, datasetId, overrides = {}) {
+  // sequence-stats.profile declares "validation" and "statistics" as object
+  // outputs; the agent serializes them as validation.json / statistics.json.
+  const artifacts = [
+    { name: "validation.json", kind: "json", sha256: "", content: JSON.stringify({ total_records: 2, valid_records: 2, invalid_records: 0, records: [] }) },
+    { name: "statistics.json", kind: "json", sha256: "", content: JSON.stringify({ summary: { total_records: 2, gc_percent_mean: 50 }, records: [] }) }
+  ];
+  for (const artifact of artifacts) artifact.sha256 = await hashInput(artifact.content);
   return {
     job_id: jobId,
     status: "succeeded",
     execution_mode: "real",
-    artifacts: [{ name: "analysis.json", kind: "json", sha256: "", content }],
+    artifacts,
     provenance: {
       run_id: jobId,
       step_id: "step_1",
@@ -60,14 +66,14 @@ function makeResult(jobId, datasetId, overrides = {}) {
       input: { dataset_id: datasetId, sha256: "abc123", filename: "sample.fasta" },
       parameters: { sequence_type: "dna" },
       database: { name: null, release: null, retrieved_at: null },
-      output: { artifact_names: ["analysis.json"], sha256: "def456" },
+      output: { artifact_names: artifacts.map((item) => item.name), sha256: await hashInput("outputs") },
       timing: { started_at: new Date(NOW).toISOString(), finished_at: new Date(NOW + 2000).toISOString() },
       execution_mode: "real"
     },
     validation: { status: "pass", flags: [], checked_rules: ["schema", "hash"] },
     explanation: {
       summary: "Two sequences were validated.",
-      findings: [{ text: "Mean GC is 50%.", artifact: "analysis.json", field_path: "statistics.summary.gc_percent_mean" }],
+      findings: [{ text: "Mean GC is 50%.", artifact: "statistics.json", field_path: "summary.gc_percent_mean" }],
       limitations: ["Descriptive statistics only."],
       references: [],
       uncertainty: "low"
@@ -231,8 +237,9 @@ test("end-to-end API: request, plan, approval, authenticated jobs, result, run, 
   const pollAgain = await handlePollJobs(makeGetRequest("/api/ai/jobs", { "X-Agent-Token": "test-agent-token" }), env, { now: NOW });
   assert.equal((await pollAgain.json()).jobs.length, 0);
 
-  const result = makeResult(jobId, created.body.dataset_id);
-  result.artifacts[0].content = "<script>alert(1)</script>";
+  const result = await makeResult(jobId, created.body.dataset_id);
+  // Keep the JSON object contract intact while embedding an XSS payload.
+  result.artifacts[0].content = JSON.stringify({ note: "<script>alert(1)</script>" });
   result.artifacts[0].sha256 = await hashInput(result.artifacts[0].content);
   result.explanation.summary = "<img src=x onerror=alert(1)> unsafe summary";
   const badHash = await handleSubmitResult(
@@ -262,7 +269,10 @@ test("end-to-end API: request, plan, approval, authenticated jobs, result, run, 
   assert.equal(runBody.execution_mode, "real");
   assert.equal(runBody.plan.plan_id, created.body.plan_id);
   assert.equal(runBody.jobs[0].status, "succeeded");
-  assert.equal(runBody.artifacts[0].name, "analysis.json");
+  assert.deepEqual(
+    new Set(runBody.artifacts.map((item) => item.name)),
+    new Set(["validation.json", "statistics.json"])
+  );
   assert.equal(runBody.validation.status, "pass");
   assert.equal(runBody.explanation.uncertainty, "low");
   assert.equal(runBody.report_url, `/api/ai/runs/${jobId}/report`);
@@ -284,7 +294,7 @@ test("end-to-end API: request, plan, approval, authenticated jobs, result, run, 
   assert.equal(provenance.tool.id, "sequence-stats.profile");
   assert.equal(provenance.execution_mode, "real");
 
-  assert.equal(fake.state.tables.artifacts.length, 1);
+  assert.equal(fake.state.tables.artifacts.length, 2);
   assert.equal(fake.state.tables.tool_runs.length, 1);
   assert.equal(fake.state.tables.report_runs.length, 1);
   assert.ok(fake.state.tables.audit_events.length >= 5);
@@ -297,7 +307,7 @@ test("mock execution mode is reported and downgrades validation", async () => {
   const poll = await handlePollJobs(makeGetRequest("/api/ai/jobs", { "X-Agent-Token": "test-agent-token" }), env, {});
   const jobId = (await poll.json()).jobs[0].id;
 
-  const result = makeResult(jobId, created.body.dataset_id, {
+  const result = await makeResult(jobId, created.body.dataset_id, {
     execution_mode: "mock",
     validation: { status: "pass", flags: [], checked_rules: ["schema"] }
   });
@@ -348,9 +358,9 @@ test("GET /api/tools lists the core tools with availability flags", async () => 
   assert.equal(body.execution_mode, "real");
 });
 
-test("result shape validation rejects missing fields", () => {
+test("result shape validation rejects missing fields", async () => {
   assert.equal(validateResultShape({}, "job_0123456789abcdef").valid, false);
-  assert.equal(validateResultShape(makeResult("job_0123456789abcdef", "ds_0123456789abcdef"), "job_other").valid, false);
+  assert.equal(validateResultShape(await makeResult("job_0123456789abcdef", "ds_0123456789abcdef"), "job_other").valid, false);
 });
 
 test("migration SQL runs in real SQLite: 11 AI tables + blast_consents, blast_requests untouched", () => {
@@ -520,7 +530,7 @@ test("operator mock mode overrides an agent-reported real result everywhere", as
   const { fake, env } = envWithDb();
   env.AI_EXECUTION_MODE = "mock";
   const { datasetId, jobId } = await queuedJobId(env);
-  const result = makeResult(jobId, datasetId); // self-reported "real"
+  const result = await makeResult(jobId, datasetId); // self-reported "real"
   result.artifacts[0].sha256 = await hashInput(result.artifacts[0].content);
 
   const submitted = await submit(jobId, datasetId, result, env);
@@ -543,7 +553,7 @@ test("operator mock mode overrides an agent-reported real result everywhere", as
 test("result submissions without execution_mode are rejected", async () => {
   const { env } = envWithDb();
   const { datasetId, jobId } = await queuedJobId(env);
-  const result = makeResult(jobId, datasetId);
+  const result = await makeResult(jobId, datasetId);
   delete result.execution_mode;
   const response = await submit(jobId, datasetId, result, env);
   assert.equal(response.status, 400);
@@ -553,8 +563,7 @@ test("result submissions without execution_mode are rejected", async () => {
 test("provenance run_id and tool.id are cross-checked against the job", async () => {
   const { env } = envWithDb();
   const { datasetId, jobId } = await queuedJobId(env);
-  const base = makeResult(jobId, datasetId);
-  base.artifacts[0].sha256 = await hashInput(base.artifacts[0].content);
+  const base = await makeResult(jobId, datasetId);
 
   const badRun = structuredClone(base);
   badRun.provenance.run_id = "job_9999999999999999";
