@@ -13,17 +13,22 @@ from pathlib import Path
 
 
 def find_benchmark_data() -> Path:
+    # Prefer the benchmark_data that actually contains the saved runs; do not
+    # pick up a leftover verification copy (G4 clean-clone check).
+    candidates = []
     here = Path(__file__).resolve().parent.parent
-    candidate = here / "benchmark_data"
-    if candidate.is_dir():
-        return candidate
+    candidates.append(here / "benchmark_data")
     for root, dirs, _files in os.walk("D:\\"):
         for d in dirs:
             if d == "benchmark_data":
-                p = Path(root) / d
-                if (p / "benchmark_runs_heldout4").is_dir():
-                    return p
-    raise SystemExit("benchmark_data not found")
+                candidates.append(Path(root) / d)
+    for p in candidates:
+        low = str(p).lower()
+        if "devcache" in low or "\\temp\\" in low or "gen-verify" in low:
+            continue
+        if (p / "benchmark_runs_heldout4" / "benchmark_summary.json").is_file():
+            return p
+    raise SystemExit("benchmark_data with saved runs not found")
 
 
 def sha256(path: Path) -> str:
@@ -97,7 +102,18 @@ def main() -> int:
     a("- Truth comes from FASTA headers and can itself be wrong; one database release only.")
     a("- Simulated substitutions/indels are not real sequencing errors or real strain variation; queries are the first 500 nt (V1-V3-like start region).")
     a("- Held-out removes the source accessions; the true species may still be represented by other strains in the database.")
-    a("- Group-level containment was 0 in these runs (no difficult-group members among held-out truths).")
+    group_counts = []
+    for name in ("benchmark_runs_heldout4", "benchmark_runs_noisy2"):
+        d = bd / name
+        if not d.is_dir():
+            continue
+        for sf in d.glob("seed_*/eval/benchmark_report.json"):
+            rep = json.loads(sf.read_text(encoding="utf-8"))
+            v = rep.get("verdict_method", {})
+            group_counts.append((v.get("group_level_verdicts", 0), v.get("group_level_containing_truth", 0)))
+    gv = sum(g[0] for g in group_counts)
+    gc = sum(g[1] for g in group_counts)
+    a("- Group-level verdicts across saved runs: " + str(gv) + "; of those, " + str(gc) + " contained the true species (computed from saved JSON by this script).")
     a("- The verdict beats the 98.65% cutoff baseline in wrong calls but calls a species far less often; compare call rates, not just wrong counts.")
     a("")
     out = bd / "RESULTS.md"

@@ -19,7 +19,7 @@ export function renderChart(rows, host) {
   const w = 620, h = 280, pad = 36, group = (w - 2 * pad) / rows.length;
   // The text alternative names the pattern without presenting the data as measured performance.
   const description = "Synthetic risk-coverage demonstration. For each screening threshold, a blue bar shows the species call rate and a red bar shows the overall wrong rate. These are example values, not measured performance; the table below gives exact numbers.";
-  let svg = `<svg viewBox="0 0 ${w} ${h}" width="100%" height="auto" role="img" aria-label="${esc(description)}">`;
+  let svg = `<svg viewBox="0 0 ${w} ${h}" width="100%" role="img" aria-label="${esc(description)}">`;
   svg += `<desc>${esc(description)}</desc>`;
   svg += `<line class="axis-line" x1="${pad}" y1="${h - pad}" x2="${w - pad}" y2="${h - pad}"/>`;
   rows.forEach((r, i) => {
@@ -32,6 +32,17 @@ export function renderChart(rows, host) {
   });
   svg += `</svg><p class="legend"><span class="legend-call">Blue</span> = species call rate; <span class="legend-wrong">red</span> = overall wrong rate. Synthetic demonstration data only - not performance measurement.</p>`;
   host.innerHTML = svg;
+}
+
+function ensureSkipLink() {
+  if (document.querySelector(".skip-link")) return;
+  const main = document.querySelector("main");
+  if (main && !main.id) main.id = "main-content";
+  const link = document.createElement("a");
+  link.className = "skip-link";
+  link.href = "#main-content";
+  link.textContent = "Skip to main content";
+  document.body.insertBefore(link, document.body.firstChild);
 }
 
 export function initBenchmarkPage() {
@@ -48,4 +59,7 @@ export function initBenchmarkPage() {
   return rows;
 }
 
-if (typeof document !== "undefined") initBenchmarkPage();
+if (typeof document !== "undefined") {
+  ensureSkipLink();
+  initBenchmarkPage();
+}

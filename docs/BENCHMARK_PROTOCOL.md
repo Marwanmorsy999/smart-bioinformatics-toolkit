@@ -5,7 +5,7 @@ Goal: measure how often the plain top-hit method names the wrong species compare
 ## Two scenarios
 
 1. **noisy** (`--mode noisy`): partial, noisy copies of records that remain in the database. The true record is present, so top hit is usually right. Use this only as a sanity check.
-2. **heldout** (`--mode heldout`): the query source records are excluded from the search, so the true species is missing. This is the realistic hard case: a plain top hit confidently names a relative. This is the headline benchmark.
+2. **heldout** (`--mode heldout`): the query source records are excluded from the search, so the query source accessions are absent; the same species may still be present through other strains. This is the hard case: a plain top hit confidently names a relative. This is the headline benchmark.
 
 ## Steps with real data
 

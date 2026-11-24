@@ -326,6 +326,12 @@ def run(args: argparse.Namespace) -> int:
         mapping_report = {}
         if args.taxonomy_map:
             mapping_report = resolver.load_mapping()
+            if not mapping_report.get("valid", True):
+                print("error: taxonomy mapping is invalid; refusing to produce verdicts: " + "; ".join(mapping_report.get("errors", [])[:3]), file=sys.stderr)
+                return 2
+
+        # Surface malformed BLAST rows instead of silently dropping them (red-team F2).
+        malformed = report.get("summary", {}).get("malformed_rows", 0)
 
         analysis = run_taxonomy_analysis(
             report,
@@ -338,6 +344,12 @@ def run(args: argparse.Namespace) -> int:
             difficult_groups=load_difficult_groups(args.difficult_groups) if args.difficult_groups else None,
         )
         analysis["mapping_validation"] = mapping_report
+        analysis["blast_input_quality"] = {
+            "malformed_rows": malformed,
+            "note": "Malformed BLAST rows were excluded from taxonomy analysis; check the BLAST TSV before trusting verdicts.",
+        }
+        if malformed:
+            analysis.setdefault("flags", []).append("malformed_blast_rows")
 
         output_dir = Path(args.out_dir)
         output_dir.mkdir(parents=True, exist_ok=True)

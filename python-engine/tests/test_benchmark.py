@@ -251,3 +251,12 @@ def test_indel_option_is_deterministic_and_recorded():
     assert a["simulated_errors_not_sequencing_errors"] is True
     with pytest.raises(ValueError):
         make_benchmark_queries(ref, indel_rate=0.9)
+
+def test_species_from_header_variants():
+    from smartbio.benchmark.queries import species_from_header
+    assert species_from_header(">NR_1 Escherichia coli 16S ribosomal RNA") == "Escherichia coli"
+    assert species_from_header(">NR_1 Candidatus Rhodoluna planktonica 16S") == "Candidatus Rhodoluna planktonica"
+    assert species_from_header(">NR_1 Rhodococcus (subgen. Prescottella) subtropica 16S") == "Rhodococcus subtropica"
+    assert species_from_header(">lcl|NR_1 Bacillus cereus 16S") == "Bacillus cereus"
+    assert species_from_header(">Escherichia coli 16S") is None
+

@@ -28,10 +28,42 @@ BASES = "ACGT"
 
 
 def species_from_header(header: str) -> str | None:
-    parts = header.lstrip(">").split()
+    """Extract a genus/species label from a RefSeq-style FASTA header.
+
+    Handles the observed header shapes: ``>ACC Genus species ...``,
+    ``>ACC Candidatus Genus species ...`` and subgenus notes in parentheses.
+    Returns None for headers without a recognisable binomial, so such records
+    are excluded from truth rather than silently mislabelled.
+    """
+    raw = header.lstrip(">")
+    # Local (lcl|) headers have no accession token; other RefSeq-style headers
+    # begin with an accession. Drop it for the binomial extraction.
+    parts = raw.replace("|", " ").split()
     if len(parts) < 3:
         return None
-    return f"{parts[1]} {parts[2]}"
+    words = parts[1:] if not raw.lower().startswith("lcl|") else parts[2:]
+    # Skip subgenus / bracketed qualifiers before the binomial.
+    cleaned = []
+    skip = False
+    for w in words:
+        if w.startswith("(") or w.startswith("["):
+            skip = True
+        if not skip:
+            cleaned.append(w)
+        if skip and (w.endswith(")") or w.endswith("]")):
+            skip = False
+    # "Candidatus" is part of the formal name: keep the next two words.
+    if cleaned and cleaned[0].lower().startswith("candidatus"):
+        if len(cleaned) >= 3:
+            return f"{cleaned[0]} {cleaned[1]} {cleaned[2]}"
+        return None
+    if len(cleaned) >= 2:
+        genus, epithet = cleaned[0], cleaned[1]
+        # Exclude obvious non-binomial tokens (e.g. "only", "16S").
+        if epithet.lower().startswith("16s") or genus.lower().startswith("16s"):
+            return None
+        return f"{genus} {epithet}"
+    return None
 
 
 def _mutate(sequence: str, rate: float, rng: random.Random, indel_rate: float = 0.0) -> str:
