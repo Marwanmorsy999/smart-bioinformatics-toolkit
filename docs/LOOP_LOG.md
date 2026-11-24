@@ -66,3 +66,35 @@
 ### Not verified
 - Report HTML visual layout in a real browser print.
 - Group-link safety in a real difficult-group run (example lacks such hits).
+
+## Phase 0-2 (this session)
+
+### Phase 0 - audit
+- Baseline: Python 116 passed / 1 skipped; JS 60 passed / 0 failed. Mission's 52->51 / 102->106 numbers did not match this snapshot; no test dropped. Near-threshold and demo numbers unchanged (fixtures untouched).
+- Report metadata parity verified by existing shared fixture tests (both green).
+
+### Phase 1 - robustness/safety
+- Added Candidatus to uninformative-name filter in verdict.py and verdict.js (parity).
+- Added shared verdict cases: very_long_hit_lists (500 hits + 50 duplicate accessions), duplicate_accessions, candidatus_uninformative. Python/JS tests both green.
+- Added `total_queries` to BLAST summary in Python+JS (additive; fixes the previously-skipped integration test expectation).
+- Fixed test_blast_integration.py synthetic sequences (ACGT repeat was dust-masked by blastn -> no hits). Changed input data, not weakened the assertion.
+- Playwright UI: not re-run this session (browser tooling was restarted mid-session); prior session verified 3 verdict banners, downloads, print-report button.CSP already excludes inline scripts.
+
+### Phase 2 - REAL benchmark (executed and saved)
+- Installed NCBI BLAST+ 2.17.0+ from official installer (blastn/makeblastdb/blastdbcmd verified).
+- Downloaded (URLs verified from NCBI targeted-loci page + FTP listings): bacteria.16SrRNA.fna.gz (SHA-256 eefbe0bc...), bacteria.16SrRNA.gbff.gz (251b0201...), taxdump.tar.gz (e6015d1c...). Download date 2026-11-24.
+- Built taxonomy_map.tsv (nodes.dmp + names.dmp + 26,888 accession->taxid pairs from gbff) and taxid_map.tsv for makeblastdb.
+- Extended scripts/build_taxonomy_map.py to work without rankedlineage.dmp (current taxdump lacks it); extended scripts/run_benchmark.py to add -parse_seqids with -taxid_map and support noisy mode.
+- Held-out run (seed 1,2,3; n=200; length 500; 0.5% substitutions): plain top hit mean 143.3 wrong calls/200 (call rate 100%); 98.65% cutoff baseline 38.0 wrong / 87.7 calls; Toolkit verdict 12.7 wrong / 49.7 calls, 150.3 abstentions. Verdict beats the real cutoff baseline on wrong calls among calls (0.257 vs 0.431) with lower call rate.
+- Noisy run: top hit 9.0 wrong, cutoff 9.0 wrong, verdict 1.3 wrong.
+- Raw outputs, exact commands, logs and generated RESULTS.md saved under benchmark_data/ (benchmark_runs_heldout4, benchmark_runs_noisy2, run_*.log, RESULTS.md).
+- Limitations: truth from FASTA headers; one release; simulated noise; group containment 0 in these runs.
+
+### Test counts (final this session)
+- Python: 120 passed (116 prior + 3 new verdict cases + 1 integration now running), 0 skipped.
+- JS: 63 passed (60 prior + 3 new verdict cases), 0 failed.
+
+### Not verified
+- Real browser Playwright run and Cloudflare deployment (wrangler login not available; STOP condition).
+- Risk-coverage sweep and per-genus breakdown (phase 3) not completed this session.
+- Sourced difficult-group expansion / NCBI remote BLAST API notes (phases 4-5) not completed this session.
