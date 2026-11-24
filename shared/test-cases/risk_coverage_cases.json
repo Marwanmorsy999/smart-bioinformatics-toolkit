@@ -1,0 +1,10 @@
+{
+  "description": "Synthetic risk-coverage cases for Python/JS parity (not performance data).",
+  "cases": [
+    {"name": "right_species_high", "top_species": "Escherichia coli", "top_identity": 99.8, "true_species": "Escherichia coli", "top_genus": "Escherichia", "query_coverage": 100.0, "expected_call": true, "expected_correct": true},
+    {"name": "wrong_relative_high", "top_species": "Escherichia albertii", "top_identity": 99.2, "true_species": "Escherichia coli", "top_genus": "Escherichia", "query_coverage": 100.0, "expected_call": true, "expected_correct": false},
+    {"name": "below_cutoff_wrong", "top_species": "Escherichia coli", "top_identity": 98.4, "true_species": "Shigella dysenteriae", "top_genus": "Escherichia", "query_coverage": 100.0, "expected_call": false, "expected_correct": false},
+    {"name": "low_coverage_abstain", "top_species": "Escherichia coli", "top_identity": 99.5, "true_species": "Escherichia coli", "top_genus": "Escherichia", "query_coverage": 60.0, "expected_call": false, "expected_correct": false},
+    {"name": "missing_species", "top_species": null, "top_identity": 99.5, "true_species": "Escherichia coli", "top_genus": "Escherichia", "query_coverage": 100.0, "expected_call": false, "expected_correct": false}
+  ]
+}

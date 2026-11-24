@@ -1,3 +1,10 @@
 name = "smart-bioinformatics-toolkit"
 compatibility_date = "2026-11-22"
 pages_build_output_dir = "public"
+
+# Free-tier D1 database. Replace database_id with the ID of the D1 database you
+# create for this project, then apply web-platform/migrations/0001_create_blast_requests.sql.
+[[d1_databases]]
+binding = "BLAST_DB"
+database_name = "smart-bioinformatics-toolkit-blast"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
