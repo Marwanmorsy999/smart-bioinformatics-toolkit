@@ -1,10 +1,30 @@
 name = "smart-bioinformatics-toolkit"
+main = "worker.js"
 compatibility_date = "2026-11-22"
-pages_build_output_dir = "public"
 
-# Free-tier D1 database. Replace database_id with the ID of the D1 database you
-# create for this project, then apply web-platform/migrations/0001_create_blast_requests.sql.
+# Workers static assets (verified against the local Wrangler 4.168.0 config
+# schema). `run_worker_first = true` sends every request through worker.js;
+# non-API paths are then explicitly delegated to env.ASSETS.fetch(request).
+# NOTE: `pages_build_output_dir` was removed deliberately. In Wrangler 4.x the
+# presence of that key marks the project as Cloudflare Pages and switches to
+# Pages-specific validation, which conflicts with `main` + `assets`.
+assets = { directory = "./public", binding = "ASSETS", run_worker_first = true }
+
+# Free-tier D1 database holding both BLAST requests and the AI control plane.
+# The binding name MUST stay `BLAST_DB` (handlers read env.BLAST_DB).
 [[d1_databases]]
 binding = "BLAST_DB"
 database_name = "smart-bioinformatics-toolkit-blast"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_id = "d277fe22-f99d-46d8-9ae9-6de17942a6a9"
+
+# Preview environment. Bindings are NOT inherited from the top level in
+# Wrangler, so D1 and assets are repeated here. Secrets are set per environment
+# with `wrangler secret put <NAME> --env staging` and are never committed.
+[env.staging]
+name = "smart-bioinformatics-toolkit-staging"
+assets = { directory = "./public", binding = "ASSETS", run_worker_first = true }
+
+[[env.staging.d1_databases]]
+binding = "BLAST_DB"
+database_name = "smart-bioinformatics-toolkit-blast"
+database_id = "d277fe22-f99d-46d8-9ae9-6de17942a6a9"

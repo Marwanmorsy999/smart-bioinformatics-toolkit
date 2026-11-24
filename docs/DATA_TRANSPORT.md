@@ -73,3 +73,44 @@ Other services in `docs/API_CATALOG.md` are CATALOG-ONLY; no browser or Worker c
 - `POST /api/ai/plans/:id/approve` mints a token when an approved step has `external_egress === true` and `consent_granted === true`, and returns it in `blast_consent` so the browser/legacy flow can call `/api/blast/submit` without re-uploading or re-consenting. Denied egress never issues a token.
 - Mock mode (`MOCK_NCBI=1`) applies the same gate; it never contacts NCBI, but token validation is identical for testability.
 - Deployment note: migration 0003 must be applied before approving any external-egress step; otherwise approval fails closed with 500.
+
+---
+
+## 5. Storage boundaries, limits and retention (M6.3)
+
+### 5.1 The five domains, explicitly separated
+
+| Domain | Owner | Lifetime | May contain sequence bytes? | Notes |
+|---|---|---|---|---|
+| **Browser-local data** | Browser memory / File API | Until the tab closes | Yes, in memory only | Never uploaded by default; lightweight validation/statistics run here. |
+| **Local agent workspace data** | Local machine, `tempfile.TemporaryDirectory` | Single job; deleted when the job ends | Yes | Staged inputs and intermediate files; never sent to R2. |
+| **Cloudflare D1 metadata** | Worker control plane | Retained per policy (§5.4) | **Limited**: FASTA text ≤64 KiB and inline artifacts ≤2 MiB only | D1 is a metadata/control store, **not** a general-purpose biological file store. |
+| **Artifact storage** | Content-addressed by SHA-256 | Same as the parent run | Yes, for small validated artifacts | Today: inline D1 rows with hash verification. Large artifacts stay local; R2 is a future tier requiring a binding and explicit configuration. |
+| **External scientific services** | Third party | Governed by their terms | Only with consent | Only NCBI `CMD=Put` is implemented; destination, byte count and consent are recorded in the locality receipt (FR-8.5). |
+
+### 5.2 Integrity and size controls
+
+- Every uploaded dataset is hashed with SHA-256 (`datasets.sha256`); the same hash is carried into the job, provenance and result.
+- Every artifact hash is recomputed by the Worker before storage (`jobs/[id]/result.js`) and again by `validate()` (`sha256_consistency`). A mismatch is a 400, never a stored result.
+- Input text cap: **64 KiB** (`MAX_TEXT_BYTES` / `MAX_FASTA_BYTES`). Result body cap: **2 MiB** (`MAX_RESULT_BODY_CHARS`). Oversize input is rejected before planning; oversize results are rejected before storage.
+- The agent stages inputs in a temporary directory with a sanitized basename and removes the whole directory after the job (`tempfile.TemporaryDirectory`). No path traversal is possible via artifact names (`safe_filename`).
+- Upload validation: FASTA header-first, IUPAC alphabet, non-empty records, byte-cap. Download validation: artifact `sha256` must match content before a report link is rendered.
+
+### 5.3 D1 is not a file store
+
+D1 rows hold control metadata and **small** validated payloads only. The 64 KiB input cap and 2 MiB result cap bound the total. Large FASTA/FASTQ/BAM files are expected to stay in the browser or the local agent workspace; a future R2 tier must be introduced explicitly (new binding, consent record, tested migration) and must never be a side effect of reading a local file. No code path currently writes an R2 object.
+
+### 5.4 Retention and deletion rules (current policy)
+
+| Data | Retention | Deletion rule |
+|---|---|---|
+| D1 datasets, jobs, artifacts, reports | Until the project/run is deleted by an operator | `DELETE` cascades by `job_id`/`plan_id`; no automatic expiry yet — documented as a gap for M7 |
+| Local agent workspace | Job duration | Removed by `TemporaryDirectory` on success, failure or exception |
+| External NCBI RID/results | Provider-side, short-lived | Cached RID/TSV in D1; RID TTL is not handled yet (documented gap) |
+| Audit events / consent records | Append-only | Never deleted by application code |
+
+Adding automatic retention/expiry and a user-facing deletion flow is an M7 item; until then, operators must delete D1 rows explicitly and the UI must not imply automatic deletion.
+
+### 5.5 External transmission remains consent-gated
+
+Nothing in this section changes the consent invariant of §3/§4: a sequence leaves the machine only through a consented `CMD=Put` step with a single-use token. Browser-local and local-agent steps produce `external_transmissions: []` in the locality receipt.
