@@ -1,0 +1,116 @@
+{
+  "name": "microbiome-16s",
+  "domain": "microbiome-16s",
+  "version": "1.0.0",
+  "description": "BLAST TSV parsing and conservative taxonomic consensus (existing smartbio engine).",
+  "backend": "local-python",
+  "tools": [
+    {
+      "id": "microbiome-16s.blast-parse",
+      "name": "BLAST TSV Parser",
+      "description": "Parse a BLAST TSV into normalized hits (requires a TSV dataset, not FASTA).",
+      "entrypoint": "smartbio.plugins.microbiome_16s:BlastParsePlugin",
+      "available": false,
+      "unavailable_reason": "Requires a BLAST TSV dataset and a locally configured BLAST database; not wired into the MVP planner.",
+      "external_egress": false,
+      "estimated_seconds": 5,
+      "requirements": ["tsv_dataset", "local_database"],
+      "params_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "schema": { "type": "string", "enum": ["auto", "standard", "extended", "blastn_local_v1"] },
+          "min_identity": { "type": "number", "minimum": 0, "maximum": 100 },
+          "min_query_coverage": { "type": "number", "minimum": 0, "maximum": 100 }
+        }
+      },
+      "input_schema": {
+        "type": "object",
+        "required": ["dataset_id", "tsv_text", "filename"],
+        "properties": {
+          "dataset_id": { "type": "string" },
+          "tsv_text": { "type": "string", "maxLength": 65536 },
+          "filename": { "type": "string" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["parse"],
+        "properties": { "parse": { "type": "object" } }
+      },
+      "references": [
+        {
+          "key": "altschul1990_blast",
+          "title": "Basic local alignment search tool",
+          "url": "https://doi.org/10.1016/S0022-2836(05)80360-2",
+          "verified": true,
+          "verified_by": "CrossRef metadata for DOI 10.1016/S0022-2836(05)80360-2 (Altschul et al., J Mol Biol 215(3):403-410, 1990), checked 2026-11-24"
+        }
+      ],
+      "limitations": [
+        "The adapter parses an existing BLAST TSV; it does not run a new BLAST search.",
+        "Parsed similarity is not proof of taxonomic identity.",
+        "Malformed TSV rows are excluded from the analysis and reported as input quality flags, not fabricated hits."
+      ]
+    },
+    {
+      "id": "microbiome-16s.taxonomy",
+      "name": "Taxonomic Consensus",
+      "description": "Conservative per-query taxonomic verdict from parsed BLAST hits.",
+      "entrypoint": "smartbio.plugins.microbiome_16s:TaxonomyPlugin",
+      "available": false,
+      "unavailable_reason": "Requires parsed BLAST TSV hits from a locally configured database; not wired into the MVP planner.",
+      "external_egress": false,
+      "estimated_seconds": 5,
+      "requirements": ["tsv_dataset", "local_database"],
+      "params_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "schema": { "type": "string", "enum": ["auto", "standard", "extended", "blastn_local_v1"] },
+          "min_identity": { "type": "number", "minimum": 0, "maximum": 100 },
+          "min_query_coverage": { "type": "number", "minimum": 0, "maximum": 100 },
+          "top_n": { "type": "integer", "minimum": 1 },
+          "min_consensus": { "type": "number", "minimum": 0, "maximum": 1 },
+          "species_threshold": { "type": "number", "minimum": 0, "maximum": 100 }
+        }
+      },
+      "input_schema": {
+        "type": "object",
+        "required": ["dataset_id", "tsv_text", "filename"],
+        "properties": {
+          "dataset_id": { "type": "string" },
+          "tsv_text": { "type": "string", "maxLength": 65536 },
+          "filename": { "type": "string" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["taxonomy"],
+        "properties": { "taxonomy": { "type": "object" } }
+      },
+      "references": [
+        {
+          "key": "altschul1990_blast",
+          "title": "Basic local alignment search tool",
+          "url": "https://doi.org/10.1016/S0022-2836(05)80360-2",
+          "verified": true,
+          "verified_by": "CrossRef metadata for DOI 10.1016/S0022-2836(05)80360-2 (Altschul et al., J Mol Biol 215(3):403-410, 1990), checked 2026-11-24"
+        },
+        {
+          "key": "kim2014_16s_species_threshold",
+          "title": "Towards a taxonomic coherence between average nucleotide identity and 16S rRNA gene sequence similarity for species demarcation of prokaryotes",
+          "url": "https://doi.org/10.1099/ijs.0.059774-0",
+          "verified": false,
+          "note": "Bibliographic record exists (PubMed 24505072), but a 98.65% 16S identity cutoff is a screening proposal, not a universal species boundary; this claim is deliberately not marked verified."
+        }
+      ],
+      "limitations": [
+        "16S identity thresholds are screening references, not universal species boundaries.",
+        "A verdict interprets BLAST similarity evidence; it is not proof of species identity or a clinical diagnosis.",
+        "No network taxonomy lookup is performed; only the supplied TSV and optional local taxonomy map are used.",
+        "Queries without hits remain unresolved and are reported as such rather than assigned a taxon."
+      ]
+    }
+  ]
+}

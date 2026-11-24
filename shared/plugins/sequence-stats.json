@@ -1,0 +1,112 @@
+{
+  "name": "sequence-stats",
+  "domain": "sequence-analysis",
+  "version": "1.0.0",
+  "description": "FASTA validation and deterministic sequence statistics (existing smartbio engine).",
+  "backend": "local-python",
+  "tools": [
+    {
+      "id": "sequence-stats.validate",
+      "name": "FASTA Validator",
+      "description": "FASTA structure and IUPAC alphabet validation.",
+      "entrypoint": "smartbio.plugins.sequence_stats:SequenceValidatePlugin",
+      "available": true,
+      "external_egress": false,
+      "estimated_seconds": 2,
+      "requirements": [],
+      "params_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sequence_type"],
+        "properties": {
+          "sequence_type": { "type": "string", "enum": ["dna", "protein"] }
+        }
+      },
+      "input_schema": {
+        "type": "object",
+        "required": ["dataset_id", "fasta_text", "filename"],
+        "properties": {
+          "dataset_id": { "type": "string" },
+          "fasta_text": { "type": "string", "maxLength": 65536 },
+          "filename": { "type": "string" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["validation"],
+        "properties": { "validation": { "type": "object" } }
+      },
+      "references": [
+        {
+          "key": "iupac_1984_ambiguity",
+          "title": "Nomenclature for incompletely specified bases in nucleic acid sequences: recommendations 1984",
+          "url": "https://doi.org/10.1093/nar/13.9.3021",
+          "verified": true,
+          "verified_by": "CrossRef metadata for DOI 10.1093/nar/13.9.3021 (Cornish-Bowden, Nucleic Acids Research 13(9):3021-3030, 1985), checked 2026-11-24"
+        }
+      ],
+      "limitations": [
+        "Validation checks FASTA structure and alphabet only; it does not assess sequencing quality or biological correctness.",
+        "Ambiguity codes are interpreted with the IUPAC 1984 recommendation; the alphabet must be chosen explicitly.",
+        "Inline FASTA text is capped at 64 KiB by the Worker transport contract."
+      ]
+    },
+    {
+      "id": "sequence-stats.profile",
+      "name": "Sequence Statistics",
+      "description": "FASTA validation plus per-record statistics and collection summaries (length, GC%, composition, N50).",
+      "entrypoint": "smartbio.plugins.sequence_stats:SequenceProfilePlugin",
+      "available": true,
+      "external_egress": false,
+      "estimated_seconds": 5,
+      "requirements": [],
+      "params_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sequence_type"],
+        "properties": {
+          "sequence_type": { "type": "string", "enum": ["dna", "protein"] }
+        }
+      },
+      "input_schema": {
+        "type": "object",
+        "required": ["dataset_id", "fasta_text", "filename"],
+        "properties": {
+          "dataset_id": { "type": "string" },
+          "fasta_text": { "type": "string", "maxLength": 65536 },
+          "filename": { "type": "string" }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["validation", "statistics"],
+        "properties": {
+          "validation": { "type": "object" },
+          "statistics": { "type": "object" }
+        }
+      },
+      "references": [
+        {
+          "key": "iupac_1984_ambiguity",
+          "title": "Nomenclature for incompletely specified bases in nucleic acid sequences: recommendations 1984",
+          "url": "https://doi.org/10.1093/nar/13.9.3021",
+          "verified": true,
+          "verified_by": "CrossRef metadata for DOI 10.1093/nar/13.9.3021 (Cornish-Bowden, Nucleic Acids Research 13(9):3021-3030, 1985), checked 2026-11-24"
+        },
+        {
+          "key": "smartbio_gc_definition",
+          "title": "Smart Bioinformatics Toolkit: DNA GC percentage definition",
+          "url": "python-engine/src/smartbio/statistics.py#calculate_statistics",
+          "verified": true,
+          "verified_by": "in-tree source: smartbio/statistics.py::calculate_statistics"
+        }
+      ],
+      "limitations": [
+        "Statistics include valid, non-empty records only.",
+        "DNA GC percentage uses canonical A/C/G/T bases as its denominator; ambiguous bases are excluded.",
+        "N50 and composition describe only the supplied records; they are not assembly quality measures.",
+        "FASTA input does not contain per-base sequencing quality scores."
+      ]
+    }
+  ]
+}

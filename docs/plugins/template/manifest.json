@@ -1,0 +1,53 @@
+{
+  "name": "template-plugin",
+  "domain": "example",
+  "version": "0.1.0",
+  "description": "Copyable plugin skeleton. It is deliberately unavailable until a real adapter, references, limitations and tests are supplied.",
+  "backend": "local-python",
+  "tools": [
+    {
+      "id": "template.example",
+      "name": "Template Example",
+      "description": "Skeleton tool demonstrating the manifest and adapter contract; produces no scientific result.",
+      "entrypoint": "adapter:TemplatePlugin",
+      "available": false,
+      "unavailable_reason": "Skeleton template only: implement a real adapter, add verified references and limitations, and validate it before setting available=true.",
+      "external_egress": false,
+      "estimated_seconds": 0,
+      "requirements": [],
+      "params_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "example_option": { "type": "string", "enum": ["alpha", "beta"] }
+        }
+      },
+      "input_schema": {
+        "type": "object",
+        "required": ["dataset_id", "input_text"],
+        "properties": {
+          "dataset_id": { "type": "string" },
+          "input_text": { "type": "string", "maxLength": 65536 }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["example"],
+        "properties": { "example": { "type": "object" } }
+      },
+      "references": [
+        {
+          "key": "iupac_1984_ambiguity",
+          "title": "Nomenclature for incompletely specified bases in nucleic acid sequences: recommendations 1984",
+          "url": "https://doi.org/10.1093/nar/13.9.3021",
+          "verified": true,
+          "verified_by": "CrossRef metadata for DOI 10.1093/nar/13.9.3021, checked 2026-11-24"
+        }
+      ],
+      "limitations": [
+        "This is a skeleton template and deliberately produces no scientific artifacts.",
+        "Replace these limitations with domain-specific ones before enabling the tool."
+      ]
+    }
+  ]
+}
