@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Ask for a sequence analysis, review the exact plan, approve it, and inspect validated results. Research use only.">
+  <meta name="theme-color" content="#0f2740">
+  <title>AI Research Workspace · Smart Bioinformatics Toolkit</title>
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+
+  <header class="topbar">
+    <a class="brand" href="index.html" aria-label="S Bio Smart Bioinformatics Toolkit home">
+      <span class="brand-mark" aria-hidden="true">S<span>Bio</span></span>
+      <span class="brand-name">Smart Bioinformatics <span>Toolkit</span></span>
+    </a>
+    <nav class="top-nav" aria-label="Main navigation">
+      <a href="index.html#tools">Tools</a>
+      <a class="active" href="ai.html" aria-current="location">AI workspace</a>
+      <a href="index.html#about">About</a>
+    </nav>
+    <span class="local-badge"><span class="status-dot" aria-hidden="true"></span> Local execution agent</span>
+  </header>
+
+  <main id="main-content" tabindex="-1">
+    <section class="section-block">
+      <div class="section-heading">
+        <div><p class="eyebrow">Plan → approve → execute → validate → explain</p><h1>AI Research Workspace</h1></div>
+        <p class="section-note">The Worker validates and plans. A local agent runs the approved tool and returns evidence. Nothing heavy runs in the browser or the Worker.</p>
+      </div>
+
+      <div class="research-strip" role="note">
+        <span class="privacy-icon" aria-hidden="true">i</span>
+        <p><strong>Research-use workflow.</strong> Outputs are screening evidence, not proof of identity and not a clinical diagnosis. You must approve the exact plan before any tool runs.</p>
+      </div>
+
+      <div class="ai-flow">
+        <section class="workspace" aria-labelledby="intake-title">
+          <div class="workspace-header">
+            <div><p class="eyebrow">STEP 1 · REQUEST</p><h2 id="intake-title">Describe your question</h2><p>Ask for FASTA validation/statistics, or describe a taxonomic question. FASTA input is capped at 10,000 characters by the shared validator.</p></div>
+            <span id="execution-mode" class="badge-mode">Execution mode: real</span>
+          </div>
+
+          <form id="request-form" novalidate>
+            <div class="field-group">
+              <label for="question">What would you like to do?</label>
+              <textarea id="question" rows="3" required aria-describedby="question-help" placeholder="e.g. Validate my FASTA and calculate GC content"></textarea>
+              <small id="question-help">Use words such as validate, check, profile, stats or GC; or identify, taxa, taxonomy, classify, BLAST.</small>
+            </div>
+
+            <div class="input-grid">
+              <div class="field-group">
+                <label for="fasta-file">Upload FASTA file</label>
+                <input id="fasta-file" type="file" accept=".fa,.fasta,.fna,.ffn,.txt,text/plain" aria-describedby="fasta-help">
+                <small id="fasta-help">Read locally with File.text(); maximum 64 KiB sent to the Worker.</small>
+              </div>
+              <div class="field-group">
+                <label for="project-id">Project ID (optional)</label>
+                <input id="project-id" type="text" maxlength="100" autocomplete="off" placeholder="Leave blank for no project">
+              </div>
+            </div>
+
+            <div class="field-group">
+              <label for="fasta-text">Or paste FASTA sequences</label>
+              <textarea id="fasta-text" rows="6" spellcheck="false" autocapitalize="off" autocomplete="off" aria-describedby="fasta-text-help" placeholder=">isolate_001 Example&#10;ATGCGTACGTAGCTAG"></textarea>
+              <small id="fasta-text-help">Headers start with &gt;; nucleotide IUPAC codes only. A selected file replaces pasted text.</small>
+            </div>
+
+            <div class="action-row">
+              <button id="build-plan" class="primary-button" type="submit">Build plan <span aria-hidden="true">→</span></button>
+            </div>
+            <p id="input-error" class="input-error" role="alert" hidden></p>
+          </form>
+
+          <p id="status-line" class="status-line" role="status" aria-live="polite"></p>
+        </section>
+
+        <section id="plan-panel" class="workspace plan-card" aria-labelledby="plan-title" hidden>
+          <div class="workspace-header">
+            <div><p class="eyebrow">STEP 2 · REVIEW</p><h3 id="plan-title">Proposed plan</h3><p id="plan-human"></p></div>
+            <span id="plan-confidence" class="badge-mode"></span>
+          </div>
+          <div id="plan-meta" class="plan-meta"></div>
+          <h4>Exact parameters</h4>
+          <div id="plan-steps" class="step-list"></div>
+          <div id="consent-box" class="consent-box" hidden>
+            <label><input id="consent-check" type="checkbox"> <span id="consent-label-text">I consent to the external data use listed in this plan.</span></label>
+          </div>
+          <p id="plan-limitations-note" class="results-note"></p>
+          <div class="action-row">
+            <button id="approve-plan" class="primary-button" type="button">Approve and queue jobs</button>
+            <button id="decline-plan" class="quiet-button" type="button">Decline</button>
+          </div>
+        </section>
+
+        <section id="results-panel" class="workspace results-panel" aria-live="polite" aria-labelledby="results-title" hidden>
+          <div class="results-header">
+            <div><p class="eyebrow">STEP 3 · RESULT</p><h3 id="results-title">Analysis output</h3></div>
+            <span id="result-mode" class="badge-mode"></span>
+          </div>
+          <p id="result-summary"></p>
+          <div id="validation-box" class="verdict-box"></div>
+          <div id="findings-box"></div>
+          <div id="limitations-box"></div>
+          <div id="download-links" class="download-links"></div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer"><span>Smart Bioinformatics Toolkit · AI workspace</span><span>Research use only · Not for clinical diagnosis</span></footer>
+  <script type="module" src="js/ai-workspace.js"></script>
+</body>
+</html>

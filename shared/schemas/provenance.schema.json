@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://smart-bioinformatics-toolkit.local/schemas/provenance.schema.json",
+  "title": "AI Platform provenance record (v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["run_id", "step_id", "tool", "input", "parameters", "database", "output", "timing", "execution_mode"],
+  "properties": {
+    "run_id": { "type": "string" },
+    "step_id": { "type": "string" },
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "backend"],
+      "properties": {
+        "id": { "type": "string" },
+        "version": { "type": "string" },
+        "backend": { "type": "string" }
+      }
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dataset_id", "sha256", "filename"],
+      "properties": {
+        "dataset_id": { "type": "string" },
+        "sha256": { "type": "string" },
+        "filename": { "type": "string" }
+      }
+    },
+    "parameters": { "type": "object" },
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "release", "retrieved_at"],
+      "properties": {
+        "name": { "type": ["string", "null"] },
+        "release": { "type": ["string", "null"] },
+        "retrieved_at": { "type": ["string", "null"] }
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_names", "sha256"],
+      "properties": {
+        "artifact_names": { "type": "array", "items": { "type": "string" } },
+        "sha256": { "type": "string" }
+      }
+    },
+    "timing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["started_at", "finished_at"],
+      "properties": {
+        "started_at": { "type": "string" },
+        "finished_at": { "type": "string" }
+      }
+    },
+    "execution_mode": { "type": "string", "enum": ["real", "mock"] }
+  }
+}

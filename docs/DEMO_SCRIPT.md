@@ -1,50 +1,105 @@
-﻿# Demo script (Milestone 1.0.0)
+﻿# Demo script — Smart Bioinformatics AI
 
-All numbers below were inserted from `benchmark_data/RESULTS.md`, which is generated from saved benchmark output files by `scripts/generate_results.py`. Do not hand-edit.
+**Updated:** 2026-11-24 after the vision reset.
+**Evidence status:** every number shown is produced by a command below; no figure is copied from a missing file.
 
-## Quickstart (clean clone)
+---
+
+## A. Baseline (preserved milestone-0.5 functionality)
 
 ```bash
 cd python-engine
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-python -m pytest -q -rs
+python -m pytest -q                      # 156 passed (130 original + 26 AI-agent tests)
 python main.py analyze --input ../shared/test-cases/dna_valid.fasta --type dna --out-dir output/demo-run
 cd ../web-platform
-python -m http.server 8000 --directory public
-# open http://localhost:8000
-node --test tests/*.test.mjs
+npm test                                 # 113 passed (103 original + 10 AI-contract tests)
 ```
 
-## Real benchmark (requires NCBI BLAST+ and the downloaded 16S RefSeq data + taxdump)
+The original four pages (validate/stats, BLAST TSV, taxonomy, benchmark) are unchanged and still work locally.
+
+## B. AI MVP — real end-to-end execution (no LLM key, no network)
+
+This is the honest, reproducible core demo. It runs the **real** existing `smartbio` statistics code through the AI agent pipeline and produces validated artifacts, an evidence-bounded explanation, and a reproducible report.
+
+**1. Create a job file** (or use the one already at `D:\DevCache\Temp\opencode\mvp_demo_job.json`):
+
+```json
+{
+  "id": "job_demo1",
+  "plan_id": "plan_demo1",
+  "step_id": "step_1",
+  "tool_id": "sequence-stats.profile",
+  "params": { "sequence_type": "dna" },
+  "inputs": {
+    "dataset_id": "ds_demo1",
+    "fasta_text": ">dna_001 Example canonical DNA sequence\nATGCGTACGTAGCTAGCTAGCTAG\n>dna_002 DNA with valid IUPAC ambiguity\nATGCRYSWKMBDHVNACGT\n>dna_003 Another canonical sequence\nGGGGCCCCAAAATTTT\n",
+    "filename": "dna_valid.fasta"
+  },
+  "status": "queued",
+  "backend": "local-python",
+  "created_at": "2026-11-24T00:00:00Z"
+}
+```
+
+**2. Execute:**
 
 ```bash
-python ../scripts/build_taxonomy_map.py --nodes benchmark_data/taxdump_extract/nodes.dmp --names benchmark_data/taxdump_extract/names.dmp --accessions benchmark_data/accession2taxid.tsv --output benchmark_data/taxonomy_map.tsv
-python ../scripts/run_benchmark.py --reference benchmark_data/bacteria.16SrRNA.fna --taxonomy-map benchmark_data/taxonomy_map.tsv --taxid-map benchmark_data/taxid_map.tsv --out-dir benchmark_data/repro --mode heldout --seeds 1,2,3 --n 200 --length 500 --substitution-rate 0.005
+cd python-engine
+set PYTHONPATH=src          # Windows PowerShell: $env:PYTHONPATH = ".\src"
+python -m smartbio.aiagent.agent --job-file <job.json> --out-file <result.json>
 ```
 
-## Verified live deployment (Cloudflare Pages Free, deploy stage success per Cloudflare API)
+**3. Observed result (verified 2026-11-24, see `docs/discovery/TEST_REPORT.md`):**
 
-https://4e5048a8.smart-bioinformatics-toolkit.pages.dev
+- `status: succeeded`, `execution_mode: real`, `validation.status: pass`
+- Artifacts: `validation.json`, `statistics.json`, `analysis.json`, `statistics.csv`, `report.html`
+- Real values: 3 valid records, 59 nt total, mean GC 50.0% — each explanation finding carries an `artifact` + `field_path` pointing at the value.
+- Report HTML includes Reproducibility, Limitations, Validation and Provenance sections.
 
-## Real results - held-out (headline)
+**4. Other agent modes:**
 
-| Method | Calls/200 (mean) | Wrong calls (mean) | Wrong rate among calls | Abstentions (mean) |
-|---|---|---|---|---|
-| Plain top hit | 200.0 | 143.3 | 0.717 | 0.0 |
-| Top hit + 98.65% cutoff | 87.7 | 38.0 | 0.431 | 112.3 |
-| Toolkit verdict | 49.7 | 12.7 | 0.257 | 150.3 |
+```bash
+# Poll a deployed Worker control plane (requires X-Agent-Token / AI_AGENT_TOKEN)
+python -m smartbio.aiagent.agent --loop --url http://localhost:8787 --token <agent-token>
+```
 
-Wilson 95% CI on correct-call rate (seed 1): top [0.2315, 0.3564], cutoff [0.4374, 0.6321], verdict [0.6113, 0.8445].
+## C. Browser AI workspace (requires Worker + D1)
 
-## Real results - noisy (sanity)
+```bash
+cd web-platform
+wrangler d1 migrations apply <your-d1-db> --local     # apply 0001 + 0002
+wrangler dev --local
+# open http://localhost:8787/ai.html
+```
 
-| Method | Calls/200 (mean) | Wrong calls (mean) | Wrong rate among calls | Abstentions (mean) |
-|---|---|---|---|---|
-| Plain top hit | 200.0 | 9.0 | 0.045 | 0.0 |
-| Top hit + 98.65% cutoff | 196.7 | 9.0 | 0.046 | 3.3 |
-| Toolkit verdict | 142.0 | 1.3 | 0.010 | 58.0 |
+Flow in the UI: paste/upload FASTA → type a question → review the generated plan → Approve or Decline → poll status → read results, validation flags, limitations and explanation → download JSON/CSV/HTML/provenance. The UI always displays an `execution_mode` badge; a queued job without a connected agent stays visibly "queued" rather than showing invented results.
 
-## Limitations
+## D. Historical benchmark — DO NOT QUOTE UNTIL REGENERATED
 
-Truth from FASTA headers; one database release; simulated substitutions are not real sequencing error; query region is first 500 nt; group-level containment 0 in these runs. Full provenance, hashes, commands and per-seed Wilson intervals: `benchmark_data/RESULTS.md`.
+Earlier docs in this repository quoted held-out results (top-hit 143.3 wrong/200; 98.65% cutoff 38.0 wrong/87.7 calls; toolkit verdict 12.7 wrong/49.7 calls, 150.3 abstentions) and referred to `benchmark_data/RESULTS.md`.
+
+**That file is absent and was never tracked** (`docs/discovery/AUDIT_docs_consistency.md`). Those figures are **UNVERIFIED in this tree** and must not be presented in slides, README, or external communication. To regenerate, follow `docs/BENCHMARK_PROTOCOL.md`, commit the inputs and outputs, then update `docs/EVIDENCE_LEDGER.md`.
+
+## D2. Optional 9Router LLM phrasing (opt-in, not required)
+
+A local OpenAI-compatible proxy is available at `http://127.0.0.1:20128/v1` with the
+`NINEROUTER_API_KEY` environment variable. It is **disabled by default**; the demo in
+section B makes no network calls. To enable model-assisted *phrasing* of the already
+validated explanation:
+
+```bash
+set AI_LLM_PROVIDER=ninerouter
+# key is read from NINEROUTER_API_KEY in the environment; never stored in code or logs
+# optional overrides: NINEROUTER_BASE_URL, NINEROUTER_MODEL (default: auto), AI_LLM_TIMEOUT_SECONDS
+```
+
+Only validated finding text is sent (never raw sequences). Every model-produced string
+must still pass the deterministic number/citation gate; on failure the platform silently
+uses the deterministic explanation and records `llm_phrase_rejected`. When accepted, the
+report records the model name and notes that an external model assisted with phrasing.
+
+## E. Known limits of the MVP demo
+
+- The `identify_taxa` intent profiles the FASTA and declares a local-database requirement; it does **not** produce taxonomic calls from a FASTA alone. Real taxonomy needs a BLAST TSV (upload one or run `main.py blast-run` with a local `blastn` + database).
+- The deterministic planner/explainer is used by default. An LLM provider is optional and not required for any step above.
+- No uploaded data is sent to a third party in this demo. NCBI BLAST remains available through the original opt-in endpoints, now behind the plan/consent gate in the AI workspace.

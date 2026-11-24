@@ -5,8 +5,9 @@ export function safeCsvCell(value) {
   let text = String(value);
   // RFC4180 quoting (double quotes escaped).
   if (/[",\n\r]/.test(text)) text = '"' + text.replaceAll('"', '""') + '"';
-  // Neutralise leading formula characters after the opening quote, if any.
-  const m = text.match(/^("?)([=+\-@\t\r])/);
-  if (m) text = m[1] + "'" + text.slice(m[1].length);
+  // Neutralise formula characters even when preceded by whitespace, after
+  // the opening quote introduced by RFC4180 quoting, if any.
+  const m = text.match(/^("?)([\s]*)([=+\-@\t\r])/);
+  if (m) text = m[1] + m[2] + "'" + text.slice(m[1].length + m[2].length);
   return text;
 }
