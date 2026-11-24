@@ -115,6 +115,7 @@ def _meta(adapter, step, prepared, artifacts, limitations, database=None) -> dic
         },
         "input_file": prepared.get("input_file"),
         "artifact_names": [a["name"] for a in artifacts],
+        "required_artifacts": [a["name"] for a in artifacts],
         "limitations": list(limitations),
         "logs": [],
         "database": database

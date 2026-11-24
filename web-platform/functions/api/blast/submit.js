@@ -2,10 +2,14 @@
 
 import {
   BLAST_API_URL,
+  BlastCryptoUnavailableError,
+  auditBlastEgress,
   buildPutParams,
   consentErrorResponse,
   consumeBlastConsent,
+  cryptoUnavailableResponse,
   errorResponse,
+  finalizeBlastAudit,
   hashInput,
   insertRequest,
   isMock,
@@ -44,6 +48,9 @@ export async function handleSubmit(request, env, { now = Date.now() } = {}) {
   }
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return errorResponse("Request body must be a JSON object.", 400, request);
+  }
+  if (!globalThis.crypto?.subtle || typeof globalThis.crypto?.getRandomValues !== "function") {
+    return cryptoUnavailableResponse(request);
   }
 
   const fasta = payload.fasta ?? payload.sequence ?? payload.query;
@@ -88,20 +95,69 @@ export async function handleSubmit(request, env, { now = Date.now() } = {}) {
     return errorResponse("Could not claim consent for this submission.", 500, request);
   }
 
-  let rid;
-  if (isMock(env)) {
+  const createdAt = new Date(now).toISOString();
+  const mock = isMock(env);
+  const egressDetail = {
+    actor: "browser",
+    action: "blast_egress",
+    target: BLAST_API_URL,
+    input_hash: inputHash,
+    database: payload.database,
+    program: payload.program,
+    payload_bytes: new TextEncoder().encode(fasta).length,
+    hash_bytes: inputHash.length / 2,
+    mock,
+    transmitted: !mock,
+    success: null,
+    status: "pending"
+  };
+  let auditId;
+  try {
+    auditId = await auditBlastEgress(db, {
+      actor: "browser",
+      target: BLAST_API_URL,
+      detail: egressDetail,
+      timestamp: createdAt
+    });
+  } catch (error) {
+    if (error instanceof BlastCryptoUnavailableError) return cryptoUnavailableResponse(request);
+    return errorResponse("Could not record BLAST egress audit.", 500, request);
+  }
+
+  // One audited egress attempt. The pending row above is written first, so a
+  // failure here still leaves an append-only record of the attempted action.
+  let rid = null;
+  let failure = null;
+  if (mock) {
     rid = mockRid(inputHash);
   } else {
     try {
       const url = `${BLAST_API_URL}?${buildPutParams(fasta, env).toString()}`;
       rid = parsePutResponse(await ncbiFetchText(url));
+      if (!isValidRid(rid)) failure = "invalid_rid";
     } catch {
-      return errorResponse("Could not submit the search to NCBI.", 502, request);
+      failure = "ncbi_error";
     }
-    if (!isValidRid(rid)) return errorResponse("NCBI did not return a valid request ID.", 502, request);
+  }
+  try {
+    await finalizeBlastAudit(db, auditId, {
+      ...egressDetail,
+      success: failure === null,
+      status: failure === null ? "succeeded" : "failed",
+      error: failure,
+      rid: failure === null ? rid : null
+    });
+  } catch {
+    // The pending audit row already holds the hash, target and byte counts.
+  }
+  if (failure) {
+    return errorResponse(
+      failure === "invalid_rid" ? "NCBI did not return a valid request ID." : "Could not submit the search to NCBI.",
+      502,
+      request
+    );
   }
 
-  const createdAt = new Date(now).toISOString();
   const row = {
     rid,
     status: "queued",

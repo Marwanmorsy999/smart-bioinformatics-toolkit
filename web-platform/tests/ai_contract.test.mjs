@@ -222,6 +222,9 @@ test("end-to-end API: request, plan, approval, authenticated jobs, result, run, 
   assert.equal(pollBody.jobs[0].id, jobId);
   assert.equal(pollBody.jobs[0].status, "running");
   assert.equal(pollBody.jobs[0].inputs.fasta_text, FASTA);
+  assert.equal(pollBody.jobs[0].external_egress, false, "job DTO exposes the step egress gate to the agent");
+  assert.equal(pollBody.jobs[0].consent_required, false);
+  assert.deepEqual(pollBody.jobs[0].consent, { granted: false, scope: null });
   assert.deepEqual(pollBody.jobs[0].params, { sequence_type: "dna" });
   assert.equal(pollBody.execution_mode, "real");
 
@@ -357,6 +360,7 @@ test("migration SQL runs in real SQLite: 11 AI tables + blast_consents, blast_re
     db.exec("INSERT INTO blast_requests (rid, status, created_at, last_checked_at, input_hash, result_tsv) VALUES ('RID1', 'queued', '2026-01-01T00:00:00.000Z', NULL, 'hash', NULL)");
     db.exec(readFileSync(resolve(MIGRATIONS, "0002_ai_platform.sql"), "utf8"));
     db.exec(readFileSync(resolve(MIGRATIONS, "0003_blast_consent.sql"), "utf8"));
+    db.exec(readFileSync(resolve(MIGRATIONS, "0004_blast_consent_unique.sql"), "utf8"));
 
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all()
       .map((row) => row.name)
@@ -375,7 +379,10 @@ test("migration SQL runs in real SQLite: 11 AI tables + blast_consents, blast_re
       "token", "input_hash", "database", "program", "granted", "expires_at", "created_at", "used_at"
     ]);
     const indexes = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_%'").all();
-    assert.ok(indexes.length >= 11, `expected at least 11 indexes, got ${indexes.length}`);
+    assert.ok(indexes.length >= 13, `expected at least 13 indexes, got ${indexes.length}`);
+    const uniqueIndexes = db.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'index' AND name IN ('idx_jobs_plan_step', 'idx_approvals_plan_step')").all();
+    assert.equal(uniqueIndexes.length, 2);
+    assert.ok(uniqueIndexes.every((index) => /CREATE UNIQUE INDEX/i.test(index.sql)));
   } finally {
     db.close();
   }
@@ -460,6 +467,38 @@ test("approval with external egress and consent issues a usable BLAST token", as
   assert.equal(fake.state.tables.blast_consents.length, 1);
   assert.equal(fake.state.tables.blast_consents[0].granted, 1);
   assert.ok(fake.state.tables.audit_events.some((event) => event.action === "ai_blast_consent_issued"));
+});
+
+test("concurrent approvals create one job and mint at most one BLAST token", async () => {
+  const planId = "plan_5555555555555555";
+  const datasetId = "ds_5555555555555555";
+  const plan = storedPlan(planId, {
+    external_egress: true,
+    consent_required: true,
+    inputs: [`dataset:${datasetId}`],
+    params: { sequence_type: "dna" }
+  });
+  const fake = createFakeD1AI({
+    plans: [{ public_id: planId, plan_json: JSON.stringify(plan) }],
+    datasets: [{ public_id: datasetId, fasta_text: FASTA, filename: "sample.fasta" }]
+  });
+  const env = mockAIEnv(fake.db);
+  const approvals = [{ step_id: "step_1", approved: true, consent_granted: true }];
+  const [first, second] = await Promise.all([
+    approve(env, planId, approvals, ["external-blast"]),
+    approve(env, planId, approvals, ["external-blast"])
+  ]);
+  assert.equal(first.response.status, 200);
+  assert.equal(second.response.status, 200);
+  assert.deepEqual(first.body.job_ids, second.body.job_ids);
+  assert.equal(first.body.job_ids.length, 1);
+
+  const grants = [first.body.blast_consent, second.body.blast_consent].filter(Boolean);
+  assert.equal(grants.length, 1, "only the job-claiming approval may mint a token");
+  assert.equal(fake.state.tables.jobs.length, 1);
+  assert.equal(fake.state.tables.approvals.length, 1);
+  assert.equal(fake.state.tables.blast_consents.length, 1);
+  assert.equal(fake.state.tables.audit_events.filter((event) => event.action === "ai_blast_consent_issued").length, 1);
 });
 
 async function queuedJobId(env) {

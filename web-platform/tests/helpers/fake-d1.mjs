@@ -3,7 +3,7 @@ import { SQL, hashInput, issueBlastConsent } from "../../functions/api/blast/_li
 import { SQL_META } from "../../functions/api/ai/_lib.js";
 
 export function createFakeD1(initialRows = []) {
-  const state = { rows: initialRows.map((row) => ({ ...row })), consents: [], calls: [] };
+  const state = { rows: initialRows.map((row) => ({ ...row })), consents: [], auditEvents: [], calls: [] };
 
   const db = {
     prepare(sql) {
@@ -49,6 +49,20 @@ export function createFakeD1(initialRows = []) {
             if (index >= 0) state.consents[index] = row;
             else state.consents.push(row);
             return { success: true, meta: { changes: 1 } };
+          }
+          if (sql === SQL.insertBlastAudit) {
+            const [public_id, actor, action, target, detail_json, timestamp] = statement.values;
+            const row = { public_id, actor, action, target, detail_json, timestamp };
+            const index = state.auditEvents.findIndex((existing) => existing.public_id === public_id);
+            if (index >= 0) state.auditEvents[index] = row;
+            else state.auditEvents.push(row);
+            return { success: true, meta: { changes: 1 } };
+          }
+          if (sql === SQL.updateBlastAudit) {
+            const [detail_json, public_id] = statement.values;
+            const row = state.auditEvents.find((existing) => existing.public_id === public_id);
+            if (row) row.detail_json = detail_json;
+            return { success: true, meta: { changes: row ? 1 : 0 } };
           }
           if (sql === SQL.claimConsent) {
             // [used_at, now_iso, token, input_hash, database, program]
@@ -158,6 +172,8 @@ export function createFakeD1AI(initialRows = {}) {
   }
   const ensure = (table) => (state.tables[table] ??= []);
   const matchesWhere = (row, columns, values) => columns.every((column, index) => row[column] === values[index]);
+  // Mirrors additive migration 0004_blast_consent_unique.sql.
+  const uniquePairs = { jobs: ["plan_id", "step_id"], approvals: ["plan_id", "step_id"] };
 
   const db = {
     prepare(sql) {
@@ -174,6 +190,13 @@ export function createFakeD1AI(initialRows = {}) {
           state.calls.push({ sql, kind: "run", values: [...statement.values] });
           const rows = ensure(meta.table);
           if (meta.op === "insert") {
+            const uniqueColumns = uniquePairs[meta.table];
+            if (uniqueColumns) {
+              const values = uniqueColumns.map((column) => statement.values[meta.columns.indexOf(column)]);
+              if (rows.some((existing) => matchesWhere(existing, uniqueColumns, values))) {
+                throw new Error(`UNIQUE constraint failed: ${meta.table}.${uniqueColumns.join(", ")}`);
+              }
+            }
             const row = { id: nextId++ };
             meta.columns.forEach((column, index) => { row[column] = statement.values[index] ?? null; });
             rows.push(row);

@@ -9,9 +9,17 @@ requires only four artifacts:
 3. focused tests, and
 4. documentation (including references and limitations).
 
-No control-plane code, planner branch, registry module or validation rule needs
-to change. Discovery is automatic: any new valid `shared/plugins/*.json` is
-picked up at import time and by the registry generator.
+These four artifacts are sufficient for **registration, availability reporting
+and direct agent execution**. Discovery is automatic: any new valid
+`shared/plugins/*.json` is picked up at import time and by the registry
+generator; no registry module or validation rule needs to change.
+
+**Explicit limitation:** exposing a new tool through the natural-language
+request → plan → approve UI is separate product work. `planner.js` currently
+hardcodes `sequence-stats.profile` for its intent mapping, so a newly
+registered domain plugin will not be selected by the NL planner until a planner
+change is made. Do not change the planner merely to register a plugin; use
+direct job execution or the registry API until that product work is scheduled.
 
 Copy `docs/plugins/template/` as a starting point. It is intentionally
 unavailable and emits no artifacts.
@@ -111,10 +119,13 @@ Every tool must declare at least one `references` entry and at least one
 
 - Use real, checkable citations: DOI/CrossRef or PubMed records, or an in-tree
   source file with `verified_by` pointing at that source.
-- `verified: true` is only acceptable for keys in the curated ledger in
-  `scripts/check_plugins.py`. To add a new verified citation, check its
-  bibliographic metadata and add its exact `title`/`url` to that ledger, or
-  mark the claim `verified: false` with an explanatory `note`.
+- `verified: true` is only acceptable for keys in the shared curated ledger
+  `python-engine/src/smartbio/aiagent/plugin_references.py` (used by both
+  discovery at runtime and `scripts/check_plugins.py` in CI). To add a new
+  verified citation, check its bibliographic metadata and add its exact
+  `title`/`url` to that ledger, or mark the claim `verified: false` with an
+  explanatory `note`. A fabricated verified claim makes the tool unavailable
+  with a precise `reference_verification_unknown` reason at runtime.
 - A method paper does **not** verify every derived claim. For example the 16S
   species-threshold paper exists, but its numeric cutoff is a screening
   proposal, not a universal boundary; that claim stays `verified: false`.
@@ -144,8 +155,16 @@ be advertised as available:
 
 A runtime dataset or local database cannot be verified statically; declare it
 in `unavailable_reason` (as the 16S tools do) rather than claiming availability.
-When a requirement cannot be satisfied, discovery fails closed: the tool is
-still known to the registry but `available: false` with an explicit reason.
+
+The two failure classes are deliberately different:
+
+- **Hard requirement missing** (`python-package:` / `executable:`): the plugin
+  is invalid. Discovery does not import its entrypoint and the adapter is not
+  registered, so no job can execute it.
+- **Runtime dependency unverifiable** (e.g. `tsv_dataset`, `local_database`):
+  the plugin is still valid and its adapter remains registered for explicit
+  jobs with caller-supplied data, but it is `available: false` for planning with
+  an explicit reason.
 
 ## 5. Discovery and availability rules
 
@@ -153,26 +172,39 @@ still known to the registry but `available: false` with an explicit reason.
 
 - Path resolution: `SMARTBIO_PLUGIN_DIR` environment variable, else
   `shared/plugins/` relative to the package (also overridable with
-  `SMARTBIO_PLUGIN_SCHEMA`).
+  `SMARTBIO_PLUGIN_SCHEMA`). The directory must be repo-controlled and
+  non-user-writable: importing an adapter executes code, so startup discovery
+  rejects temp/world-writable directories and out-of-repo overrides unless
+  `SMARTBIO_PLUGIN_DIR_TRUSTED=1` explicitly acknowledges the risk. Passing an
+  explicit directory to `discover()` is for tests/tooling and skips this guard.
 - Every manifest is schema-validated; invalid JSON/schema is reported and the
-  manifest contributes no tools.
-- Every `entrypoint` is imported, instantiated and checked for `TOOL_ID`,
+  manifest contributes no tools. No module is imported until schema, reference,
+  contract and hard-requirement checks pass.
+- Every `entrypoint` is then imported, instantiated and checked for `TOOL_ID`,
   `VERSION` and callable `run`; `TOOL_ID` must match the tool id.
-- All three contracts are validated as JSON Schemas.
+- All three contracts are validated as JSON Schemas, and references are checked
+  against the shared ledger before import.
 - Requirements are checked as in §4. Duplicate tool ids are rejected: neither
   copy is registered.
-- **A tool is available only if the manifest says `available: true`, all checks
-  pass, and every requirement is satisfied.** Anything invalid becomes
-  `available: false` with a precise `unavailable_reason`; nothing is silently
-  available. A tool whose adapter/contract is invalid is not registered at all.
+- **Registered** means the manifest, references, contracts and entrypoint are
+  valid; such an adapter resolves through `get_plugin()` even if the tool is
+  `available: false`. **Available** is stricter: the manifest says
+  `available: true` and every requirement is satisfied. Availability governs
+  planner-facing lists and user-facing reports, not explicit job execution.
+  An invalid tool (bad schema/contract/reference, unimportable entrypoint or
+  missing hard requirement) is reported unavailable with a precise error and
+  cannot execute.
 
 Public helpers:
 
 - `plugin_capabilities()` — structured tool projections (the registry fields).
-- `availability_report()` — per-tool availability, declared flag, requirement
-  checks and discovery errors.
-- `load_plugins()`, `get_plugin()`, `require_plugin()`, `list_tools()` in
-  `smartbio.aiagent.plugins` keep their original signatures and behaviour.
+- `availability_report()` — per-tool availability, registration state, declared
+  flag, requirement checks and discovery errors.
+- `is_available(tool_id)` in `smartbio.aiagent.plugins` — the gate for
+  planner-facing lists; do not use it to block explicit job execution.
+- `load_plugins()`, `get_plugin()`, `require_plugin()` resolve every *valid*
+  adapter; `list_tools()` now includes accurate `available` and
+  `unavailable_reason` fields alongside `id`/`version`/`backend`.
 
 The Worker registry is generated by
 `python scripts/generate_plugin_registry.py` into
@@ -197,6 +229,7 @@ Add a list of artifact filenames that must be present and non-empty:
 `REQUIRED_ARTIFACTS` entry for the tool (if any), de-duplicates names and emits
 `missing_artifact:<name>` / `empty_artifact:<name>` for each absent file. An
 adapter that declares artifacts but omits them can no longer report success.
+CI rejects an *available* adapter that does not declare this seam.
 
 ### `evidence_hints`
 
@@ -230,7 +263,11 @@ in the resulting text comes from the cited value, so
 `check_explanation()` continues to reject fabricated numbers, unknown paths and
 unverified citations. Unresolvable hints are skipped rather than emitted as
 free-standing claims. The `evidence_hints` parameter defaults to `None`, so all
-existing tools behave exactly as before.
+existing tools behave exactly as before. The generic branch emits **no
+references**: the manifest's `references` are for reporting and CI, while a
+plugin's scientific citations belong in its JSON artifacts/report. Agent
+explanations only carry references that are in the curated ledger in
+`plugin_references.py`; adding one there is a separate, verified decision.
 
 Together these seams mean a new domain never needs a branch in
 `validation.py`, `explanation.py`, `agent.py` or the Worker.
@@ -258,8 +295,9 @@ cd web-platform; npm test
 `scripts/check_plugins.py` is the CI gate: it fails on schema-invalid manifests,
 unimportable entrypoints, `TOOL_ID` mismatches, invalid contracts, empty or
 falsely verified references, empty limitations, unsatisfied requirements on an
-available tool, a stale generated registry, or a non-compliant template. The
-GitHub Actions `plugin-compliance` job runs the checker and the plugin tests.
+available tool, an available adapter missing `required_artifacts`, a stale
+generated registry, or a non-compliant template. The GitHub Actions
+`plugin-compliance` job runs the checker and the plugin tests.
 
 ## 8. Compliance checklist
 
@@ -273,3 +311,4 @@ GitHub Actions `plugin-compliance` job runs the checker and the plugin tests.
 - [ ] Adapter calls existing scientific functions and fails closed on missing input.
 - [ ] Adapter declares `required_artifacts` and, where useful, `evidence_hints`.
 - [ ] Tests and docs added; `scripts/check_plugins.py` passes; generated registry regenerated and checked in.
+- [ ] Accepted limitation: NL planner/UI exposure is separate product work and is not part of plugin registration.

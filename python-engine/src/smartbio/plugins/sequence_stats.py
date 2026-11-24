@@ -70,6 +70,7 @@ class _BaseSequenceAdapter:
             "parameters": {"sequence_type": prepared["sequence_type"]},
             "input_file": prepared["filename"],
             "artifact_names": [a["name"] for a in artifacts],
+            "required_artifacts": [a["name"] for a in artifacts],
             "limitations": list(_LIMITATIONS),
             "logs": [],
         }

@@ -26,7 +26,10 @@ export const SQL = {
   // Atomic single-use claim. The binding order is [used_at, now_iso, token,
   // input_hash, database, program] so every eligibility predicate lives in the
   // same statement that flips used_at; a second claimant sees zero rows changed.
-  claimConsent: "UPDATE blast_consents SET used_at = ? WHERE expires_at > ? AND token = ? AND used_at IS NULL AND granted = 1 AND input_hash = ? AND database = ? AND program = ?"
+  claimConsent: "UPDATE blast_consents SET used_at = ? WHERE expires_at > ? AND token = ? AND used_at IS NULL AND granted = 1 AND input_hash = ? AND database = ? AND program = ?",
+  // Append-only audit of the actual egress, using the 0002 audit_events schema.
+  insertBlastAudit: "INSERT INTO audit_events (public_id, actor, action, target, detail_json, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
+  updateBlastAudit: "UPDATE audit_events SET detail_json = ? WHERE public_id = ?"
 };
 
 // A deliberately synthetic, clearly labelled result used only when MOCK_NCBI=1.
@@ -147,14 +150,33 @@ export const BLAST_CONSENT_ERRORS = Object.freeze({
   consent_unavailable: "Consent could not be verified."
 });
 
-function makeConsentToken() {
-  const bytes = new Uint8Array(16);
-  if (globalThis.crypto?.getRandomValues) {
-    globalThis.crypto.getRandomValues(bytes);
-  } else {
-    for (let i = 0; i < bytes.length; i += 1) bytes[i] = Math.floor(Math.random() * 256);
+// Tokens must be unpredictable: never fall back to Math.random(). Absence of
+// Web Crypto is a fail-closed 503, surfaced as BlastCryptoUnavailableError.
+export class BlastCryptoUnavailableError extends Error {
+  constructor() {
+    super("Web Crypto getRandomValues is unavailable.");
+    this.name = "BlastCryptoUnavailableError";
   }
-  return "consent_" + Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function randomHex(byteLength) {
+  if (!globalThis.crypto || typeof globalThis.crypto.getRandomValues !== "function") {
+    throw new BlastCryptoUnavailableError();
+  }
+  const bytes = new Uint8Array(byteLength);
+  globalThis.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+export function makeConsentToken() {
+  return "consent_" + randomHex(16);
+}
+
+export function cryptoUnavailableResponse(request = null) {
+  return jsonResponse({
+    error: htmlEscape("Secure token generation is unavailable."),
+    code: "crypto_unavailable"
+  }, 503, request);
 }
 
 export async function issueBlastConsent(db, {
@@ -239,6 +261,33 @@ export async function consumeBlastConsent(db, {
 export function consentErrorResponse(code, request = null) {
   const message = BLAST_CONSENT_ERRORS[code] ?? BLAST_CONSENT_ERRORS.consent_invalid;
   return jsonResponse({ error: htmlEscape(message), code }, 403, request);
+}
+
+// The audit row is opened BEFORE egress and finalised afterwards. If the audit
+// write fails, no external call is made. Only hashes/counts are recorded — the
+// FASTA value itself is never written to audit_events.
+export async function auditBlastEgress(db, {
+  actor = "browser",
+  target = BLAST_API_URL,
+  action = "blast_egress",
+  detail = {},
+  timestamp = new Date().toISOString(),
+  idFactory
+} = {}) {
+  const publicId = typeof idFactory === "function" ? idFactory("aud") : `aud_${randomHex(8)}`;
+  await db.prepare(SQL.insertBlastAudit).bind(
+    publicId,
+    String(actor),
+    action,
+    String(target),
+    JSON.stringify(detail),
+    timestamp
+  ).run();
+  return publicId;
+}
+
+export async function finalizeBlastAudit(db, publicId, detail) {
+  await db.prepare(SQL.updateBlastAudit).bind(JSON.stringify(detail), publicId).run();
 }
 
 function withIdentification(params, env) {

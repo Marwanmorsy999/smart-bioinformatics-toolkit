@@ -11,16 +11,22 @@ ENGINE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ENGINE_ROOT / "src"))
 ROOT = Path(__file__).resolve().parents[2]
 
+sys.path.insert(0, str(ROOT / "scripts"))
+
 from smartbio.aiagent import agent as agent_module  # noqa: E402
-from smartbio.aiagent.agent import process_job  # noqa: E402
+from smartbio.aiagent.agent import _step_from_job, process_job  # noqa: E402
 from smartbio.aiagent.explanation import build_explanation, check_explanation  # noqa: E402
 from smartbio.aiagent.plugin_discovery import (  # noqa: E402
+    DiscoveryResult,
+    DiscoveredTool,
     check_requirement,
+    declares_required_artifacts,
     discover,
 )
 from smartbio.aiagent.plugins import (  # noqa: E402
     availability_report,
     get_plugin,
+    is_available,
     list_tools,
     load_plugins,
     plugin_capabilities,
@@ -67,7 +73,11 @@ def test_shipped_manifests_are_discovered_and_fails_closed():
         tool_id for tool_id, record in result.tools.items() if record.adapter is not None
     }
     assert get_plugin("sequence-stats.profile") is not None
-    assert list_tools()
+    tools = list_tools()
+    assert tools
+    assert all("available" in tool and "unavailable_reason" in tool for tool in tools)
+    assert is_available("sequence-stats.profile") is True
+    assert is_available("microbiome-16s.blast-parse") is False
 
 
 def test_invalid_manifest_is_never_available(tmp_path):
@@ -80,7 +90,9 @@ def test_invalid_manifest_is_never_available(tmp_path):
     assert "sequence-stats.profile" not in result.tools
 
 
-def test_missing_requirement_makes_declared_available_tool_unavailable(tmp_path):
+def test_missing_hard_requirement_means_no_registration_and_no_execution(
+    tmp_path, monkeypatch
+):
     manifest = _one_tool_manifest()
     manifest["tools"][0]["requirements"] = ["python-package:definitely_missing_pkg_xyz"]
     _write(tmp_path, manifest)
@@ -88,8 +100,27 @@ def test_missing_requirement_makes_declared_available_tool_unavailable(tmp_path)
     record = result.tools["sequence-stats.validate"]
     assert record.declared_available is True
     assert record.available is False
+    assert record.adapter is None
+    assert "unsatisfied_hard_requirement" in (record.unavailable_reason or "")
     assert "not importable" in (record.unavailable_reason or "")
-    assert record.requirement_checks[0]["satisfied"] is False
+    assert "sequence-stats.validate" not in result.adapters()
+    monkeypatch.setattr(
+        agent_module, "get_plugin", lambda tool_id: result.adapters().get(tool_id)
+    )
+    job = {"id": "job_invalid", "tool_id": "sequence-stats.validate", "inputs": {}}
+    assert process_job(job)["status"] == "failed"
+
+
+def test_valid_but_unavailable_tool_is_reported_yet_executable():
+    record = discover().tools["microbiome-16s.blast-parse"]
+    assert record.registered is True
+    assert record.available is False
+    assert record.unavailable_reason
+    assert get_plugin("microbiome-16s.blast-parse") is not None
+    assert is_available("microbiome-16s.blast-parse") is False
+    report = availability_report()
+    assert report["tools"]["microbiome-16s.blast-parse"]["registered"] is True
+    assert report["tools"]["microbiome-16s.blast-parse"]["available"] is False
 
 
 def test_invalid_contract_is_rejected(tmp_path):
@@ -180,6 +211,94 @@ def test_template_is_a_compliant_unavailable_skeleton():
     assert record.available is False
     assert "Skeleton" in (record.unavailable_reason or "")
     assert get_plugin("template.example") is None
+
+
+def test_startup_discovery_rejects_temp_manifest_dir(monkeypatch, tmp_path):
+    _write(tmp_path, _one_tool_manifest())
+    monkeypatch.setenv("SMARTBIO_PLUGIN_DIR", str(tmp_path))
+    monkeypatch.delenv("SMARTBIO_PLUGIN_DIR_TRUSTED", raising=False)
+    result = discover()
+    assert any(error.startswith("untrusted_manifest_dir:") for error in result.errors)
+    assert result.tools == {}
+    monkeypatch.setenv("SMARTBIO_PLUGIN_DIR_TRUSTED", "1")
+    acknowledged = discover()
+    assert acknowledged.errors == []
+    assert "sequence-stats.validate" in acknowledged.tools
+
+
+def test_fabricated_verified_reference_is_unavailable(tmp_path):
+    manifest = _one_tool_manifest()
+    manifest["tools"][0]["references"][0]["verified"] = True
+    manifest["tools"][0]["references"][0]["key"] = "fabricated_claim"
+    manifest["tools"][0]["references"][0]["title"] = "Fabricated paper"
+    manifest["tools"][0]["references"][0]["url"] = "https://example.invalid/fake"
+    manifest["tools"][0]["references"][0].pop("verified_by", None)
+    _write(tmp_path, manifest)
+    result = discover(tmp_path)
+    record = result.tools["sequence-stats.validate"]
+    assert record.available is False
+    assert record.adapter is None
+    assert any("reference_verification_unknown:fabricated_claim" in error for error in result.errors)
+
+
+def test_available_adapter_must_declare_required_artifacts(monkeypatch):
+    import check_plugins
+
+    class NoSeamPlugin:
+        TOOL_ID = "synthetic.noseam"
+        VERSION = "1.0.0"
+
+        def run(self, step, inputs, context):
+            return {"artifacts": [], "tool_run_meta": {"status": "succeeded"}}
+
+    assert declares_required_artifacts(NoSeamPlugin()) is False
+    assert declares_required_artifacts(get_plugin("sequence-stats.profile")) is True
+    record = DiscoveredTool(
+        id="synthetic.noseam",
+        manifest_path="synthetic.json",
+        manifest_name="synthetic",
+        domain="synthetic",
+        version="1.0.0",
+        entrypoint="synthetic:NoSeamPlugin",
+        adapter=NoSeamPlugin(),
+        available=True,
+        unavailable_reason=None,
+        declared_available=True,
+        requirements=[],
+        tool={
+            "id": "synthetic.noseam",
+            "description": "synthetic",
+            "references": [
+                {
+                    "key": "iupac_1984_ambiguity",
+                    "title": "Nomenclature for incompletely specified bases in nucleic acid sequences: recommendations 1984",
+                    "url": "https://doi.org/10.1093/nar/13.9.3021",
+                    "verified": True,
+                }
+            ],
+            "limitations": ["synthetic"],
+        },
+    )
+    monkeypatch.setattr(check_plugins, "discover", lambda: DiscoveryResult(tools={record.id: record}))
+    errors: list[str] = []
+    check_plugins._check_discovered(errors)
+    assert any("required_artifacts" in error for error in errors)
+
+
+def test_step_flags_follow_egress_not_denied_consent():
+    denied_without_egress = _step_from_job(
+        {"tool_id": "sequence-stats.profile", "consent": {"granted": False}}
+    )
+    assert denied_without_egress["external_egress"] is False
+    assert denied_without_egress["consent_required"] is False
+    egress_job = {
+        "tool_id": "external.tool",
+        "external_egress": True,
+        "consent": {"granted": False},
+    }
+    egress_step = _step_from_job(egress_job)
+    assert egress_step["external_egress"] is True
+    assert egress_step["consent_required"] is True
 
 
 # --- generic evidence seams --------------------------------------------------

@@ -1,29 +1,37 @@
 """Automatic, fail-closed plugin discovery.
 
-A manifest is trusted only when it passes the JSON Schema, every declared
-adapter imports and matches its tool id, all three contracts are valid JSON
-Schemas, and every declared requirement can be satisfied locally. Anything
-else is reported with a precise reason and is never marked available.
+Two distinct states are reported:
 
-The manifests directory is configurable with ``SMARTBIO_PLUGIN_DIR``; the
-fallback is ``shared/plugins`` next to the ``python-engine`` package. No source
-code edits are needed when a new manifest is dropped into that directory.
+* **Registered** — the manifest, references, contracts and entrypoint are
+  valid, so ``TOOL_REGISTRY`` can resolve the adapter for explicit jobs.
+* **Available** — additionally the manifest says ``available: true`` and every
+  statically checkable requirement is satisfied. Availability governs the
+  planner-facing registry and user-facing reports, not explicit execution.
+
+A manifest is never imported before schema, reference, contract and hard
+requirement checks pass. The startup manifests directory is guarded against
+temp/world-writable locations because importing an adapter executes code.
 """
 
 from __future__ import annotations
 
 import importlib
 import importlib.util
+import inspect
 import json
 import os
 import shutil
+import stat
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
+
+from smartbio.aiagent.plugin_references import reference_errors
 
 # python-engine/src/smartbio/aiagent/plugin_discovery.py -> repository root.
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -32,6 +40,7 @@ DEFAULT_SCHEMA_PATH = REPO_ROOT / "shared" / "schemas" / "plugin.schema.json"
 
 # The import name of the Biopython distribution is ``Bio``.
 _PYTHON_PACKAGE_ALIASES = {"biopython": "Bio"}
+_HARD_REQUIREMENT_KINDS = {"python-package", "executable"}
 
 
 def manifests_dir() -> Path:
@@ -42,6 +51,47 @@ def manifests_dir() -> Path:
 def schema_path() -> Path:
     configured = os.environ.get("SMARTBIO_PLUGIN_SCHEMA", "").strip()
     return Path(configured).expanduser().resolve() if configured else DEFAULT_SCHEMA_PATH
+
+
+def _untrusted_reasons(root: Path) -> list[str]:
+    reasons: list[str] = []
+    try:
+        root.relative_to(Path(tempfile.gettempdir()).resolve())
+        reasons.append("path is inside the system temporary directory")
+    except ValueError:
+        pass
+    if os.name == "posix":
+        try:
+            mode = stat.S_IMODE(root.stat().st_mode)
+            if mode & stat.S_IWOTH:
+                reasons.append("directory is world-writable")
+        except OSError:
+            pass
+    return reasons
+
+
+def _directory_guard(root: Path, explicit: bool) -> list[str]:
+    """Guard startup discovery; explicit paths are for tests and tooling."""
+    if explicit:
+        return []
+    trusted_ack = os.environ.get("SMARTBIO_PLUGIN_DIR_TRUSTED", "").strip() == "1"
+    reasons = _untrusted_reasons(root)
+    configured = bool(os.environ.get("SMARTBIO_PLUGIN_DIR", "").strip())
+    if configured:
+        try:
+            root.relative_to(REPO_ROOT)
+        except ValueError:
+            reasons.append(
+                "SMARTBIO_PLUGIN_DIR override lies outside the repository; "
+                "set SMARTBIO_PLUGIN_DIR_TRUSTED=1 only for a controlled host"
+            )
+    if reasons and not trusted_ack:
+        return [
+            f"untrusted_manifest_dir:{root}: {'; '.join(reasons)}. "
+            "Use a repo-controlled, non-user-writable directory or set "
+            "SMARTBIO_PLUGIN_DIR_TRUSTED=1 to acknowledge the risk"
+        ]
+    return []
 
 
 def load_schema(path: Path | None = None) -> dict[str, Any]:
@@ -121,7 +171,11 @@ def check_requirement(declaration: str) -> dict[str, Any]:
             "declaration": text,
             "kind": kind,
             "satisfied": located is not None,
-            "detail": f"executable '{name}' found at {located}" if located else f"executable '{name}' not on PATH",
+            "detail": (
+                f"executable '{name}' found at {located}"
+                if located
+                else f"executable '{name}' not on PATH"
+            ),
         }
     return {
         "declaration": text,
@@ -186,6 +240,33 @@ def import_adapter(
     return target() if isinstance(target, type) else target
 
 
+def declares_required_artifacts(adapter: Any) -> bool:
+    """True when an adapter statically declares the ``required_artifacts`` seam.
+
+    Accepted forms are a class-level ``REQUIRED_ARTIFACTS`` declaration or the
+    ``required_artifacts`` key in the adapter class/module source (normally in
+    ``tool_run_meta``). This avoids running scientific code just to inspect a
+    contract while still catching adapters that omit the seam.
+    """
+    if isinstance(getattr(adapter, "REQUIRED_ARTIFACTS", None), (list, tuple)):
+        return True
+    owner = type(adapter)
+    targets = [owner]
+    # Shipped adapters may build meta in a module-level helper; only inspect
+    # modules inside the plugin package (not arbitrary caller/test modules).
+    if owner.__module__.startswith("smartbio.plugins"):
+        module = sys.modules.get(owner.__module__)
+        if module is not None:
+            targets.append(module)
+    for target in targets:
+        try:
+            if "required_artifacts" in (inspect.getsource(target) or ""):
+                return True
+        except (OSError, TypeError):
+            continue
+    return False
+
+
 def _adapter_errors(adapter: Any, tool_id: str) -> list[str]:
     errors: list[str] = []
     actual_id = getattr(adapter, "TOOL_ID", None)
@@ -220,6 +301,10 @@ class DiscoveredTool:
     tool: dict[str, Any] = field(default_factory=dict)
     order: int = 0
 
+    @property
+    def registered(self) -> bool:
+        return self.adapter is not None
+
     def capability(self) -> dict[str, Any]:
         """Projection used by the Worker registry and capability endpoint."""
         tool = self.tool
@@ -250,6 +335,11 @@ class DiscoveryResult:
     manifest_paths: list[str] = field(default_factory=list)
 
     def adapters(self) -> dict[str, Any]:
+        """All *valid* adapters, including valid-but-unavailable tools.
+
+        Availability governs planner selection and reporting; explicit jobs
+        may still call a valid adapter whose manifest is `available: false`.
+        """
         result: dict[str, Any] = {}
         for tool_id, record in self.tools.items():
             if record.adapter is None:
@@ -264,10 +354,14 @@ def discover(
     directory: Path | str | None = None,
     validator: Draft202012Validator | None = None,
 ) -> DiscoveryResult:
-    """Scan ``directory`` for manifests and validate every tool before registering."""
-    root = Path(directory).expanduser().resolve() if directory is not None else manifests_dir()
-    active = validator or Draft202012Validator(load_schema())
+    """Scan ``directory`` for manifests; validate before importing any code."""
+    explicit = directory is not None
+    root = Path(directory).expanduser().resolve() if explicit else manifests_dir()
     result = DiscoveryResult()
+    result.errors.extend(_directory_guard(root, explicit))
+    if result.errors:
+        return result
+    active = validator or Draft202012Validator(load_schema())
     if not root.is_dir():
         result.errors.append(f"manifests_directory_not_found:{root}")
         return result
@@ -293,47 +387,69 @@ def discover(
             tool_id = str(raw_tool.get("id", ""))
             order = tool_index
             entrypoint = str(raw_tool.get("entrypoint") or manifest.get("entrypoint") or "")
-            problems = _contract_errors(raw_tool)
+            # Validation happens BEFORE importing the declared module.
+            tool_problems = _contract_errors(raw_tool)
+            tool_problems.extend(
+                f"references:{item}" for item in reference_errors(raw_tool.get("references"))
+            )
             requirements = list(raw_tool.get("requirements") or []) + list(
                 raw_tool.get("requires") or []
             )
-            # Preserve order while dropping repeated declarations.
             requirements = list(dict.fromkeys(requirements))
             checks = check_requirements(requirements)
+            hard_failures = [
+                item
+                for item in checks
+                if not item["satisfied"] and item["kind"] in _HARD_REQUIREMENT_KINDS
+            ]
+            if hard_failures:
+                details = "; ".join(item["detail"] for item in hard_failures)
+                tool_problems.append(f"unsatisfied_hard_requirement:{details}")
             declared_available = bool(raw_tool.get("available", False))
             adapter: Any | None = None
-            if not entrypoint:
-                problems.append("entrypoint: neither the tool nor the manifest declares one")
-            else:
-                try:
-                    adapter = import_adapter(entrypoint, root, tool_id)
-                except Exception as exc:  # fail closed on any import/constructor fault
-                    problems.append(f"entrypoint: cannot import '{entrypoint}' ({exc})")
-                    adapter = None
-                else:
-                    problems.extend(_adapter_errors(adapter, tool_id))
 
-            if problems:
-                reason = "; ".join(problems)
+            if not tool_problems:
+                if not entrypoint:
+                    tool_problems.append(
+                        "entrypoint: neither the tool nor the manifest declares one"
+                    )
+                else:
+                    try:
+                        adapter = import_adapter(entrypoint, root, tool_id)
+                    except Exception as exc:  # fail closed on import/constructor faults
+                        tool_problems.append(
+                            f"entrypoint: cannot import '{entrypoint}' ({exc})"
+                        )
+                        adapter = None
+                    else:
+                        tool_problems.extend(_adapter_errors(adapter, tool_id))
+
+            failed = [item for item in checks if not item["satisfied"]]
+            if tool_problems:
+                reason = "; ".join(tool_problems)
+                if failed:
+                    reason += "; " + "; ".join(item["detail"] for item in failed)
                 result.errors.append(f"{path.name}:{tool_id}: {reason}")
-                record = DiscoveredTool(
-                    id=tool_id,
-                    manifest_path=str(path),
-                    manifest_name=str(manifest.get("name") or path.stem),
-                    domain=domain,
-                    version=manifest_version,
-                    entrypoint=entrypoint,
-                    adapter=None,
-                    available=False,
-                    unavailable_reason=reason,
-                    declared_available=declared_available,
-                    requirements=requirements,
-                    requirement_checks=checks,
-                    errors=problems,
-                    tool=raw_tool,
-                    order=order,
+                _append_tool(
+                    result,
+                    DiscoveredTool(
+                        id=tool_id,
+                        manifest_path=str(path),
+                        manifest_name=str(manifest.get("name") or path.stem),
+                        domain=domain,
+                        version=manifest_version,
+                        entrypoint=entrypoint,
+                        adapter=None,
+                        available=False,
+                        unavailable_reason=reason,
+                        declared_available=declared_available,
+                        requirements=requirements,
+                        requirement_checks=checks,
+                        errors=tool_problems,
+                        tool=raw_tool,
+                        order=order,
+                    ),
                 )
-                _append_tool(result, record)
                 continue
 
             unavailable_reason: str | None = None
@@ -341,7 +457,6 @@ def discover(
                 unavailable_reason = str(
                     raw_tool.get("unavailable_reason") or "Manifest declares available=false."
                 )
-            failed = [item for item in checks if not item["satisfied"]]
             if failed:
                 details = "; ".join(item["detail"] for item in failed)
                 unavailable_reason = (
@@ -349,7 +464,6 @@ def discover(
                     if unavailable_reason is None
                     else f"{unavailable_reason} Unsatisfied runtime requirement(s): {details}."
                 )
-            available = declared_available and not failed
             _append_tool(
                 result,
                 DiscoveredTool(
@@ -360,7 +474,7 @@ def discover(
                     version=manifest_version,
                     entrypoint=entrypoint,
                     adapter=adapter,
-                    available=available,
+                    available=declared_available and not failed,
                     unavailable_reason=unavailable_reason,
                     declared_available=declared_available,
                     requirements=requirements,
@@ -378,7 +492,7 @@ def _append_tool(result: DiscoveryResult, record: DiscoveredTool) -> None:
             f"duplicate_tool_id:{record.id}:{record.manifest_path} "
             "conflicts with an already discovered tool"
         )
-        # Fail closed: neither copy may be registered as available.
+        # Fail closed: neither copy may be registered.
         result.tools.pop(record.id, None)
         return
     result.tools[record.id] = record
@@ -409,6 +523,7 @@ def availability_report() -> dict[str, Any]:
     tools = {
         item.id: {
             "available": item.available,
+            "registered": item.registered,
             "unavailable_reason": item.unavailable_reason,
             "declared_available": item.declared_available,
             "entrypoint": item.entrypoint,
@@ -444,6 +559,7 @@ __all__ = [
     "availability_report",
     "check_requirement",
     "check_requirements",
+    "declares_required_artifacts",
     "discover",
     "import_adapter",
     "load_schema",

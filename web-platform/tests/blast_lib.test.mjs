@@ -5,17 +5,20 @@ import {
   ALLOWED_DATABASE,
   ALLOWED_PROGRAM,
   BLAST_CONSENT_ERRORS,
+  BlastCryptoUnavailableError,
   buildPutParams,
   buildResultsParams,
   buildStatusParams,
   consumeBlastConsent,
   consentErrorResponse,
+  cryptoUnavailableResponse,
   DEFAULT_CONSENT_TTL_SECONDS,
   extractTabular,
   hashInput,
   htmlEscape,
   isMock,
   issueBlastConsent,
+  makeConsentToken,
   resolveBlastConsent,
   SQL,
   jsonResponse,
@@ -267,4 +270,27 @@ test("consumeBlastConsent claims atomically and failed claims do not burn the to
   assert.equal(await consumeBlastConsent(db, { ...base, token }), false);
   assert.match(SQL.claimConsent, /used_at IS NULL AND granted = 1/);
   assert.match(SQL.claimConsent, /expires_at > \?/);
+});
+
+test("token generation fails closed when Web Crypto is unavailable", async () => {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+  const { db } = createFakeD1();
+  const inputHash = await hashInput(VALID_PAYLOAD.fasta); // compute while crypto exists
+  try {
+    Object.defineProperty(globalThis, "crypto", { value: undefined, configurable: true, writable: true });
+    assert.throws(
+      () => makeConsentToken(),
+      (error) => error instanceof BlastCryptoUnavailableError
+    );
+    await assert.rejects(
+      () => issueBlastConsent(db, { inputHash, database: ALLOWED_DATABASE, program: ALLOWED_PROGRAM }),
+      (error) => error instanceof BlastCryptoUnavailableError
+    );
+    const response = cryptoUnavailableResponse(makeGetRequest("/api/blast/submit"));
+    assert.equal(response.status, 503);
+    assert.equal((await response.json()).code, "crypto_unavailable");
+  } finally {
+    if (descriptor) Object.defineProperty(globalThis, "crypto", descriptor);
+    else delete globalThis.crypto;
+  }
 });

@@ -24,11 +24,17 @@ import {
 import {
   ALLOWED_DATABASE,
   ALLOWED_PROGRAM,
+  BlastCryptoUnavailableError,
   DEFAULT_CONSENT_TTL_SECONDS,
+  cryptoUnavailableResponse,
   issueBlastConsent
 } from "../../../blast/_lib.js";
 
 const DEFAULT_TIMEOUT_S = 300;
+
+function isUniqueConflict(error) {
+  return Boolean(error) && /UNIQUE|constraint/i.test(String(error.message ?? error));
+}
 
 function datasetIdFromStep(step) {
   for (const input of step.inputs ?? []) {
@@ -86,6 +92,7 @@ export async function handleApprove(request, env, planId, { now = Date.now(), id
   const jobIds = [];
   const skipped = [];
   let blastConsent = null;
+  let conflicted = false;
 
   // Resolve the dataset once; the MVP plan has a single FASTA-backed step.
   const datasetId = datasetIdFromStep(plan.steps[0] ?? {});
@@ -122,71 +129,64 @@ export async function handleApprove(request, env, planId, { now = Date.now(), id
         continue;
       }
 
-      // An approved step with external egress also mints a bounded, single-use
-      // token for the legacy BLAST endpoint so the browser cannot bypass the
-      // approval gate by calling /api/blast/submit directly. The token binds the
-      // exact dataset bytes, database and program recorded in this plan.
-      if (step.external_egress === true && consentGranted && typeof dataset?.fasta_text === "string" && dataset.fasta_text.trim()) {
-        const inputHash = await hashInput(dataset.fasta_text);
-        const database = typeof step.params?.database === "string" ? step.params.database : ALLOWED_DATABASE;
-        const program = typeof step.params?.program === "string" ? step.params.program : ALLOWED_PROGRAM;
-        const token = await issueBlastConsent(db, {
-          inputHash,
-          database,
-          program,
-          granted: true,
-          ttlSeconds: DEFAULT_CONSENT_TTL_SECONDS,
-          now
-        });
-        const expiresAt = new Date(now + DEFAULT_CONSENT_TTL_SECONDS * 1000).toISOString();
-        blastConsent = { token, input_hash: inputHash, database, program, expires_at: expiresAt };
-        await audit(db, {
-          actor: "system",
-          action: "ai_blast_consent_issued",
-          target: planId,
-          detail: { step_id: step.id, input_hash: inputHash, database, program, expires_at: expiresAt },
-          timestamp: createdAt,
-          idFactory
-        });
-      }
-
       const jobId = makeId("job", idFactory);
       const stepDatasetId = datasetIdFromStep(step) ?? datasetId;
       const inputs = {
         dataset_id: stepDatasetId,
         fasta_text: dataset?.fasta_text ?? "",
-        filename: dataset?.filename ?? "upload.fasta"
+        filename: dataset?.filename ?? "upload.fasta",
+        // Surfaced in toJobDto so the local agent sees the exact data-flow gate.
+        external_egress: step.external_egress === true,
+        consent_required: step.consent_required === true
       };
       const consent = { granted: consentGranted, scope: consents.length ? consents : null };
       const timeoutS = Number.isInteger(step.timeout_s) ? step.timeout_s : DEFAULT_TIMEOUT_S;
 
-      await insertRow(db, SQL.insertApproval, [
-        makeId("apr", idFactory),
-        planId,
-        step.id,
-        "browser",
-        JSON.stringify({ consent_granted: consentGranted, consents }),
-        createdAt,
-        null
-      ]);
-      await insertRow(db, SQL.insertJob, [
-        jobId,
-        planId,
-        step.id,
-        "queued",
-        step.tool_id,
-        JSON.stringify(step.params ?? {}),
-        JSON.stringify(inputs),
-        JSON.stringify(consent),
-        step.backend,
-        null,
-        0,
-        timeoutS,
-        envExecutionMode(env),
-        createdAt,
-        null,
-        null
-      ]);
+      // Claim the job row first. The additive unique (plan_id, step_id) index
+      // makes this atomic; a concurrent loser conflicts and mints no token.
+      try {
+        await insertRow(db, SQL.insertJob, [
+          jobId,
+          planId,
+          step.id,
+          "queued",
+          step.tool_id,
+          JSON.stringify(step.params ?? {}),
+          JSON.stringify(inputs),
+          JSON.stringify(consent),
+          step.backend,
+          null,
+          0,
+          timeoutS,
+          envExecutionMode(env),
+          createdAt,
+          null,
+          null
+        ]);
+      } catch (error) {
+        if (isUniqueConflict(error)) {
+          conflicted = true;
+          break;
+        }
+        throw error;
+      }
+      try {
+        await insertRow(db, SQL.insertApproval, [
+          makeId("apr", idFactory),
+          planId,
+          step.id,
+          "browser",
+          JSON.stringify({ consent_granted: consentGranted, consents }),
+          createdAt,
+          null
+        ]);
+      } catch (error) {
+        if (isUniqueConflict(error)) {
+          conflicted = true;
+          break;
+        }
+        throw error;
+      }
       await audit(db, {
         actor: "browser",
         action: "ai_job_created",
@@ -196,8 +196,39 @@ export async function handleApprove(request, env, planId, { now = Date.now(), id
         idFactory
       });
       jobIds.push(jobId);
+
+      // Token only AFTER this step's job row was atomically claimed. It binds
+      // the approved dataset bytes, database and program for the legacy submit.
+      if (step.external_egress === true && consentGranted && typeof dataset?.fasta_text === "string" && dataset.fasta_text.trim()) {
+        try {
+          const inputHash = await hashInput(dataset.fasta_text);
+          const database = typeof step.params?.database === "string" ? step.params.database : ALLOWED_DATABASE;
+          const program = typeof step.params?.program === "string" ? step.params.program : ALLOWED_PROGRAM;
+          const token = await issueBlastConsent(db, {
+            inputHash,
+            database,
+            program,
+            granted: true,
+            ttlSeconds: DEFAULT_CONSENT_TTL_SECONDS,
+            now
+          });
+          const expiresAt = new Date(now + DEFAULT_CONSENT_TTL_SECONDS * 1000).toISOString();
+          blastConsent = { token, input_hash: inputHash, database, program, expires_at: expiresAt };
+          await audit(db, {
+            actor: "system",
+            action: "ai_blast_consent_issued",
+            target: planId,
+            detail: { step_id: step.id, input_hash: inputHash, database, program, expires_at: expiresAt },
+            timestamp: createdAt,
+            idFactory
+          });
+        } catch (error) {
+          if (error instanceof BlastCryptoUnavailableError) return cryptoUnavailableResponse(request);
+          throw error;
+        }
+      }
     }
-    if (jobIds.length) {
+    if (!conflicted && jobIds.length) {
       await audit(db, {
         actor: "browser",
         action: "ai_plan_approved",
@@ -209,6 +240,22 @@ export async function handleApprove(request, env, planId, { now = Date.now(), id
     }
   } catch {
     return errorResponse("Could not create jobs for this plan.", 500, request);
+  }
+
+  // A unique-constraint loser is an idempotent repeat approval: return the
+  // already-created jobs and no token (it must not mint a second grant).
+  if (conflicted) {
+    let current;
+    try {
+      current = await listRows(db, SQL.listJobsForPlan, [planId]);
+    } catch {
+      return errorResponse("Could not read the existing jobs.", 500, request);
+    }
+    return jsonResponse({
+      job_ids: current.map((job) => job.public_id),
+      skipped: [],
+      execution_mode: envExecutionMode(env)
+    }, 200, request);
   }
 
   const response = { job_ids: jobIds, skipped, execution_mode: envExecutionMode(env) };

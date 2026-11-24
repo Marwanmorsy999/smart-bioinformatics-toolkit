@@ -277,8 +277,8 @@ export function validatePlan(plan) {
     return { valid: false, error: "Invalid plan_id." };
   }
   if (!String(plan.request_id ?? "").startsWith("req_")) return { valid: false, error: "Invalid request_id." };
-  if (!["sequence-analysis", "microbiome-16s"].includes(plan.domain)) return { valid: false, error: "Invalid domain." };
-  if (!["validate_and_profile", "identify_taxa"].includes(plan.intent)) return { valid: false, error: "Invalid intent." };
+  if (!["sequence-analysis", "microbiome-16s", "phylogenetics"].includes(plan.domain)) return { valid: false, error: "Invalid domain." };
+  if (!["validate_and_profile", "identify_taxa", "phylogenetics"].includes(plan.intent)) return { valid: false, error: "Invalid intent." };
   if (typeof plan.confidence !== "number" || plan.confidence < 0 || plan.confidence > 1) {
     return { valid: false, error: "confidence must be between 0 and 1." };
   }
@@ -406,6 +406,8 @@ export function validateResultShape(payload, expectedJobId) {
 
 export function toJobDto(row) {
   if (!row) return null;
+  const inputs = parseJson(row.inputs_json) ?? {};
+  const consent = parseJson(row.consent_json) ?? { granted: false, scope: null };
   return {
     id: row.public_id,
     plan_id: row.plan_id,
@@ -413,8 +415,12 @@ export function toJobDto(row) {
     status: row.status,
     tool_id: row.tool_id,
     params: parseJson(row.params_json) ?? {},
-    inputs: parseJson(row.inputs_json) ?? {},
-    consent: parseJson(row.consent_json) ?? { granted: false, scope: null },
+    inputs,
+    // Persisted from the approved step at approval time so the polling agent
+    // can enforce the data-flow gate without re-reading the plan.
+    external_egress: inputs.external_egress === true,
+    consent_required: inputs.consent_required === true,
+    consent,
     backend: row.backend,
     execution_mode: row.execution_mode ?? DEFAULT_EXECUTION_MODE,
     agent_id: row.agent_id ?? null,

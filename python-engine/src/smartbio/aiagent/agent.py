@@ -55,13 +55,19 @@ def _execution_mode() -> str:
 
 
 def _step_from_job(job: dict[str, Any]) -> dict[str, Any]:
+    # `consent.granted` records the decision; it is not the requirement. A
+    # step requires consent because it egresses data (or because the DTO says
+    # so), not because consent happened to be denied.
+    consent_required = bool(
+        job.get("consent_required", False) or job.get("external_egress", False)
+    )
     return {
         "id": job.get("step_id"),
         "tool_id": job.get("tool_id"),
         "backend": job.get("backend") or "local-python",
         "params": dict(job.get("params") or {}),
         "external_egress": bool(job.get("external_egress", False)),
-        "consent_required": bool((job.get("consent") or {}).get("granted") is False),
+        "consent_required": consent_required,
     }
 
 

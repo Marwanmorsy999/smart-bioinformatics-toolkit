@@ -38,6 +38,25 @@ test("valid mock submission returns rid/status and stores only a hash", async ()
   assert.match(state.consents[0].token, /^consent_[0-9a-f]{32}$/);
   assert.equal(JSON.stringify(state.consents).includes("ACGTACGT"), false);
   assert.equal(state.consents[0].used_at, new Date(SUBMIT_AT).toISOString());
+
+  assert.equal(state.auditEvents.length, 1, "the mock submit path is audited too");
+  const auditRow = state.auditEvents[0];
+  assert.match(auditRow.public_id, /^aud_[0-9a-f]{16}$/);
+  assert.equal(auditRow.actor, "browser");
+  assert.equal(auditRow.action, "blast_egress");
+  assert.equal(auditRow.target, "https://blast.ncbi.nlm.nih.gov/Blast.cgi");
+  assert.equal(auditRow.timestamp, new Date(SUBMIT_AT).toISOString());
+  const detail = JSON.parse(auditRow.detail_json);
+  assert.equal(detail.input_hash, row.input_hash);
+  assert.equal(detail.database, "16S_ribosomal_RNA");
+  assert.equal(detail.program, "blastn");
+  assert.equal(detail.payload_bytes, new TextEncoder().encode(VALID_PAYLOAD.fasta).length);
+  assert.equal(detail.hash_bytes, 32);
+  assert.equal(detail.mock, true);
+  assert.equal(detail.transmitted, false);
+  assert.equal(detail.status, "succeeded");
+  assert.equal(detail.success, true);
+  assert.equal(JSON.stringify(state.auditEvents).includes("ACGTACGT"), false, "no sequence value in audit");
 });
 
 test("mock rid is deterministic for the same sequence and differs for another", async () => {
@@ -149,6 +168,7 @@ test("submit without consent is rejected with a typed 403 and stores nothing", a
   }
   assert.equal(state.rows.length, 0);
   assert.equal(state.consents.length, 0);
+  assert.equal(state.auditEvents.length, 0, "no consent means no audited egress attempt");
 });
 
 test("a token bound to different FASTA, database or program is rejected", async () => {
@@ -241,6 +261,7 @@ test("two simultaneous submissions with one token: only one is authorized", asyn
   assert.equal((await rejected.json()).code, "consent_used");
   assert.equal(state.rows.length, 1, "one consent authorizes exactly one submit");
   assert.equal(state.consents[0].used_at, new Date(SUBMIT_AT).toISOString());
+  assert.equal(state.auditEvents.length, 1, "only one egress was audited");
 });
 
 test("a failed NCBI submission still burns the token", async () => {
@@ -264,9 +285,17 @@ test("a failed NCBI submission still burns the token", async () => {
   assert.equal(fetchCalls, 1);
   assert.equal(state.rows.length, 0);
   assert.equal(state.consents[0].used_at, new Date(SUBMIT_AT).toISOString(), "a burned token is never restored");
+  assert.equal(state.auditEvents.length, 1, "the failed egress is still audited");
+  const failedDetail = JSON.parse(state.auditEvents[0].detail_json);
+  assert.equal(failedDetail.status, "failed");
+  assert.equal(failedDetail.success, false);
+  assert.equal(failedDetail.error, "ncbi_error");
+  assert.equal(failedDetail.transmitted, true);
+  assert.equal(JSON.stringify(state.auditEvents).includes("ACGTACGT"), false, "no sequence value in audit");
 
   const retry = await handleSubmit(makePostRequest(granted), mockEnv(db), { now: SUBMIT_AT + 1 });
   assert.equal(retry.status, 403);
   assert.equal((await retry.json()).code, "consent_used");
   assert.equal(state.rows.length, 0, "no second egress or stored request is allowed");
+  assert.equal(state.auditEvents.length, 1, "no second egress was audited");
 });

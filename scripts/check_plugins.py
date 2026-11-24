@@ -3,8 +3,8 @@
 Fails (non-zero exit) when any manifest is schema-invalid, an entrypoint cannot
 be imported, TOOL_ID does not match, a contract is invalid, references or
 limitations are missing, a verification claim is unsupported, an available tool
-has unsatisfied requirements, the checked-in registry is stale, or the template
-is non-compliant.
+has unsatisfied requirements or omits the required_artifacts seam, the checked
+in registry is stale, or the template is non-compliant.
 
 Usage: python scripts/check_plugins.py
 """
@@ -22,41 +22,12 @@ from jsonschema import Draft202012Validator  # noqa: E402
 
 from generate_plugin_registry import OUTPUT, build_tools, render  # noqa: E402
 from smartbio.aiagent.plugin_discovery import (  # noqa: E402
+    declares_required_artifacts,
     discover,
     load_schema,
     schema_errors,
 )
-
-# Citations marked verified:true must match this curated ledger. A newly
-# verified scientific reference is added here only after checking its metadata
-# (DOI/CrossRef, PubMed or an in-tree source); otherwise use verified:false
-# with a note explaining the unmet verification claim.
-VERIFIED_REFERENCES: dict[str, dict[str, str]] = {
-    "iupac_1984_ambiguity": {
-        "title": "Nomenclature for incompletely specified bases in nucleic acid sequences: recommendations 1984",
-        "url": "https://doi.org/10.1093/nar/13.9.3021",
-    },
-    "altschul1990_blast": {
-        "title": "Basic local alignment search tool",
-        "url": "https://doi.org/10.1016/S0022-2836(05)80360-2",
-    },
-    "smartbio_gc_definition": {
-        "title": "Smart Bioinformatics Toolkit: DNA GC percentage definition",
-        "url": "python-engine/src/smartbio/statistics.py#calculate_statistics",
-    },
-    "cock2009_biopython": {
-        "title": "Biopython: freely available Python tools for computational molecular biology and bioinformatics",
-        "url": "https://doi.org/10.1093/bioinformatics/btp163",
-    },
-    "thompson1994_clustalw": {
-        "title": "CLUSTAL W: improving the sensitivity of progressive multiple sequence alignment",
-        "url": "https://doi.org/10.1093/nar/22.22.4673",
-    },
-    "saitou1987_neighbor_joining": {
-        "title": "The neighbor-joining method: a new method for reconstructing phylogenetic trees",
-        "url": "https://doi.org/10.1093/oxfordjournals.molbev.a040454",
-    },
-}
+from smartbio.aiagent.plugin_references import reference_errors  # noqa: E402
 
 TEMPLATE_DIR = REPO_ROOT / "docs" / "plugins" / "template"
 
@@ -83,35 +54,8 @@ def _check_discovered(errors: list[str]) -> None:
     for record in result.tools.values():
         where = record.id
         tool = record.tool
-        references = tool.get("references") or []
-        if not isinstance(references, list) or not references:
-            errors.append(f"{where}: references must contain at least one entry")
-        for index, reference in enumerate(references):
-            if not isinstance(reference, dict):
-                errors.append(f"{where}: references[{index}] must be an object")
-                continue
-            key = str(reference.get("key", ""))
-            if reference.get("verified") is True:
-                expected = VERIFIED_REFERENCES.get(key)
-                if expected is None:
-                    errors.append(
-                        f"{where}: reference_verification_unknown:{key} - "
-                        "add verified metadata to VERIFIED_REFERENCES in "
-                        "scripts/check_plugins.py or mark verified=false with a note"
-                    )
-                    continue
-                for field in ("title", "url"):
-                    if reference.get(field) != expected[field]:
-                        errors.append(
-                            f"{where}: reference_metadata_mismatch:{key}.{field} "
-                            "(does not match the verified citation)"
-                        )
-            elif str(reference.get("note") or "").strip() == "":
-                errors.append(
-                    f"{where}: reference '{key}' is unverified and needs a note "
-                    "explaining the unmet verification claim"
-                )
-
+        for message in reference_errors(tool.get("references")):
+            errors.append(f"{where}: {message}")
         limitations = tool.get("limitations") or []
         if not isinstance(limitations, list) or not limitations:
             errors.append(f"{where}: limitations must contain at least one entry")
@@ -123,6 +67,14 @@ def _check_discovered(errors: list[str]) -> None:
                 )
         if record.declared_available and not record.available and not record.errors:
             errors.append(f"{where}: declared available but discovery marked it unavailable")
+        if record.available:
+            if record.adapter is None:
+                errors.append(f"{where}: available but no valid adapter is registered")
+            elif not declares_required_artifacts(record.adapter):
+                errors.append(
+                    f"{where}: available adapter does not declare required_artifacts "
+                    "in tool_run_meta"
+                )
 
 
 def _check_registry(errors: list[str]) -> None:
@@ -177,6 +129,7 @@ def main(argv: list[str] | None = None) -> int:
     print("  - adapters/entrypoints/contracts: valid")
     print("  - references/limitations: present and claims supported")
     print("  - requirements: satisfiable for every available tool")
+    print("  - available adapters declare required_artifacts")
     print("  - generated registry: current")
     print("  - template: compliant skeleton")
     return 0

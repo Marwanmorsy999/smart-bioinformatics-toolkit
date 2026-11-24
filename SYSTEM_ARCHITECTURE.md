@@ -41,7 +41,7 @@ flowchart TB
 
     subgraph INTEL["Intelligence providers (pluggable)"]
         RULE["Deterministic planner / explainer<br/>(default, offline, free) (EXISTS)"]
-        LLM["LLM provider adapter<br/>(NEW in Worker; Python adapter unused)"]
+        LLM["LLM provider adapter<br/>(Python adapter used at agent.py:204;<br/>Worker adapter NEW)"]
     end
 
     subgraph EXEC["Execution plane (outside Workers)"]
@@ -77,7 +77,8 @@ flowchart TB
     LA --> PLUG --> PY
     LA --> GAL
     LA --> CONT
-    LA -->|consented steps only| NCBI
+    GW -->|consented legacy BLAST: Worker egress, audited| NCBI
+    LA -->|future consented agent steps| NCBI
     LA -->|consented steps only| OTHER
     LA -->|artifacts + provenance| GW
     GW --> VAL --> EXP --> REP
@@ -134,19 +135,19 @@ sequenceDiagram
     end
     A->>T: run tool with exact recorded parameters
     T-->>A: real artifacts + tool version
-    opt consented external step
-        A->>N: submit sequence (only if consent.granted)
-        N-->>A: RID / results
+    opt consented external step (legacy BLAST: Worker egress)
+        W->>N: CMD=Put with single-use consent token (approved hash/db/program)
+        N-->>W: RID / results
     end
     A->>W: POST /api/ai/jobs/{id}/result {artifacts, provenance, logs}
     W->>V: validate → explain → cite-check
     V-->>W: validation flags + explanation + references
     W->>D: persist results/provenance/audit
-    W->>W: build report HTML, store R2
+    W->>D: build report HTML, store in D1 (report_runs.report_html; R2 future)
     W-->>U: GET /api/ai/runs/{id} → results, explanation, report URL
 ```
 
-**Invariant:** no arrow from `A` to `N` exists unless the approval record for that step contains `consent.granted === true`.
+**Invariant:** no arrow from `A` to `N` exists unless the approval record for that step contains `consent.granted === true`. The implemented legacy path is `W -> N`: the Worker submits with a granted, single-use token and records the egress in `audit_events` before and after NCBI contact.
 
 **Legacy BLAST consent gate (implemented).** The legacy endpoint `/api/blast/submit` transmits from the **Worker**, not from the agent. The approval step now issues a short-lived, single-use `consent_token` bound to the SHA-256 of the approved FASTA, database and program; the endpoint rejects any direct POST without a matching, unexpired, unused token with a typed 403, in mock mode as well. Status and results use `CMD=Get&RID=...` only and transmit no sequence. See `docs/DATA_TRANSPORT.md` §4.
 
