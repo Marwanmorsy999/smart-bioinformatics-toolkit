@@ -3,13 +3,21 @@ import assert from "node:assert/strict";
 import {
   BLAST_API_URL,
   ALLOWED_DATABASE,
+  ALLOWED_PROGRAM,
+  BLAST_CONSENT_ERRORS,
   buildPutParams,
   buildResultsParams,
   buildStatusParams,
+  consumeBlastConsent,
+  consentErrorResponse,
+  DEFAULT_CONSENT_TTL_SECONDS,
   extractTabular,
   hashInput,
   htmlEscape,
   isMock,
+  issueBlastConsent,
+  resolveBlastConsent,
+  SQL,
   jsonResponse,
   MOCK_TSV,
   mockRid,
@@ -21,7 +29,7 @@ import {
   validateFasta,
   validateProgram
 } from "../functions/api/blast/_lib.js";
-import { makeGetRequest, mockEnv, VALID_PAYLOAD } from "./helpers/fake-d1.mjs";
+import { createFakeD1, makeGetRequest, mockEnv, VALID_PAYLOAD } from "./helpers/fake-d1.mjs";
 
 test("validateFasta accepts multiple records and IUPAC codes", () => {
   const result = validateFasta(VALID_PAYLOAD.fasta);
@@ -156,4 +164,107 @@ test("mock TSV is labelled blastn_local_v1 with the 12-column schema", () => {
   assert.ok(comment.startsWith("#"));
   assert.equal(header.split("\t").length, 12);
   assert.equal(row.split("\t").length, 12);
+});
+
+const CONSENT_AT = Date.parse("2026-11-24T12:00:00.000Z");
+
+test("issueBlastConsent writes a bounded, hash-bound, single-use token", async () => {
+  const { db, state } = createFakeD1();
+  const inputHash = await hashInput(VALID_PAYLOAD.fasta);
+  const token = await issueBlastConsent(db, {
+    inputHash,
+    database: ALLOWED_DATABASE,
+    program: ALLOWED_PROGRAM,
+    now: CONSENT_AT
+  });
+  assert.match(token, /^consent_[0-9a-f]{32}$/);
+  assert.equal(state.consents.length, 1);
+  const row = state.consents[0];
+  assert.equal(row.token, token);
+  assert.equal(row.input_hash, inputHash);
+  assert.equal(row.database, ALLOWED_DATABASE);
+  assert.equal(row.program, ALLOWED_PROGRAM);
+  assert.equal(row.granted, 1);
+  assert.equal(row.used_at, null);
+  assert.equal(row.created_at, new Date(CONSENT_AT).toISOString());
+  assert.equal(Date.parse(row.expires_at) - CONSENT_AT, DEFAULT_CONSENT_TTL_SECONDS * 1000);
+
+  const resolved = await resolveBlastConsent(db, token, {
+    inputHash,
+    database: ALLOWED_DATABASE,
+    program: ALLOWED_PROGRAM,
+    now: CONSENT_AT
+  });
+  assert.equal(resolved.valid, true);
+  const claim = { token, inputHash, database: ALLOWED_DATABASE, program: ALLOWED_PROGRAM, now: CONSENT_AT };
+  assert.equal(await consumeBlastConsent(db, claim), true);
+  assert.equal(await consumeBlastConsent(db, { ...claim, now: CONSENT_AT + 1 }), false, "a token can only be claimed once");
+});
+
+test("resolveBlastConsent classifies every rejection with a typed code", async () => {
+  const { db } = createFakeD1();
+  const inputHash = await hashInput(VALID_PAYLOAD.fasta);
+  const base = {
+    inputHash,
+    database: ALLOWED_DATABASE,
+    program: ALLOWED_PROGRAM,
+    now: CONSENT_AT
+  };
+  assert.equal((await resolveBlastConsent(db, undefined, base)).code, "consent_missing");
+  assert.equal((await resolveBlastConsent(null, "x", base)).code, "consent_unavailable");
+  assert.equal((await resolveBlastConsent(db, "consent_nope", base)).code, "consent_invalid");
+
+  const denied = await issueBlastConsent(db, { ...base, granted: false, now: CONSENT_AT });
+  assert.equal((await resolveBlastConsent(db, denied, base)).code, "consent_not_granted");
+
+  const expired = await issueBlastConsent(db, { ...base, ttlSeconds: 1, now: CONSENT_AT - 2000 });
+  assert.equal((await resolveBlastConsent(db, expired, base)).code, "consent_expired");
+
+  const used = await issueBlastConsent(db, { ...base, now: CONSENT_AT });
+  await consumeBlastConsent(db, { ...base, token: used });
+  assert.equal((await resolveBlastConsent(db, used, base)).code, "consent_used");
+
+  const valid = await issueBlastConsent(db, { ...base, now: CONSENT_AT });
+  assert.equal((await resolveBlastConsent(db, valid, { ...base, inputHash: "0".repeat(64) })).code, "consent_mismatch");
+  assert.equal((await resolveBlastConsent(db, valid, { ...base, database: "nt" })).code, "consent_mismatch");
+  assert.equal((await resolveBlastConsent(db, valid, { ...base, program: "blastp" })).code, "consent_mismatch");
+
+  for (const code of Object.keys(BLAST_CONSENT_ERRORS)) {
+    const response = consentErrorResponse(code, makeGetRequest("/api/blast/submit"));
+    assert.equal(response.status, 403);
+    assert.equal((await response.json()).code, code);
+    assert.match(response.headers.get("Cache-Control"), /no-store/);
+  }
+});
+
+test("status and results URLs carry the RID only, never the user sequence", () => {
+  const env = mockEnv(null);
+  for (const params of [buildStatusParams("RID123", env), buildResultsParams("RID123", env)]) {
+    const query = params.toString();
+    assert.match(query, /CMD=Get/);
+    assert.match(query, /RID=RID123/);
+    assert.equal(query.includes("QUERY"), false);
+    assert.equal(query.includes(VALID_PAYLOAD.fasta), false);
+  }
+  assert.match(SQL.selectByRid, /WHERE rid = \?/);
+  assert.match(SQL.insertConsent, /blast_consents/);
+});
+
+test("consumeBlastConsent claims atomically and failed claims do not burn the token", async () => {
+  const { db, state } = createFakeD1();
+  const inputHash = await hashInput(VALID_PAYLOAD.fasta);
+  const base = { inputHash, database: ALLOWED_DATABASE, program: ALLOWED_PROGRAM, now: CONSENT_AT };
+  const token = await issueBlastConsent(db, { ...base, ttlSeconds: 60 });
+
+  assert.equal(await consumeBlastConsent(db, { ...base, token, inputHash: "0".repeat(64) }), false);
+  assert.equal(await consumeBlastConsent(db, { ...base, token, database: "nt" }), false);
+  assert.equal(await consumeBlastConsent(db, { ...base, token, program: "blastp" }), false);
+  assert.equal(await consumeBlastConsent(db, { ...base, token, now: CONSENT_AT + 61000 }), false);
+  assert.equal(state.consents[0].used_at, null, "a rejected claim does not consume the token");
+
+  assert.equal(await consumeBlastConsent(db, { ...base, token }), true);
+  assert.equal(state.consents[0].used_at, new Date(CONSENT_AT).toISOString());
+  assert.equal(await consumeBlastConsent(db, { ...base, token }), false);
+  assert.match(SQL.claimConsent, /used_at IS NULL AND granted = 1/);
+  assert.match(SQL.claimConsent, /expires_at > \?/);
 });

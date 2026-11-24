@@ -8,6 +8,7 @@ export const MAX_FASTA_CHARS = 10000;
 export const POLL_INTERVAL_MS = 60000;
 export const HISTORY_LIMIT = 20;
 export const MOCK_RID_PREFIX = "MOCK";
+export const DEFAULT_CONSENT_TTL_SECONDS = 15 * 60;
 
 // IUPAC nucleotide codes (DNA + RNA ambiguity symbols), case-insensitive.
 const SEQUENCE_ALPHABET = /^[ACGTURYSWKMBDHVN]+$/i;
@@ -19,7 +20,13 @@ export const SQL = {
   selectRecent: "SELECT rid, status, created_at FROM blast_requests ORDER BY created_at DESC LIMIT ?",
   insert: "INSERT INTO blast_requests (rid, status, created_at, last_checked_at, input_hash, result_tsv) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(rid) DO UPDATE SET status = excluded.status, created_at = excluded.created_at, last_checked_at = excluded.last_checked_at, input_hash = excluded.input_hash, result_tsv = excluded.result_tsv",
   updateStatus: "UPDATE blast_requests SET status = ?, last_checked_at = ? WHERE rid = ?",
-  cacheResults: "UPDATE blast_requests SET result_tsv = ?, status = 'complete' WHERE rid = ?"
+  cacheResults: "UPDATE blast_requests SET result_tsv = ?, status = 'complete' WHERE rid = ?",
+  selectConsentByToken: "SELECT token, input_hash, database, program, granted, expires_at, created_at, used_at FROM blast_consents WHERE token = ?",
+  insertConsent: "INSERT INTO blast_consents (token, input_hash, database, program, granted, expires_at, created_at, used_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+  // Atomic single-use claim. The binding order is [used_at, now_iso, token,
+  // input_hash, database, program] so every eligibility predicate lives in the
+  // same statement that flips used_at; a second claimant sees zero rows changed.
+  claimConsent: "UPDATE blast_consents SET used_at = ? WHERE expires_at > ? AND token = ? AND used_at IS NULL AND granted = 1 AND input_hash = ? AND database = ? AND program = ?"
 };
 
 // A deliberately synthetic, clearly labelled result used only when MOCK_NCBI=1.
@@ -123,6 +130,115 @@ export async function hashInput(input) {
   const bytes = new TextEncoder().encode(String(input));
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// ------------------------------------------------------------ consent gate
+// A consent token binds exactly one (input hash, database, program) triple to
+// one external transmission. It has a short TTL and is single-use. The token
+// never appears in a URL, log or NCBI request.
+
+export const BLAST_CONSENT_ERRORS = Object.freeze({
+  consent_missing: "A consent token is required for remote BLAST submission.",
+  consent_invalid: "The consent token is invalid.",
+  consent_not_granted: "Consent was not granted for this submission.",
+  consent_used: "The consent token has already been used.",
+  consent_expired: "The consent token has expired.",
+  consent_mismatch: "The consent token does not match the submitted FASTA, database or program.",
+  consent_unavailable: "Consent could not be verified."
+});
+
+function makeConsentToken() {
+  const bytes = new Uint8Array(16);
+  if (globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i += 1) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  return "consent_" + Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+export async function issueBlastConsent(db, {
+  inputHash,
+  database,
+  program,
+  granted = true,
+  ttlSeconds = DEFAULT_CONSENT_TTL_SECONDS,
+  now = Date.now()
+} = {}) {
+  if (!db) throw new Error("D1 binding is unavailable for consent issuance.");
+  const numericTtl = Number(ttlSeconds);
+  const ttl = Number.isFinite(numericTtl) ? Math.max(0, numericTtl) : DEFAULT_CONSENT_TTL_SECONDS;
+  const createdAt = new Date(now).toISOString();
+  const expiresAt = new Date(now + ttl * 1000).toISOString();
+  const token = makeConsentToken();
+  await db.prepare(SQL.insertConsent).bind(
+    token,
+    String(inputHash ?? ""),
+    String(database ?? ""),
+    String(program ?? ""),
+    granted ? 1 : 0,
+    expiresAt,
+    createdAt,
+    null
+  ).run();
+  return token;
+}
+
+// Fail-closed resolution: any unknown, denied, expired, consumed or mismatched
+// token yields a typed code; the caller maps it to a 403 response.
+export async function resolveBlastConsent(db, token, {
+  inputHash,
+  database,
+  program,
+  now = Date.now()
+} = {}) {
+  if (!db) return { valid: false, code: "consent_unavailable", row: null };
+  if (typeof token !== "string" || !token.trim()) return { valid: false, code: "consent_missing", row: null };
+  let row;
+  try {
+    const result = await db.prepare(SQL.selectConsentByToken).bind(token).all();
+    row = result.results?.[0] ?? null;
+  } catch {
+    return { valid: false, code: "consent_unavailable", row: null };
+  }
+  if (!row) return { valid: false, code: "consent_invalid", row: null };
+  if (row.granted !== 1 && row.granted !== true) return { valid: false, code: "consent_not_granted", row };
+  if (row.used_at) return { valid: false, code: "consent_used", row };
+  const expiresAt = Date.parse(row.expires_at);
+  if (!Number.isFinite(expiresAt) || expiresAt <= now) return { valid: false, code: "consent_expired", row };
+  if (row.input_hash !== inputHash || row.database !== database || row.program !== program) {
+    return { valid: false, code: "consent_mismatch", row };
+  }
+  return { valid: true, code: null, row };
+}
+
+// Atomic single-use claim. Expiry, grant, hash, database, program and the
+// unused predicate are all enforced by the same UPDATE, so concurrent callers
+// cannot both claim one token. A failed claim returns false and the caller must
+// fail closed; a successful claim is never released, even if egress fails.
+export async function consumeBlastConsent(db, {
+  token,
+  inputHash,
+  database,
+  program,
+  now = Date.now()
+} = {}) {
+  if (!db || typeof token !== "string") return false;
+  const timestamp = new Date(now).toISOString();
+  const result = await db.prepare(SQL.claimConsent).bind(
+    timestamp,
+    timestamp,
+    token,
+    String(inputHash ?? ""),
+    String(database ?? ""),
+    String(program ?? "")
+  ).run();
+  return (result?.meta?.changes ?? 0) === 1;
+}
+
+export function consentErrorResponse(code, request = null) {
+  const message = BLAST_CONSENT_ERRORS[code] ?? BLAST_CONSENT_ERRORS.consent_invalid;
+  return jsonResponse({ error: htmlEscape(message), code }, 403, request);
 }
 
 function withIdentification(params, env) {

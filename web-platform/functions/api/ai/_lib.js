@@ -1,0 +1,437 @@
+// Shared helpers for the AI control-plane Pages Functions.
+// Plain ES modules: no framework, no heavy compute, no paid services.
+// Reuses the response/FH patterns from functions/api/blast/_lib.js.
+
+import { SQL as BLAST_SQL, htmlEscape, hashInput, validateFasta } from "../blast/_lib.js";
+import { isKnownTool } from "./registry.js";
+
+export { htmlEscape, hashInput, validateFasta };
+
+export const DEFAULT_EXECUTION_MODE = "real";
+export const MAX_FASTA_BYTES = 64 * 1024;
+export const MAX_REQUEST_BODY_CHARS = 128 * 1024;
+export const MAX_RESULT_BODY_CHARS = 2 * 1024 * 1024;
+export const MIN_CONFIDENCE = 0.5;
+
+const PUBLIC_ID_PATTERN = /^(req|ds|plan|job|art|apr|run|proj|ref)_[0-9a-f]{16}$/;
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+
+// SQL is centralised so the fake D1 in tests can assert exactly what runs.
+export const SQL = {
+  insertDataset: "INSERT INTO datasets (public_id, project_id, filename, sha256, size_bytes, mime, storage_ref, fasta_text, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  getDataset: "SELECT * FROM datasets WHERE public_id = ?",
+  insertRequest: "INSERT INTO ai_requests (public_id, project_id, dataset_id, raw_text, inferred_intent, confidence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  insertPlan: "INSERT INTO plans (public_id, request_id, version, plan_json, created_at) VALUES (?, ?, ?, ?, ?)",
+  getPlan: "SELECT * FROM plans WHERE public_id = ?",
+  insertApproval: "INSERT INTO approvals (public_id, plan_id, step_id, approved_by, consents_json, approved_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  insertJob: "INSERT INTO jobs (public_id, plan_id, step_id, status, tool_id, params_json, inputs_json, consent_json, backend, agent_id, attempts, timeout_s, execution_mode, created_at, started_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  getJob: "SELECT * FROM jobs WHERE public_id = ?",
+  listQueuedJobs: "SELECT * FROM jobs WHERE status = ? ORDER BY created_at ASC LIMIT ?",
+  claimJob: "UPDATE jobs SET status = ?, agent_id = ?, started_at = ?, attempts = attempts + 1 WHERE public_id = ? AND status = ?",
+  finishJob: "UPDATE jobs SET status = ?, finished_at = ? WHERE public_id = ?",
+  saveJobResult: "UPDATE jobs SET status = ?, finished_at = ?, result_json = ?, validation_json = ?, explanation_json = ?, provenance_json = ?, report_json = ?, execution_mode = ? WHERE public_id = ?",
+  listJobsForPlan: "SELECT * FROM jobs WHERE plan_id = ? ORDER BY created_at ASC",
+  insertArtifact: "INSERT INTO artifacts (public_id, run_id, name, kind, storage_ref, sha256, bytes, mime, content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  listArtifactsForRun: "SELECT * FROM artifacts WHERE run_id = ? ORDER BY name ASC",
+  insertToolRun: "INSERT INTO tool_runs (public_id, job_id, tool_id, tool_version, params_json, input_refs_json, output_refs_json, provenance_json, started_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  insertReference: "INSERT INTO evidence_references (public_id, key, title, url, doi, license, verified_by, verified_at, notes, verified) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  insertReportRun: "INSERT INTO report_runs (public_id, plan_id, job_id, report_ref, explanation_ref, validation_ref, report_html, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+  getReportRun: "SELECT * FROM report_runs WHERE job_id = ?",
+  insertAudit: "INSERT INTO audit_events (public_id, actor, action, target, detail_json, timestamp) VALUES (?, ?, ?, ?, ?, ?)"
+};
+
+export const SQL_META = {
+  [SQL.insertDataset]: { op: "insert", table: "datasets", columns: ["public_id", "project_id", "filename", "sha256", "size_bytes", "mime", "storage_ref", "fasta_text", "created_at"] },
+  [SQL.getDataset]: { op: "select", table: "datasets", where: ["public_id"] },
+  [SQL.insertRequest]: { op: "insert", table: "ai_requests", columns: ["public_id", "project_id", "dataset_id", "raw_text", "inferred_intent", "confidence", "created_at"] },
+  [SQL.insertPlan]: { op: "insert", table: "plans", columns: ["public_id", "request_id", "version", "plan_json", "created_at"] },
+  [SQL.getPlan]: { op: "select", table: "plans", where: ["public_id"] },
+  [SQL.insertApproval]: { op: "insert", table: "approvals", columns: ["public_id", "plan_id", "step_id", "approved_by", "consents_json", "approved_at", "expires_at"] },
+  [SQL.insertJob]: { op: "insert", table: "jobs", columns: ["public_id", "plan_id", "step_id", "status", "tool_id", "params_json", "inputs_json", "consent_json", "backend", "agent_id", "attempts", "timeout_s", "execution_mode", "created_at", "started_at", "finished_at"] },
+  [SQL.getJob]: { op: "select", table: "jobs", where: ["public_id"] },
+  [SQL.listQueuedJobs]: { op: "select", table: "jobs", where: ["status"], orderBy: "created_at", limit: true },
+  [SQL.claimJob]: { op: "claim", table: "jobs", where: ["public_id", "status"], assignments: { status: 0, agent_id: 1, started_at: 2 }, increment: "attempts" },
+  [SQL.finishJob]: { op: "update", table: "jobs", where: ["public_id"], assignments: { status: 0, finished_at: 1 } },
+  [SQL.saveJobResult]: { op: "update", table: "jobs", where: ["public_id"], assignments: { status: 0, finished_at: 1, result_json: 2, validation_json: 3, explanation_json: 4, provenance_json: 5, report_json: 6, execution_mode: 7 } },
+  [SQL.listJobsForPlan]: { op: "select", table: "jobs", where: ["plan_id"], orderBy: "created_at" },
+  [SQL.insertArtifact]: { op: "insert", table: "artifacts", columns: ["public_id", "run_id", "name", "kind", "storage_ref", "sha256", "bytes", "mime", "content", "created_at"] },
+  [SQL.listArtifactsForRun]: { op: "select", table: "artifacts", where: ["run_id"], orderBy: "name" },
+  [SQL.insertToolRun]: { op: "insert", table: "tool_runs", columns: ["public_id", "job_id", "tool_id", "tool_version", "params_json", "input_refs_json", "output_refs_json", "provenance_json", "started_at", "finished_at"] },
+  [SQL.insertReference]: { op: "insert", table: "evidence_references", columns: ["public_id", "key", "title", "url", "doi", "license", "verified_by", "verified_at", "notes", "verified"] },
+  [SQL.insertReportRun]: { op: "insert", table: "report_runs", columns: ["public_id", "plan_id", "job_id", "report_ref", "explanation_ref", "validation_ref", "report_html", "created_at"] },
+  [SQL.getReportRun]: { op: "select", table: "report_runs", where: ["job_id"] },
+  [SQL.insertAudit]: { op: "insert", table: "audit_events", columns: ["public_id", "actor", "action", "target", "detail_json", "timestamp"] },
+  // The approval gate issues a legacy BLAST consent token on the same D1
+  // binding, so the fake D1 must understand these statements too. The real SQL
+  // also checks expiry/grant/used_at inside the UPDATE; the generic fake models
+  // the four bound equality predicates (the last four bind values).
+  [BLAST_SQL.insertConsent]: { op: "insert", table: "blast_consents", columns: ["token", "input_hash", "database", "program", "granted", "expires_at", "created_at", "used_at"] },
+  [BLAST_SQL.selectConsentByToken]: { op: "select", table: "blast_consents", where: ["token"] },
+  [BLAST_SQL.claimConsent]: { op: "update", table: "blast_consents", where: ["token", "input_hash", "database", "program"], assignments: { used_at: 0 } }
+};
+
+// ---------------------------------------------------------------- responses
+
+function corsHeaders(request) {
+  const headers = new Headers();
+  if (!request || typeof request.headers?.get !== "function") return headers;
+  const origin = request.headers.get("Origin");
+  if (!origin) return headers;
+  let ownOrigin = null;
+  try {
+    ownOrigin = new URL(request.url).origin;
+  } catch {
+    return headers;
+  }
+  if (origin === ownOrigin) {
+    headers.set("Access-Control-Allow-Origin", origin);
+    headers.set("Vary", "Origin");
+  }
+  return headers;
+}
+
+function baseHeaders(request, extra = {}) {
+  const headers = new Headers({
+    "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Cache-Control": "no-store"
+  });
+  for (const [name, value] of corsHeaders(request)) headers.set(name, value);
+  for (const [name, value] of Object.entries(extra)) headers.set(name, String(value));
+  return headers;
+}
+
+export function jsonResponse(body, status = 200, request = null, extraHeaders = {}) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: baseHeaders(request, { "Content-Type": "application/json; charset=utf-8", ...extraHeaders })
+  });
+}
+
+export function errorResponse(message, status = 400, request = null, extraHeaders = {}) {
+  // JSON is a data format: escape at render time, not here (no double encoding).
+  return jsonResponse({ error: String(message ?? ""), execution_mode: DEFAULT_EXECUTION_MODE }, status, request, extraHeaders);
+}
+
+export function htmlResponse(body, status = 200, request = null, extraHeaders = {}) {
+  return new Response(String(body), {
+    status,
+    headers: baseHeaders(request, {
+      "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'",
+      "Content-Type": "text/html; charset=utf-8",
+      ...extraHeaders
+    })
+  });
+}
+
+export function preflightResponse(request) {
+  return new Response(null, {
+    status: 204,
+    headers: baseHeaders(request, {
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, X-Agent-Token",
+      "Access-Control-Max-Age": "600"
+    })
+  });
+}
+
+export function methodError(request, allowed) {
+  return errorResponse(`Method not allowed. Use ${allowed}.`, 405, request, { Allow: allowed });
+}
+
+export function requireMethod(request, method, allowed) {
+  if (request.method === "OPTIONS") return preflightResponse(request);
+  if (request.method !== method) return methodError(request, allowed);
+  return null;
+}
+
+// ------------------------------------------------------------------- utils
+
+export function nowIso(now = Date.now()) {
+  return new Date(now).toISOString();
+}
+
+export function makeId(prefix, idFactory) {
+  if (typeof idFactory === "function") return idFactory(prefix);
+  const bytes = new Uint8Array(8);
+  if (globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i += 1) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  return `${prefix}_${hex}`;
+}
+
+export function isPublicId(value) {
+  return typeof value === "string" && PUBLIC_ID_PATTERN.test(value);
+}
+
+export function parseJson(text) {
+  if (!text) return null;
+  const parsed = JSON.parse(text);
+  return parsed && typeof parsed === "object" ? parsed : null;
+}
+
+export function safeString(value, maxLength = 2000) {
+  if (typeof value !== "string") return "";
+  return value.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, maxLength);
+}
+
+export function sanitizeFilename(value) {
+  const text = safeString(value, 200).split(/[\\/]/).pop() ?? "";
+  return text || "upload.fasta";
+}
+
+export async function readJsonBody(request, maxChars = MAX_REQUEST_BODY_CHARS) {
+  const raw = await request.text();
+  if (raw.length > maxChars) return { payload: null, error: "Request body is too large." };
+  try {
+    const payload = JSON.parse(raw || "{}");
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      return { payload: null, error: "Request body must be a JSON object." };
+    }
+    return { payload, error: null };
+  } catch {
+    return { payload: null, error: "Request body must be valid JSON." };
+  }
+}
+
+function constantTimeEqual(a, b) {
+  if (typeof a !== "string" || typeof b !== "string" || a.length !== b.length) return false;
+  let difference = 0;
+  for (let i = 0; i < a.length; i += 1) difference |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return difference === 0;
+}
+
+export function agentTokenError(request, env) {
+  if (!env || !env.AI_AGENT_TOKEN) {
+    return errorResponse("Agent token is not configured.", 503, request);
+  }
+  const provided = request.headers.get("X-Agent-Token") ?? "";
+  if (!constantTimeEqual(provided, String(env.AI_AGENT_TOKEN))) {
+    return errorResponse("Unauthorized agent token.", 401, request);
+  }
+  return null;
+}
+
+export function computeExecutionMode(result, env) {
+  // Operator configuration is authoritative: an agent cannot claim "real"
+  // when the deployment is in mock mode, and cannot bypass the validation
+  // downgrade that mock mode triggers.
+  if (env?.AI_EXECUTION_MODE === "mock") return "mock";
+  const reported = result?.execution_mode;
+  if (reported === "real" || reported === "mock") return reported;
+  return DEFAULT_EXECUTION_MODE;
+}
+
+export function envExecutionMode(env) {
+  return env?.AI_EXECUTION_MODE === "mock" ? "mock" : DEFAULT_EXECUTION_MODE;
+}
+
+export function getDb(env) {
+  // 0002 is additive to the same D1 database as 0001. A dedicated AI_DB
+  // binding may be configured later; otherwise reuse the existing binding.
+  return env?.AI_DB ?? env?.BLAST_DB ?? null;
+}
+
+// ---------------------------------------------------------------- D1 access
+
+export async function insertRow(db, sql, values) {
+  await db.prepare(sql).bind(...values).run();
+}
+
+export async function getRow(db, sql, values) {
+  const result = await db.prepare(sql).bind(...values).all();
+  return result.results?.[0] ?? null;
+}
+
+export async function listRows(db, sql, values) {
+  const result = await db.prepare(sql).bind(...values).all();
+  return result.results ?? [];
+}
+
+export async function runStatement(db, sql, values) {
+  return db.prepare(sql).bind(...values).run();
+}
+
+export async function audit(db, { actor, action, target, detail = {}, timestamp, idFactory }) {
+  await insertRow(db, SQL.insertAudit, [
+    makeId("aud", idFactory),
+    actor,
+    action,
+    target,
+    JSON.stringify(detail),
+    timestamp
+  ]);
+}
+
+// --------------------------------------------------------------- validation
+
+const isStringArray = (value) => Array.isArray(value) && value.every((item) => typeof item === "string");
+
+export function validatePlan(plan) {
+  if (!plan || typeof plan !== "object" || Array.isArray(plan)) return { valid: false, error: "Plan must be an object." };
+  if (!PUBLIC_ID_PATTERN.test(String(plan.plan_id ?? "")) || !String(plan.plan_id).startsWith("plan_")) {
+    return { valid: false, error: "Invalid plan_id." };
+  }
+  if (!String(plan.request_id ?? "").startsWith("req_")) return { valid: false, error: "Invalid request_id." };
+  if (!["sequence-analysis", "microbiome-16s"].includes(plan.domain)) return { valid: false, error: "Invalid domain." };
+  if (!["validate_and_profile", "identify_taxa"].includes(plan.intent)) return { valid: false, error: "Invalid intent." };
+  if (typeof plan.confidence !== "number" || plan.confidence < 0 || plan.confidence > 1) {
+    return { valid: false, error: "confidence must be between 0 and 1." };
+  }
+  if (typeof plan.created_at !== "string") return { valid: false, error: "created_at must be a timestamp." };
+  if (!Array.isArray(plan.steps) || plan.steps.length === 0) return { valid: false, error: "Plan must have at least one step." };
+  for (const step of plan.steps) {
+    if (!step || typeof step !== "object" || Array.isArray(step)) return { valid: false, error: "Each step must be an object." };
+    if (typeof step.id !== "string" || !/^step_[0-9]+$/.test(step.id)) return { valid: false, error: "Invalid step id." };
+    if (!isKnownTool(step.tool_id)) return { valid: false, error: `Unknown tool in plan: ${step.tool_id}` };
+    if (step.backend !== "local-python") return { valid: false, error: "Unsupported backend." };
+    if (!step.params || typeof step.params !== "object" || Array.isArray(step.params)) return { valid: false, error: "Step params must be an object." };
+    if (!isStringArray(step.inputs)) return { valid: false, error: "Step inputs must be strings." };
+    if (typeof step.external_egress !== "boolean" || typeof step.consent_required !== "boolean") {
+      return { valid: false, error: "Egress and consent flags must be booleans." };
+    }
+    if (step.external_egress === true && step.consent_required !== true) {
+      return { valid: false, error: "external_egress requires consent_required." };
+    }
+    if (typeof step.estimated_seconds !== "number") return { valid: false, error: "estimated_seconds must be a number." };
+  }
+  if (!isStringArray(plan.external_services) || !isStringArray(plan.consents_required) || !isStringArray(plan.limitations)) {
+    return { valid: false, error: "Plan lists must be arrays of strings." };
+  }
+  return { valid: true, error: null };
+}
+
+export function validateRequestPayload(payload) {
+  if (typeof payload.text !== "string" || !payload.text.trim()) {
+    return { valid: false, error: "text must be a non-empty question." };
+  }
+  if (payload.text.length > 4000) return { valid: false, error: "text is too long (4000 character limit)." };
+  if (typeof payload.fasta !== "string" || !payload.fasta.trim()) {
+    return { valid: false, error: "fasta must be provided as text." };
+  }
+  const bytes = new TextEncoder().encode(payload.fasta).length;
+  if (bytes > MAX_FASTA_BYTES) return { valid: false, error: `FASTA input exceeds the ${MAX_FASTA_BYTES} byte limit.` };
+  const fastaCheck = validateFasta(payload.fasta);
+  if (!fastaCheck.valid) return { valid: false, error: fastaCheck.error };
+  if (payload.project_id !== undefined && typeof payload.project_id !== "string") {
+    return { valid: false, error: "project_id must be a string." };
+  }
+  return { valid: true, error: null, preflight: fastaCheck };
+}
+
+export function validateApprovalsPayload(payload) {
+  if (!Array.isArray(payload.approvals)) return { valid: false, error: "approvals must be an array." };
+  for (const item of payload.approvals) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return { valid: false, error: "Each approval must be an object." };
+    if (typeof item.step_id !== "string" || !/^step_[0-9]+$/.test(item.step_id)) {
+      return { valid: false, error: "Invalid approval step_id." };
+    }
+    if (item.approved !== undefined && typeof item.approved !== "boolean") {
+      return { valid: false, error: "approved must be a boolean." };
+    }
+    if (item.consent_granted !== undefined && typeof item.consent_granted !== "boolean") {
+      return { valid: false, error: "consent_granted must be a boolean." };
+    }
+  }
+  if (payload.consents !== undefined && !isStringArray(payload.consents)) {
+    return { valid: false, error: "consents must be an array of strings." };
+  }
+  return { valid: true, error: null };
+}
+
+export function validateResultShape(payload, expectedJobId) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return { valid: false, error: "Result must be an object." };
+  if (typeof payload.job_id !== "string") return { valid: false, error: "job_id is required." };
+  if (payload.job_id !== expectedJobId) return { valid: false, error: "job_id does not match the URL." };
+  if (!["succeeded", "failed"].includes(payload.status)) return { valid: false, error: "status must be succeeded or failed." };
+  if (!["real", "mock"].includes(payload.execution_mode)) return { valid: false, error: "execution_mode must be real or mock." };
+  if (!Array.isArray(payload.artifacts) || payload.artifacts.length > 20) {
+    return { valid: false, error: "artifacts must be an array with at most 20 entries." };
+  }
+  let artifactBytes = 0;
+  for (const artifact of payload.artifacts) {
+    if (!artifact || typeof artifact !== "object" || Array.isArray(artifact)) return { valid: false, error: "Each artifact must be an object." };
+    if (typeof artifact.name !== "string" || !artifact.name || artifact.name.includes("/") || artifact.name.includes("\\")) {
+      return { valid: false, error: "Artifact name is invalid." };
+    }
+    if (typeof artifact.kind !== "string" || !artifact.kind) return { valid: false, error: "Artifact kind is required." };
+    if (!SHA256_PATTERN.test(String(artifact.sha256 ?? ""))) return { valid: false, error: "Artifact sha256 must be 64 lowercase hex characters." };
+    if (typeof artifact.content !== "string") return { valid: false, error: "Artifact content must be text." };
+    artifactBytes += new TextEncoder().encode(artifact.content).length;
+  }
+  if (artifactBytes > MAX_RESULT_BODY_CHARS) return { valid: false, error: "Artifact content is too large." };
+
+  const provenance = payload.provenance;
+  if (!provenance || typeof provenance !== "object" || Array.isArray(provenance)) return { valid: false, error: "provenance must be an object." };
+  if (typeof provenance.run_id !== "string" || typeof provenance.step_id !== "string") {
+    return { valid: false, error: "provenance run_id and step_id are required." };
+  }
+  if (!provenance.tool || typeof provenance.tool.id !== "string") return { valid: false, error: "provenance.tool.id is required." };
+  if (!provenance.input || typeof provenance.input.dataset_id !== "string") return { valid: false, error: "provenance.input.dataset_id is required." };
+  if (!provenance.parameters || typeof provenance.parameters !== "object" || Array.isArray(provenance.parameters)) {
+    return { valid: false, error: "provenance.parameters must be an object." };
+  }
+  if (!provenance.database || typeof provenance.database !== "object") return { valid: false, error: "provenance.database is required." };
+  if (!provenance.output || !isStringArray(provenance.output.artifact_names)) return { valid: false, error: "provenance.output.artifact_names must be strings." };
+  if (!provenance.timing || typeof provenance.timing !== "object") return { valid: false, error: "provenance.timing is required." };
+
+  const validation = payload.validation;
+  if (!validation || !["pass", "warn", "fail"].includes(validation.status)) {
+    return { valid: false, error: "validation.status must be pass, warn or fail." };
+  }
+  if (!isStringArray(validation.flags) || !isStringArray(validation.checked_rules)) {
+    return { valid: false, error: "validation.flags and checked_rules must be strings." };
+  }
+
+  const explanation = payload.explanation;
+  if (!explanation || typeof explanation !== "object" || Array.isArray(explanation)) {
+    return { valid: false, error: "explanation must be an object." };
+  }
+  if (typeof explanation.summary !== "string") return { valid: false, error: "explanation.summary must be text." };
+  if (!Array.isArray(explanation.findings) || !isStringArray(explanation.limitations) || !Array.isArray(explanation.references)) {
+    return { valid: false, error: "explanation findings/limitations/references are required." };
+  }
+  if (!["none", "low", "moderate", "high"].includes(explanation.uncertainty)) {
+    return { valid: false, error: "explanation.uncertainty is invalid." };
+  }
+  if (payload.logs !== undefined && !isStringArray(payload.logs)) return { valid: false, error: "logs must be an array of strings." };
+  return { valid: true, error: null };
+}
+
+// ------------------------------------------------------------------- DTOs
+
+export function toJobDto(row) {
+  if (!row) return null;
+  return {
+    id: row.public_id,
+    plan_id: row.plan_id,
+    step_id: row.step_id,
+    status: row.status,
+    tool_id: row.tool_id,
+    params: parseJson(row.params_json) ?? {},
+    inputs: parseJson(row.inputs_json) ?? {},
+    consent: parseJson(row.consent_json) ?? { granted: false, scope: null },
+    backend: row.backend,
+    execution_mode: row.execution_mode ?? DEFAULT_EXECUTION_MODE,
+    agent_id: row.agent_id ?? null,
+    created_at: row.created_at,
+    started_at: row.started_at ?? null,
+    finished_at: row.finished_at ?? null
+  };
+}
+
+export function toArtifactDto(row) {
+  return {
+    name: row.name,
+    kind: row.kind,
+    sha256: row.sha256,
+    bytes: row.bytes,
+    mime: row.mime ?? null,
+    content: row.content ?? "",
+    storage_ref: row.storage_ref ?? null
+  };
+}

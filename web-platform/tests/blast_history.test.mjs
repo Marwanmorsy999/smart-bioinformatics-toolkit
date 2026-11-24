@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { handleSubmit } from "../functions/api/blast/submit.js";
 import { handleHistory, onRequest } from "../functions/api/blast/history.js";
-import { createFakeD1, makeGetRequest, makePostRequest, mockEnv, VALID_PAYLOAD } from "./helpers/fake-d1.mjs";
+import { createFakeD1, makeGetRequest, makePostRequest, mockEnv, VALID_PAYLOAD, withConsent } from "./helpers/fake-d1.mjs";
 
 const T0 = Date.parse("2026-11-24T12:00:00.000Z");
 
@@ -23,7 +23,7 @@ test("empty history returns an empty list", async () => {
 test("history exposes only rid, status and created_at", async () => {
   const { db, state } = createFakeD1();
   const env = mockEnv(db);
-  await handleSubmit(makePostRequest(VALID_PAYLOAD), env, { now: T0 });
+  await handleSubmit(makePostRequest(await withConsent(VALID_PAYLOAD, db, { now: T0 })), env, { now: T0 });
   const response = await handleHistory(historyRequest(), env);
   const body = await response.json();
   assert.equal(body.submissions.length, 1);
@@ -38,8 +38,11 @@ test("history exposes only rid, status and created_at", async () => {
 test("history is newest-first and honours the limit", async () => {
   const { db, state } = createFakeD1();
   const env = mockEnv(db);
-  await handleSubmit(makePostRequest(VALID_PAYLOAD), env, { now: T0 });
-  await handleSubmit(makePostRequest({ ...VALID_PAYLOAD, fasta: ">second\nACGTACGTACGT\n" }), env, { now: T0 + 60000 });
+  await handleSubmit(makePostRequest(await withConsent(VALID_PAYLOAD, db, { now: T0 })), env, { now: T0 });
+  const secondPayload = { ...VALID_PAYLOAD, fasta: ">second\nACGTACGTACGT\n" };
+  await handleSubmit(
+    makePostRequest(await withConsent(secondPayload, db, { now: T0 + 60000 })), env, { now: T0 + 60000 }
+  );
   assert.equal(state.rows.length, 2);
   const response = await handleHistory(historyRequest(), env, { limit: 1 });
   const body = await response.json();

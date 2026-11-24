@@ -3,6 +3,8 @@
 import {
   BLAST_API_URL,
   buildPutParams,
+  consentErrorResponse,
+  consumeBlastConsent,
   errorResponse,
   hashInput,
   insertRequest,
@@ -13,6 +15,7 @@ import {
   ncbiFetchText,
   parsePutResponse,
   preflightResponse,
+  resolveBlastConsent,
   validateDatabase,
   validateFasta,
   validateProgram
@@ -55,6 +58,36 @@ export async function handleSubmit(request, env, { now = Date.now() } = {}) {
   if (!db) return errorResponse("BLAST database binding is unavailable.", 503, request);
 
   const inputHash = await hashInput(fasta);
+
+  // Fail-closed consent gate: applies in mock mode too. A direct POST without a
+  // valid, matching, unexpired and unused token never reaches this point's NCBI
+  // call (and never stores a BLAST request). `resolve` supplies typed rejection
+  // codes; the atomic claim below is the authority that prevents double egress.
+  const consent = await resolveBlastConsent(db, payload.consent_token, {
+    inputHash,
+    database: payload.database,
+    program: payload.program,
+    now
+  });
+  if (!consent.valid) return consentErrorResponse(consent.code, request);
+
+  // Claim (burn) the token BEFORE any external call. The single UPDATE enforces
+  // expiry, grant, hash, database, program and unused state atomically; exactly
+  // one caller can claim a token. A concurrent loser gets consent_used, and a
+  // failed NCBI submission leaves the token burned rather than reusable.
+  try {
+    const claimed = await consumeBlastConsent(db, {
+      token: payload.consent_token,
+      inputHash,
+      database: payload.database,
+      program: payload.program,
+      now
+    });
+    if (!claimed) return consentErrorResponse("consent_used", request);
+  } catch {
+    return errorResponse("Could not claim consent for this submission.", 500, request);
+  }
+
   let rid;
   if (isMock(env)) {
     rid = mockRid(inputHash);
@@ -82,6 +115,8 @@ export async function handleSubmit(request, env, { now = Date.now() } = {}) {
   } catch {
     return errorResponse("Could not store the BLAST request.", 500, request);
   }
+
+  // The token was already claimed before egress; nothing can un-burn it here.
 
   return jsonResponse({ rid, status: "queued" }, 200, request);
 }

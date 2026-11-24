@@ -4,14 +4,15 @@ import { handleSubmit } from "../functions/api/blast/submit.js";
 import { handleStatus } from "../functions/api/blast/status/[rid].js";
 import { handleResults, onRequest } from "../functions/api/blast/results/[rid].js";
 import { MOCK_TSV, SQL } from "../functions/api/blast/_lib.js";
-import { createFakeD1, makeGetRequest, makePostRequest, mockEnv, VALID_PAYLOAD } from "./helpers/fake-d1.mjs";
+import { createFakeD1, makeGetRequest, makePostRequest, mockEnv, VALID_PAYLOAD, withConsent } from "./helpers/fake-d1.mjs";
 
 const T0 = Date.parse("2026-11-24T12:00:00.000Z");
 
 async function completeRid() {
   const { db, state } = createFakeD1();
   const env = mockEnv(db);
-  const submit = await handleSubmit(makePostRequest(VALID_PAYLOAD), env, { now: T0 });
+  const consented = await withConsent(VALID_PAYLOAD, db, { now: T0 });
+  const submit = await handleSubmit(makePostRequest(consented), env, { now: T0 });
   const { rid } = await submit.json();
   await handleStatus(rid, makeGetRequest(`/api/blast/status/${rid}`), env, { now: T0 + 1000 });
   return { rid, db, state, env };
@@ -24,7 +25,8 @@ function resultsRequest(rid) {
 test("results are unavailable until the job is complete", async () => {
   const { db } = createFakeD1();
   const env = mockEnv(db);
-  const submit = await handleSubmit(makePostRequest(VALID_PAYLOAD), env, { now: T0 });
+  const consented = await withConsent(VALID_PAYLOAD, db, { now: T0 });
+  const submit = await handleSubmit(makePostRequest(consented), env, { now: T0 });
   const { rid } = await submit.json();
   const response = await handleResults(rid, resultsRequest(rid), env);
   assert.equal(response.status, 409);

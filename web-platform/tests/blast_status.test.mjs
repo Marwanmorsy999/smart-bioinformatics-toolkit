@@ -2,14 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { handleSubmit } from "../functions/api/blast/submit.js";
 import { handleStatus, onRequest } from "../functions/api/blast/status/[rid].js";
-import { createFakeD1, makeGetRequest, makePostRequest, mockEnv, VALID_PAYLOAD } from "./helpers/fake-d1.mjs";
+import { createFakeD1, makeGetRequest, makePostRequest, mockEnv, VALID_PAYLOAD, withConsent } from "./helpers/fake-d1.mjs";
 
 const T0 = Date.parse("2026-11-24T12:00:00.000Z");
 
 async function queuedRid() {
   const { db, state } = createFakeD1();
   const env = mockEnv(db);
-  const response = await handleSubmit(makePostRequest(VALID_PAYLOAD), env, { now: T0 });
+  const consented = await withConsent(VALID_PAYLOAD, db, { now: T0 });
+  const response = await handleSubmit(makePostRequest(consented), env, { now: T0 });
   const { rid } = await response.json();
   return { rid, db, state, env };
 }
