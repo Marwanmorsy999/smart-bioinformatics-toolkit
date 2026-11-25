@@ -130,9 +130,18 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
     await recordStep("upload_input", "upload1", upload.provider_job_id, "succeeded", createdAt, nowIso(now),
       { dataset_id: upload.output?.structured?.dataset_id ?? null, history_id: historyId });
 
+    // Galaxy keeps a freshly uploaded HDA queued for tens of seconds. Waiting
+    // for state=ok before referencing it avoids HTTP 400 from downstream tools.
+    let readyId = upload.output?.structured?.dataset_id ?? null;
+    for (let i = 0; i < 30 && historyId; i += 1) {
+      const contents = await adapter.getArtifacts({ history_id: historyId }, ctx);
+      const ready = (contents.artifacts ?? []).find((a) => a.id === readyId || a.name === filename);
+      if (ready) { readyId = ready.id; break; }
+      await sleep(1500);
+    }
     // Step 2 â€” MAFFT multiple sequence alignment.
-    const mafftInput = upload.output?.structured?.dataset_id
-      ? { input: { src: "hda", id: upload.output.structured.dataset_id } }
+    const mafftInput = readyId
+      ? { input: { src: "hda", id: readyId } }
       : { input: { src: "pasted", paste_content: fasta, name: filename, ext: "fasta" } };
     const mafft = await adapter.submitJob({ operation: "submit_job", tool_id: tools.mafft.id, inputs: mafftInput }, ctx);
     if (mafft.error) throw new Error(`MAFFT submission failed: ${mafft.error.message ?? mafft.error.code}`);
@@ -201,5 +210,6 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
     tree_newick: treeText, alignment_text: alignmentText
   }, failed ? 502 : 200, request);
 }
+
 
 
