@@ -13,6 +13,9 @@ benchmark_runs/
 .coverage
 htmlcov/
 
+# Wrangler local state (D1 local DBs, deploy cache) — never commit
+web-platform/.wrangler/
+
 # Local BLAST+ installer (not source)
 ncbi-blast-2.17.0+-win64.exe
 

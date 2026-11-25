@@ -41,7 +41,9 @@ GALAXY_ENABLED = "false"
 SMARTSBIO_ENABLED = "false"
 NINEROUTER_ENABLED = "false"
 
+# M7.1: staging now uses its OWN D1 database. Production keeps the original
+# binding below; staging and production must never share a row space.
 [[env.staging.d1_databases]]
 binding = "BLAST_DB"
-database_name = "smart-bioinformatics-toolkit-blast"
-database_id = "d277fe22-f99d-46d8-9ae9-6de17942a6a9"
+database_name = "smart-bioinformatics-toolkit-staging"
+database_id = "72a07465-f0fe-4d32-93af-72bdc18b0cc0"
