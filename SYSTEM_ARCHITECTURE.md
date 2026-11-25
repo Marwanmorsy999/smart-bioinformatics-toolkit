@@ -253,3 +253,11 @@ See **`docs/DATA_TRANSPORT.md`** for the exact transport mechanism, the per-path
 - **RID-only polling.** Status and results endpoints transmit only an RID to NCBI, never the user sequence.
 
 Known gaps are tracked in `docs/API_INTEGRATION_ROADMAP.md` (RID TTL, global rate limit, tool/email identification, evidence-ledger disagreement) and are **not** implied to be implemented by this section.
+
+## 11. M7.4 unified research workspace (status: API layer EXISTS, browser UI NOT BUILT)
+
+- A new owner-scoped `/api/workspace/**` surface indexes projects, dataset **metadata** (no bytes, no public URLs), a unified run lifecycle and provenance on the existing D1 binding. See `docs/M7_4_WORKSPACE_DESIGN.md`.
+- **Authorization is owner scoping on the existing single operator token, not multi-user accounts.** `deriveOwner` hashes `X-Agent-Token` with SHA-256 and stores only `owner_<hex16>`; the raw token is never persisted or returned. Every workspace row is filtered by that owner in SQL; cross-owner reads return 404. There is no login/session system.
+- Additive `0011_workspace.sql` extends `projects`/`datasets` and adds `workspace_runs` + `provenance_records`. Reports reuse `report_runs` (parent-run owner check), so no new reports table and no R2 binding.
+- The static catalog has exactly two entries. `16s-rrna-identification` is `available-browser-and-local-agent`; `msa-phylogenetics` is `partial-not-production-ready` per `docs/M7_3_PHYLOGENETICS_WORKFLOW_REPORT.md`. No live Galaxy call and no fabricated execution result is introduced.
+- Batch 2 (browser UI) is **not** part of this change.
