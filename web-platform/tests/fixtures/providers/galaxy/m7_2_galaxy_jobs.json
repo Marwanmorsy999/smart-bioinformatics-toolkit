@@ -1,0 +1,24 @@
+{
+  "__fixture": "MOCK - synthetic Galaxy job/history/dataset responses for the M7.2 OFFLINE verification tests ONLY. NOT live Galaxy data. These are canned JSON objects returned by an injected fake fetch; they are not job results.",
+  "execution_mode": "mock",
+  "is_mock": true,
+  "history": { "id": "m7-2-mock-history", "name": "provider-job-m7-2-mock", "state": "new" },
+  "queued_job": { "id": "m7-2-mock-job", "state": "queued", "history_id": "m7-2-mock-history", "progress": 0 },
+  "running_job": { "id": "m7-2-mock-job", "state": "running", "history_id": "m7-2-mock-history", "progress": 42 },
+  "succeeded_job": { "id": "m7-2-mock-job", "state": "ok", "history_id": "m7-2-mock-history", "progress": 100 },
+  "cancelled_job": { "id": "m7-2-mock-job", "state": "cancelled", "history_id": "m7-2-mock-history", "progress": 0 },
+  "invocation": { "id": "m7-2-mock-invocation", "state": "queued", "history_id": "m7-2-mock-history" },
+  "failed_invocation": { "id": "m7-2-mock-invocation", "state": "failed", "history_id": "m7-2-mock-history" },
+  "upload": {
+    "__fixture": "MOCK - canned Galaxy POST /api/tools upload1 response. VERIFIED wire shape only; outputs[0].id is the synthetic dataset id.",
+    "id": "m7-2-mock-upload-job",
+    "state": "queued",
+    "outputs": [{ "id": "m7-2-mock-dataset-input", "name": "m7-2-mock-input.txt", "state": "queued" }]
+  },
+  "contents": [
+    { "id": "m7-2-mock-dataset-output", "name": "m7-2-mock-output.txt", "extension": "txt", "file_size": 64, "state": "ok" },
+    { "id": "m7-2-mock-dataset-pending", "name": "m7-2-mock-pending.txt", "extension": "txt", "file_size": 16, "state": "queued" }
+  ],
+  "dataset": { "id": "m7-2-mock-dataset-output", "name": "m7-2-mock-output.txt", "extension": "txt", "file_size": 64, "state": "ok" },
+  "dataset_content": "M7.2 MOCK DATASET BYTES - NOT A SCIENTIFIC RESULT\n"
+}

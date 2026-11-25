@@ -1,0 +1,44 @@
+{
+  "__fixture": "MOCK - synthetic Galaxy discovery data for the M7.2 OFFLINE verification tests ONLY. NOT live Galaxy data. No credentials, no network call and no real job execution are involved.",
+  "execution_mode": "mock",
+  "is_mock": true,
+  "version": { "version": "24.1.m7-2-mock", "api_version": "1.0" },
+  "user": { "id": "m7-2-mock-user", "username": "m7_2_offline_mock", "email": "m7-2-mock@example.invalid" },
+  "usage": {
+    "total_disk_usage": 1048576,
+    "nice_total_disk_usage": "1.0 MB (MOCK)",
+    "quota_bytes": 10485760,
+    "quota_percent": 10
+  },
+  "tools": [
+    {
+      "id": "m7-2.mock.tool.alpha",
+      "name": "M7.2 Mock Alpha Tool (OFFLINE fixture)",
+      "version": "1.2.3-mock",
+      "description": "Synthetic tool descriptor used only by M7.2 offline contract tests. Not a scientific capability.",
+      "inputs": [
+        { "name": "input", "type": "txt", "optional": false },
+        { "name": "mode", "type": "text", "optional": true }
+      ],
+      "outputs": [{ "name": "output", "type": "txt" }]
+    },
+    {
+      "id": "m7-2.mock.tool.hidden",
+      "name": "M7.2 Mock Disabled Tool (OFFLINE fixture)",
+      "version": "0.1.0-mock",
+      "description": "Synthetic disabled tool: discovered but never advertised or executable.",
+      "disabled": true,
+      "inputs": [],
+      "outputs": []
+    }
+  ],
+  "workflows": [
+    {
+      "id": "m7-2.mock.workflow.one",
+      "name": "M7.2 Mock Workflow One (OFFLINE fixture)",
+      "version": "0.4.0-mock",
+      "description": "Synthetic workflow descriptor. Invocation is simulated by an injected fetch only.",
+      "steps": [{ "id": "s1" }, { "id": "s2" }]
+    }
+  ]
+}

@@ -162,7 +162,13 @@ export async function onRequest(context) {
     // throwing. Treat that as a failure here — never persist it as submitted.
     if (result?.status === "failed" || result?.error) {
       const detail = result.error?.message ?? result.error ?? "Provider submission failed.";
-      throw new Error(String(detail).slice(0, 500));
+      const failure = new Error(String(detail).slice(0, 500));
+      // Preserve the provider's HTTP status and code so an expired key (401)
+      // or an unactivated account (403) is not misreported as a Worker 502.
+      failure.status = Number(result.error?.status ?? result.error?.response?.status ?? 0) || 0;
+      failure.code = result.error?.code;
+      failure.retryable = Boolean(result.error?.retryable);
+      throw failure;
     }
 
     await insertRow(db, PROVIDER_SQL.insertProviderJob, [
