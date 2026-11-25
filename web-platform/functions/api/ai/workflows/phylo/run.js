@@ -123,7 +123,7 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
     // Step 1 â€” upload (Galaxy's generic pasted-content upload primitive).
     const upload = await adapter.submitJob({
       operation: "submit_job", tool_id: "upload1",
-      inputs: { file1: { src: "pasted", paste_content: fasta, name: filename, ext: "fasta" } }
+      inputs: { file1: { filename, extension: "fasta", content: fasta } }
     }, ctx);
     historyId = upload.output?.structured?.history_id ?? null;
     if (upload.error) throw new Error(`Galaxy upload failed: ${upload.error.message ?? upload.error.code}`);
@@ -201,4 +201,5 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
     tree_newick: treeText, alignment_text: alignmentText
   }, failed ? 502 : 200, request);
 }
+
 
