@@ -60,6 +60,7 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
   const fasta = String(payload?.fasta_text ?? "");
   const filename = sanitizeFilename(payload?.filename ?? "phylo.fasta");
   const objective = safeString(payload?.objective, 2000);
+  const resumeId = safeString(payload?.resume_alignment_dataset_id, 200);
   const checked = validateFasta(fasta);
   if (!checked.valid) return errorResponse(`Invalid multi-FASTA: ${checked.error}`, 400, request);
   const db = getDb(env);
@@ -131,9 +132,17 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
     await recordStep("upload_input", "upload1", upload.provider_job_id, "succeeded", createdAt, nowIso(now),
       { dataset_id: upload.output?.structured?.dataset_id ?? null, history_id: historyId });
 
+    if (resumeId) {
+      // Resume from a previously completed real MAFFT output dataset.
+      const prior = await adapter.getArtifacts({ dataset_id: resumeId }, ctx);
+      if (!prior.ok || (prior.artifacts ?? []).length === 0) throw new Error("resume dataset unavailable");
+      readyId = prior.artifacts[0].id;
+      await recordStep("upload_input", "upload1", null, "succeeded", createdAt, nowIso(now), { resumed: true });
+      await recordStep("galaxy_mafft", tools.mafft.id, null, "succeeded", createdAt, nowIso(now), { resumed: true, dataset_id: readyId });
+    }
     // Galaxy keeps a freshly uploaded HDA queued for tens of seconds. Waiting
     // for state=ok before referencing it avoids HTTP 400 from downstream tools.
-    let readyId = upload.output?.structured?.dataset_id ?? null;
+    let readyId = resumeId || upload.output?.structured?.dataset_id ?? null;
     for (let i = 0; i < 30 && historyId; i += 1) {
       const contents = await adapter.getArtifacts({ history_id: historyId }, ctx);
       const ready = (contents.artifacts ?? []).find((a) => a.id === readyId || a.name === filename);
@@ -214,6 +223,7 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
     tree_newick: treeText, alignment_text: alignmentText
   }, failed ? 502 : 200, request);
 }
+
 
 
 
