@@ -8,45 +8,226 @@
 <body>
   <a class="skip-link" href="#ws-main">Skip to main content</a>
   <header class="topbar">
-    <a class="brand" href="index.html"><span class="brand-mark">S<span>Bio</span></span><span class="brand-name">Smart Bioinformatics <span>Toolkit</span></span></a>
+    <a class="brand" href="index.html" aria-label="S Bio Smart Bioinformatics Toolkit home">
+      <span class="brand-mark" aria-hidden="true">S<span>Bio</span></span>
+      <span class="brand-name">Smart Bioinformatics <span>Toolkit</span></span>
+    </a>
     <nav class="top-nav" aria-label="Main navigation">
-      <a href="index.html">Tools</a><a href="ai.html">AI workspace</a>
-      <a class="active" href="workspace.html" aria-current="location">Research workspace</a>
+      <a href="index.html">Tools</a>
+      <a href="ai.html">AI workspace</a>
+      <a href="blast.html">BLAST results</a>
       <a href="phylo.html">Phylogenetics</a>
+      <a class="active" href="workspace.html" aria-current="location">Research workspace</a>
     </nav>
+    <span class="local-badge"><span class="status-dot" aria-hidden="true"></span> Research workspace</span>
   </header>
-  <main id="ws-main" class="section-block">
-    <h1>Research workspace</h1>
-    <p class="section-kicker">Projects, datasets, workflows and runs — one place.</p>
-    <div class="research-strip" role="note"><span class="privacy-icon">i</span><p>Project APIs use the existing agent-token identity. No visitor account system is invented. D1 stores metadata only; no file bytes or R2 are used. <strong>Sample data is precomputed, never a new analysis.</strong></p></div>
 
-    <section aria-labelledby="ws-projects-title">
-      <h2 id="ws-projects-title">Projects</h2>
-      <label for="ws-agent">Agent token (existing X-Agent-Token identity)</label>
-      <input id="ws-agent" type="password" autocomplete="off" placeholder="Stored only in this browser session">
-      <button id="ws-load" type="button">Load my projects</button>
-      <label for="ws-name">New project name</label><input id="ws-name" type="text">
-      <label for="ws-objective">Scientific objective</label><textarea id="ws-objective" rows="2"></textarea>
-      <button id="ws-create" type="button">Create project</button>
-      <ul id="ws-project-list"></ul>
+  <main id="ws-main" class="section-block" tabindex="-1">
+    <h1>Research workspace</h1>
+    <p class="section-kicker">Projects, dataset metadata, workflow catalog and run history in one place.</p>
+
+    <div class="research-strip info-card" role="note">
+      <span class="privacy-icon" aria-hidden="true">i</span>
+      <div>
+        <p id="ws-mode-banner">Local browser session — not persisted to the server; no server-side ownership applies. For durable owner-scoped projects, operators can use the authenticated API.</p>
+        <p id="ws-mode-label">Current mode: local browser session (no token in use).</p>
+      </div>
+    </div>
+
+    <section aria-labelledby="ws-access-title" class="info-card">
+      <h2 id="ws-access-title">Access mode</h2>
+      <details id="ws-operator">
+        <summary>Operator access (optional, collapsed)</summary>
+        <p id="ws-operator-note">Warning: the token is held only in this page's memory. It is never written to localStorage, a URL or a link, and it is never cleared by the browser storage clear control. This is the platform's existing operator identity (<code>X-Agent-Token</code>), not a visitor login.</p>
+        <div class="field-group">
+          <label for="ws-agent-token">Operator token (existing X-Agent-Token identity)</label>
+          <input id="ws-agent-token" type="password" autocomplete="off" spellcheck="false">
+        </div>
+        <button id="ws-operator-enable" type="button">Use operator API</button>
+        <button id="ws-operator-disable" type="button">Return to local session</button>
+      </details>
       <p id="ws-status" role="status" aria-live="polite"></p>
     </section>
 
-    <section id="ws-detail" hidden aria-live="polite">
+    <section aria-labelledby="ws-projects-title">
+      <h2 id="ws-projects-title">Projects</h2>
+      <form id="ws-project-form" class="info-card ws-form">
+        <h3>Create a project</h3>
+        <div class="field-group">
+          <label for="ws-project-name">Project name</label>
+          <input id="ws-project-name" type="text" required maxlength="200">
+        </div>
+        <div class="field-group">
+          <label for="ws-project-description">Description</label>
+          <textarea id="ws-project-description" rows="2" maxlength="2000"></textarea>
+        </div>
+        <div class="field-group">
+          <label for="ws-project-objective">Scientific objective</label>
+          <textarea id="ws-project-objective" rows="2" maxlength="2000"></textarea>
+        </div>
+        <div class="field-group">
+          <label for="ws-project-status">Status</label>
+          <select id="ws-project-status">
+            <option value="active" selected>active</option>
+            <option value="archived">archived</option>
+          </select>
+        </div>
+        <button id="ws-project-create" type="submit">Create project</button>
+      </form>
+      <p><button id="ws-local-clear" type="button">Clear local sample/session</button></p>
+      <h3>Project list</h3>
+      <ul id="ws-project-list"></ul>
+    </section>
+
+    <section id="ws-detail" aria-labelledby="ws-detail-title" hidden>
       <h2 id="ws-detail-title"></h2>
       <p id="ws-detail-meta"></p>
-      <h3>Datasets (metadata only)</h3><ul id="ws-datasets"></ul>
-      <h3>Available workflows</h3><ul id="ws-catalog"></ul>
-      <h3>Run history</h3><ul id="ws-runs"></ul>
-      <div id="ws-run-detail" hidden><h3>Run detail</h3><pre id="ws-run-json"></pre></div>
+
+      <div id="ws-overview" class="info-card">
+        <h3>Project overview</h3>
+        <p id="ws-overview-description"></p>
+        <p id="ws-overview-counts"></p>
+        <p id="ws-overview-workflows"></p>
+        <h4>Recent activity (from run history)</h4>
+        <ul id="ws-activity"></ul>
+      </div>
+
+      <form id="ws-edit-form" class="info-card ws-form" hidden>
+        <h3>Edit project metadata</h3>
+        <div class="field-group">
+          <label for="ws-edit-name">Project name</label>
+          <input id="ws-edit-name" type="text" required maxlength="200">
+        </div>
+        <div class="field-group">
+          <label for="ws-edit-description">Description</label>
+          <textarea id="ws-edit-description" rows="2" maxlength="2000"></textarea>
+        </div>
+        <div class="field-group">
+          <label for="ws-edit-objective">Scientific objective</label>
+          <textarea id="ws-edit-objective" rows="2" maxlength="2000"></textarea>
+        </div>
+        <div class="field-group">
+          <label for="ws-edit-status">Status</label>
+          <select id="ws-edit-status">
+            <option value="active">active</option>
+            <option value="archived">archived</option>
+          </select>
+        </div>
+        <button id="ws-edit-save" type="submit">Save metadata</button>
+        <button id="ws-archive" type="button">Archive project</button>
+      </form>
+
+      <div class="info-card">
+        <h3>Dataset registry (metadata only)</h3>
+        <p><strong>Metadata only — no file bytes are stored; provider references are not proof of durable storage.</strong></p>
+        <form id="ws-dataset-form" class="ws-form">
+          <div class="field-group">
+            <label for="ws-dataset-filename">Filename</label>
+            <input id="ws-dataset-filename" type="text" required maxlength="200">
+          </div>
+          <div class="field-group">
+            <label for="ws-dataset-size">Size (bytes)</label>
+            <input id="ws-dataset-size" type="number" min="0" max="1000000000000" step="1" value="0" required>
+          </div>
+          <div class="field-group">
+            <label for="ws-dataset-sha256">SHA-256 (64 hexadecimal characters)</label>
+            <input id="ws-dataset-sha256" type="text" required minlength="64" maxlength="64" pattern="[0-9a-fA-F]{64}">
+          </div>
+          <div class="field-group">
+            <label for="ws-dataset-format">File format</label>
+            <input id="ws-dataset-format" type="text" maxlength="50" value="fasta">
+          </div>
+          <div class="field-group">
+            <label for="ws-dataset-source">Source</label>
+            <input id="ws-dataset-source" type="text" maxlength="300">
+          </div>
+          <div class="field-group">
+            <label for="ws-dataset-validation">Validation state</label>
+            <select id="ws-dataset-validation">
+              <option value="unvalidated" selected>unvalidated</option>
+              <option value="pending">pending</option>
+              <option value="passed">passed</option>
+              <option value="warn">warn</option>
+              <option value="failed">failed</option>
+            </select>
+          </div>
+          <div class="field-group">
+            <label for="ws-dataset-provider-ref">Provider history reference (reference only, not a URL)</label>
+            <input id="ws-dataset-provider-ref" type="text" maxlength="300">
+          </div>
+          <button id="ws-dataset-register" type="submit">Register dataset metadata</button>
+        </form>
+        <h4>Registered datasets</h4>
+        <ul id="ws-datasets"></ul>
+      </div>
+
+      <div class="info-card">
+        <h3>Workflow catalog</h3>
+        <p>Launching a workflow records a planned/draft run only. This workspace never executes a scientific tool.</p>
+        <div class="field-group">
+          <label for="ws-run-dataset">Input dataset for a new run</label>
+          <select id="ws-run-dataset"></select>
+        </div>
+        <ul id="ws-catalog"></ul>
+      </div>
+
+      <div class="info-card">
+        <h3>Run history</h3>
+        <details id="ws-state-legend">
+          <summary>State legend (11 states)</summary>
+          <ul>
+            <li><strong>draft</strong> — record created, not planned.</li>
+            <li><strong>planned</strong> — intended work, no execution.</li>
+            <li><strong>awaiting_approval</strong> — waiting for operator consent.</li>
+            <li><strong>queued</strong> — accepted for execution.</li>
+            <li><strong>running</strong> — execution in progress.</li>
+            <li><strong>execution_completed</strong> — execution stage done; no artifacts or validation implied.</li>
+            <li><strong>artifact_retrieval</strong> — retrieving outputs.</li>
+            <li><strong>validation</strong> — validating outputs.</li>
+            <li><strong>succeeded</strong> — all stages complete with a provenance record.</li>
+            <li><strong>failed</strong> — a stage failed.</li>
+            <li><strong>cancelled</strong> — stopped before completion.</li>
+          </ul>
+        </details>
+        <div class="table-wrap">
+          <table id="ws-runs-table" class="compact">
+            <thead>
+              <tr>
+                <th scope="col">Workflow</th>
+                <th scope="col">Run identifier</th>
+                <th scope="col">Date</th>
+                <th scope="col">State</th>
+                <th scope="col">Input dataset</th>
+                <th scope="col">Execution mode</th>
+                <th scope="col">Validation status</th>
+                <th scope="col">Detail</th>
+              </tr>
+            </thead>
+            <tbody id="ws-runs"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <section id="ws-run-detail" aria-labelledby="ws-run-detail-title" class="info-card" hidden>
+        <h3 id="ws-run-detail-title">Run detail</h3>
+        <dl id="ws-run-fields"></dl>
+      </section>
     </section>
 
     <section id="ws-demo" aria-labelledby="ws-demo-title">
       <h2 id="ws-demo-title">Sample project (precomputed — not executed)</h2>
+      <p>Fixed sample data for interface development only. Opening it never starts an analysis.</p>
       <button id="ws-demo-load" type="button">Open sample project</button>
-      <div id="ws-demo-view" hidden><pre id="ws-demo-json"></pre></div>
+      <div id="ws-demo-view" class="info-card" hidden>
+        <p><strong>SAMPLE / PRECOMPUTED — not a newly executed analysis.</strong></p>
+        <p id="ws-demo-disclaimer"></p>
+        <div id="ws-demo-content"></div>
+        <h4>Sample runs</h4>
+        <ul id="ws-demo-runs"></ul>
+      </div>
     </section>
   </main>
+
   <script type="module" src="js/workspace.js"></script>
 </body>
 </html>

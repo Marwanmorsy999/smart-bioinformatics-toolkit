@@ -192,6 +192,13 @@
 .info-card-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
 .info-card-head h3 { font-size: 1rem; }
 .info-card > p { margin: 0; color: var(--muted); font-size: .8125rem; line-height: 1.7; }
+
+/* ---------- M7.4 research workspace metadata forms ---------- */
+.ws-form .field-group { margin-bottom: 14px; }
+.ws-form .field-group textarea {
+  height: auto; min-height: 64px;
+  font-family: var(--font); line-height: 1.6;
+}
 .card-status { font-size: .68rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--teal-deep); }
 .receipt-list { display: grid; gap: 8px; margin-top: 14px; }
 .receipt-row {
