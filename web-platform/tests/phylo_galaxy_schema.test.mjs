@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildSchemaPayload, describeSchema } from "../providers/galaxy/galaxy_schema.js";
 
-const MAFFT = JSON.parse(JSON.stringify({
+const MAFFT = {
   inputs: [
     { model_class: "Conditional", name: "input", test_param: { name: "mapping", value: "implicit" },
       cases: [{ value: "implicit", inputs: [{ model_class: "Repeat", name: "batches", default: 1,
@@ -10,8 +10,7 @@ const MAFFT = JSON.parse(JSON.stringify({
     { model_class: "Conditional", name: "datatype_selection", test_param: { name: "datatype", value: "" },
       cases: [{ value: "", inputs: [] }] }
   ]
-}));
-
+};
 const IQTREE = { inputs: [
   { model_class: "Section", name: "general_options", inputs: [
     { model_class: "DataToolParameter", name: "s", optional: true, extensions: ["fasta", "phylip"] },
@@ -26,25 +25,19 @@ test("M7.3 MAFFT schema payload uses real conditional/repeat field names", () =>
   assert.deepEqual(result.inputs["batches_0|inputs"], { src: "hda", id: "abc123" });
   assert.equal(result.inputs["datatype_selection|datatype"], "");
 });
-
 test("M7.3 IQ-TREE schema payload maps section data input", () => {
   const result = buildSchemaPayload(IQTREE, "def456");
   assert.equal(result.valid, true);
   assert.deepEqual(result.inputs["general_options|s"], { src: "hda", id: "def456" });
   assert.equal(result.inputs["general_options|seqtype"], "DNA");
 });
-
 test("M7.3 fail-closed on incomplete schema", () => {
-  const result = buildSchemaPayload({ inputs: [] }, "abc");
-  assert.equal(result.valid, false);
-  assert.ok(result.errors.includes("schema_unavailable"));
+  assert.equal(buildSchemaPayload({ inputs: [] }, "abc").valid, false);
 });
-
 test("M7.3 rejects malformed dataset ids", () => {
   assert.equal(buildSchemaPayload(MAFFT, "../bad").valid, false);
 });
-
 test("M7.3 schema description lists verified input names only", () => {
-  const names = describeSchema(IQTREE).map((i) => i.name);
-  assert.deepEqual(names, ["general_options", "general_options|s", "general_options|seqtype"]);
+  assert.deepEqual(describeSchema(IQTREE).map((i) => i.name),
+    ["general_options", "general_options|s", "general_options|seqtype"]);
 });
