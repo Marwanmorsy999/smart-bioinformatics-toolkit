@@ -94,9 +94,11 @@ function mockFetch(overrides = {}) {
     calls.push({ url, method, body: init.body, headers: init.headers });
     if (overrides.dataset !== undefined && url.includes("/api/datasets/") && !url.endsWith("/content")) return overrides.dataset;
     if (overrides.content !== undefined && url.includes("/api/datasets/") && url.endsWith("/content")) return overrides.content;
-    if (overrides.tool !== undefined && method === "POST" && url.endsWith("/api/tools")) return overrides.tool;
+    if (overrides.tool !== undefined && method === "POST" && (url.endsWith("/api/tools") || url.endsWith("/api/tools/fetch"))) return overrides.tool;
     if (overrides.job !== undefined && url.includes("/api/jobs/")) return overrides.job;
     if (method === "POST" && url.endsWith("/api/histories")) return json(datasets.history);
+    // Verified uploads use POST /api/tools/fetch (multipart), not /api/tools.
+    if (method === "POST" && url.endsWith("/api/tools/fetch")) return json(datasets.upload_job);
     if (method === "POST" && url.endsWith("/api/tools")) {
       const body = JSON.parse(init.body ?? "{}");
       return json(body.tool_id === "upload1" ? datasets.upload_job : datasets.tool_job);
@@ -214,10 +216,11 @@ test("uploadDataset uses the adapter upload path, records ids and stores no byte
 
   assert.equal(row.galaxy_dataset_id, datasets.upload_job.outputs[0].id);
   assert.equal(row.history_id, datasets.history_id);
-  assert.equal(row.job_id, datasets.upload_job.id);
+  // /api/tools/fetch has no stable job id; the adapter generates a local id.
+  assert.match(row.job_id, /^galaxy_[0-9a-f]+$/);
   assert.equal(row.direction, "input");
   assert.equal(row.project_id, "proj_0123456789abcdef");
-  assert.ok(calls.some((call) => call.method === "POST" && call.url.endsWith("/api/tools")));
+  assert.ok(calls.some((call) => call.method === "POST" && call.url.endsWith("/api/tools/fetch")));
   assert.equal(calls.some((call) => call.url.endsWith("/api/upload")), false);
   const insert = state.calls.find((call) => call.sql === GALAXY_ARTIFACT_SQL.insertArtifact);
   assert.doesNotMatch(JSON.stringify(insert.values), /ACGTACGT/);

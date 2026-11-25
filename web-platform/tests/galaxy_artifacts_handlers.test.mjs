@@ -139,8 +139,10 @@ function mockFetch(overrides = {}) {
     calls.push({ url, method, body: init.body, headers: init.headers });
     if (overrides.dataset !== undefined && url.includes("/api/datasets/") && !url.endsWith("/content")) return overrides.dataset;
     if (overrides.content !== undefined && url.includes("/api/datasets/") && url.endsWith("/content")) return overrides.content;
-    if (overrides.tool !== undefined && method === "POST" && url.endsWith("/api/tools")) return overrides.tool;
+    if (overrides.tool !== undefined && method === "POST" && (url.endsWith("/api/tools") || url.endsWith("/api/tools/fetch"))) return overrides.tool;
     if (method === "POST" && url.endsWith("/api/histories")) return json(datasets.history);
+    // Verified uploads use POST /api/tools/fetch (multipart), not /api/tools.
+    if (method === "POST" && url.endsWith("/api/tools/fetch")) return json(datasets.upload_job);
     if (method === "POST" && url.endsWith("/api/tools")) {
       const body = JSON.parse(init.body ?? "{}");
       return json(body.tool_id === "upload1" ? datasets.upload_job : datasets.tool_job);
@@ -293,7 +295,7 @@ test("happy upload streams, hashes, persists metadata only and consumes consent"
   assert.doesNotMatch(serialized, /https:\/\/galaxy/);
   assert.equal(state.tables.provider_consents[0].granted, 0);
   assert.ok(state.tables.provider_consents[0].used_at);
-  assert.ok(calls.some((call) => call.method === "POST" && call.url.endsWith("/api/tools")));
+  assert.ok(calls.some((call) => call.method === "POST" && call.url.endsWith("/api/tools/fetch")));
 });
 
 test("duplicate upload is rejected without a second transmission", async () => {

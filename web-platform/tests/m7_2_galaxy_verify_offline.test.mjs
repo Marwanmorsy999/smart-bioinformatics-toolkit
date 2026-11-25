@@ -131,8 +131,10 @@ function mockFetch(overrides = {}) {
     if (overrides.dataset !== undefined && url.includes("/api/datasets/") && !url.endsWith("/content")) return overrides.dataset;
     if (overrides.content !== undefined && url.includes("/api/datasets/") && url.endsWith("/content")) return overrides.content;
     if (overrides.job !== undefined && url.includes("/api/jobs/")) return overrides.job;
-    if (overrides.tool !== undefined && method === "POST" && url.endsWith("/api/tools")) return overrides.tool;
+    if (overrides.tool !== undefined && method === "POST" && (url.endsWith("/api/tools") || url.endsWith("/api/tools/fetch"))) return overrides.tool;
     if (method === "POST" && url.endsWith("/api/histories")) return json(datasets.history);
+    // Verified uploads use POST /api/tools/fetch (multipart), not /api/tools.
+    if (method === "POST" && url.endsWith("/api/tools/fetch")) return json(datasets.upload_job);
     if (method === "POST" && url.endsWith("/api/tools")) {
       const body = JSON.parse(init.body ?? "{}");
       return json(body.tool_id === "upload1" ? datasets.upload_job : datasets.tool_job);

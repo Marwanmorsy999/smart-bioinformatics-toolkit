@@ -81,7 +81,7 @@ No provider job progress, output artifact or report download was observable beca
 
 | Check | Exact result |
 |---|---|
-| JavaScript suite (`npm test`, web-platform) | **377 tests, 377 pass, 0 fail, 0 skipped, 0 todo** (M7.1 baseline 299) |
+| JavaScript suite (`npm test`, web-platform) | **383 tests, 383 pass, 0 fail, 0 skipped, 0 todo** (M7.1 baseline 299) |
 | Python suite (`python -m pytest python-engine/tests -q`) | **240 passed** |
 | New M7.2 offline files | `m7_2_pipeline_offline.test.mjs` (1 full-chain test) + `m7_2_failures_offline.test.mjs` (14 failure/usage tests) + `m7_2_verify_jobs.test.mjs`/`m7_2_verify_report.test.mjs` (6 independent regression tests) = **21/21 pass** |
 | R2-free Galaxy artifact tests | `galaxy_artifacts_store` (13), `galaxy_artifacts_handlers` (13), `galaxy_artifacts_failures` (16), `galaxy_artifacts_boundaries` (7), `m7_2_galaxy_verify_offline` (8) = **57/57 pass**, all OFFLINE/MOCK |
@@ -113,12 +113,26 @@ verification commands (never written to a file, secret store, git or browser). T
 read-only calls plus one history creation and several failed upload attempts — no successful job
 or result was obtained:
 - `GET /api/users/current` → 200, account `marawan20`, quota `268.4 GB` / scratch `2.2 TB`, 0 used.
+  The live OpenAPI spec confirms `GET /api/whoami` exists as the canonical identity endpoint; it will
+  be used for the final authentication gate once the secret is installed.
 - `GET /api/users/current/usage` → 200 (two quota sources).
 - `POST /api/histories` → 200, history `11ac94870d0bb33ad52bef73e8f312cd` ("M7.2 activation check").
 - Multiple upload shapes to `POST /api/tools` (`tool_id=upload1`) — JSON `inputs.file1.file_content`,
   input-array, multipart form, `?key=` variant, and `tool_version` pin — **all returned 400**
   `No data was entered in the upload form, please go back and choose data to upload.`
   No dataset id, no job id, no successful upload.
+
+  **Root cause (investigated from the live specification, 2026-11-25):** the adapter used the wrong
+  endpoint and payload. `https://usegalaxy.eu/openapi.json` shows uploads are performed by
+  **`POST /api/tools/fetch`** with `multipart/form-data` fields `history_id` (required), `targets`
+  (required, JSON-encoded `DataElementsTarget[]`) and optional `files` parts. `targets` items are
+  `{destination:{type:"hdas"}, elements:[{src:"pasted", paste_content, name, ext} | {src:"files", name, ext}]}`.
+  There is no `/api/upload` route on this instance (404), and `/api/tools/{id}/inputs` does not
+  expose the upload form (400008). The 400 was therefore a **request-contract error**, not proof of
+  an account-activation restriction. The adapter has been corrected to this contract with six OFFLINE/MOCK regression tests
+  (`galaxy_upload_fetch.test.mjs`) and an opt-in two-test live script
+  (`scripts/live-smoke/galaxy-upload-tests.mjs`: pasted text + real FASTA file). The live script
+  has **not** been run: staging has no installed Galaxy secret and activation is unconfirmed.
 
 The earlier `403 Action requires account activation` was not reproduced with the new key, but
 **successful upload/execution was not achieved**, so activation and execution eligibility remain
