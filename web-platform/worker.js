@@ -12,6 +12,7 @@ import { onRequest as onAiJobs } from "./functions/api/ai/jobs/index.js";
 import { onRequest as onAiJobResult } from "./functions/api/ai/jobs/[id]/result.js";
 import { onRequest as onPhyloRun } from "./functions/api/ai/workflows/phylo/run.js";
 import { onRequest as onPhyloStatus } from "./functions/api/ai/workflows/phylo/status.js";
+import { onRequest as onPhyloTool } from "./functions/api/ai/workflows/phylo/tool.js";
 import { onRequest as onAiJobReport } from "./functions/api/ai/jobs/[id]/report.js";
 import { onRequest as onAiPlan } from "./functions/api/ai/plans/[id]/index.js";
 import { onRequest as onAiPlanApprove } from "./functions/api/ai/plans/[id]/approve.js";
@@ -58,6 +59,7 @@ export const handlers = {
   aiJobResult: onAiJobResult,
   phyloRun: onPhyloRun,
   phyloStatus: onPhyloStatus,
+  phyloTool: onPhyloTool,
   aiJobReport: onAiJobReport,
   aiPlan: onAiPlan,
   aiPlanApprove: onAiPlanApprove,
@@ -129,6 +131,7 @@ const ROUTES = [
   { key: "providers", re: /^\/api\/providers\/?$/, names: [] },
   { key: "providerDetail", re: /^\/api\/providers\/([^/]+)\/?$/, names: ["id"] },
   { key: "aiJobReport", re: /^\/api\/ai\/jobs\/([^/]+)\/report\/?$/, names: ["id"] },
+  { key: "phyloTool", re: /^\\/api\\/ai\\/workflows\\/phylo\\/tool\\/?$/, names: [] },
   { key: "phyloStatus", re: /^\/api\/ai\/workflows\/phylo\/status\/?$/, names: [] },
   { key: "phyloRun", re: /^\/api\/ai\/workflows\/phylo\/run\/?$/, names: [] },
   { key: "aiJobResult", re: /^\/api\/ai\/jobs\/([^/]+)\/result\/?$/, names: ["id"] },
@@ -251,5 +254,6 @@ export function createFetch(handlerMap = handlers) {
 export const fetch = createFetch();
 
 export default { fetch };
+
 
 
