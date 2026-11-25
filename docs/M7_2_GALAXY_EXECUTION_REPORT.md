@@ -83,7 +83,7 @@ No provider job progress, output artifact or report download was observable beca
 |---|---|
 | JavaScript suite (`npm test`, web-platform) | **320 tests, 320 pass, 0 fail, 0 skipped, 0 todo** (M7.1 baseline 299) |
 | Python suite (`python -m pytest python-engine/tests -q`) | **240 passed** |
-| New M7.2 offline files | `m7_2_pipeline_offline.test.mjs` (1 full-chain test) + `m7_2_failures_offline.test.mjs` (14 failure/usage tests) = **15/15 pass** |
+| New M7.2 offline files | `m7_2_pipeline_offline.test.mjs` (1 full-chain test) + `m7_2_failures_offline.test.mjs` (14 failure/usage tests) + `m7_2_verify_jobs.test.mjs`/`m7_2_verify_report.test.mjs` (6 independent regression tests) = **21/21 pass** |
 | Real Playwright staging run | page loaded, button worked, 3 provider rows rendered, 0 external hosts, 0 page errors, 1 expected anonymous-ledger 401; screenshot captured |
 
 All M7.2 tests use labelled MOCK fixtures and injected D1/fetch/R2. They are explicitly **not** remote execution evidence.
