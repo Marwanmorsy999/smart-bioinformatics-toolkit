@@ -52,3 +52,23 @@ Existing suites were verified green by the independent tester: Python `pytest te
 - Screenshots: Playwright browser E2E of the website is included; no screenshot of a real remote job was captured.
 
 **Acceptance gates not yet satisfiable:** "one actual multi-step workflow succeeds through the website", "≥2 scientific operations execute remotely", "intermediate outputs retrieved", "final artifacts pass independent scientific checks (remote)", "report generated from real run records". These require a Galaxy account with execution enabled and a live run of `POST /api/ai/workflows/phylo/run` from the deployed staging Worker.
+
+
+## Live execution addendum (2026-11-25, final session)
+
+A real request was sent from the deployed staging Worker (`Version ID dcc827cf-6d8c-4cfe-86d0-d7ea874ff740`, later `b796c8e6-be2b-4e04-a9e1-c81916d538b7`) to `POST /api/ai/workflows/phylo/run`:
+
+| Item | Actual value |
+|---|---|
+| Plan / run | `plan_59990e4f3a49b979` / `run_44e468ac4a02e518` (earlier attempts: `run_367cd6cf07852a11`, `run_342282b4dd91c304`) |
+| Input SHA-256 | `a0e181d42477ba4e466d678d647e3b8544b7c84af281734eb908d90c9a5782e4` |
+| Galaxy history | `11ac94870d0bb33ac5c9276670d578ce` (earlier: `...b609b70c3a73f318`, `...b577b7bbcd24b42d1`) |
+| Real upload job ID | `4838ba20a6d8676567e0ae253b3aeadd` (earlier: `...6657ccaedad9a0c3418`, `...6657e0ae253b3aeadd`) |
+| Real uploaded dataset ID | `40160950115d555ed9d9d8838b0d49a1` (earlier: `...db2`, `...ec3`) |
+| Tool discovery | LIVE: MAFFT 7.526+galaxy2 and IQ-TREE 3.1.4+galaxy1 found in the live panel |
+| Upload result | SUCCESS â€” real Galaxy history and dataset IDs above |
+
+**MAFFT submission returned HTTP 400** on every attempt (both HDA-reference and pasted-content input forms). Authenticated `GET /api/tools/{id}` and `GET /api/tools/{id}/inputs` on usegalaxy.eu return only panel metadata â€” no input/output schema is exposed, so the exact MAFFT parameter name could not be verified live; no guessed schema is claimed. Consequently NO remote alignment/tree datasets were retrieved, NO remote hashes/execution times exist, and the acceptance gates requiring remote multi-step execution remain unmet.
+
+**Security note**: the debug schema endpoint (`/api/ai/workflows/phylo/tool`) returns only tool metadata; `X-API-Key` is used server-side and never returned.
+

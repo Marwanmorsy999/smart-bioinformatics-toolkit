@@ -1,4 +1,4 @@
-// GET /api/ai/workflows/phylo/tool?tool_id=<id> — M7.3 schema discovery.
+﻿// GET /api/ai/workflows/phylo/tool?tool_id=<id> â€” M7.3 schema discovery.
 // Returns ONLY public tool input/output metadata; the Galaxy key is used as a
 // request header server-side and is never echoed.
 import { errorResponse, jsonResponse, requireMethod, safeString } from "../../_lib.js";
@@ -12,7 +12,7 @@ export async function onRequest(context) {
   const key = safeString(context.env?.GALAXY_API_KEY).trim();
   if (!base || !key) return errorResponse("Galaxy is not configured.", 503, context.request);
   try {
-    const response = await fetch(`${base}/api/tools/${encodeURIComponent(toolId)}`, {
+    const response = await fetch(`${base}/api/tools/${encodeURIComponent(toolId)}/inputs`, {
       headers: { "X-API-Key": key, Accept: "application/json" }
     });
     if (!response.ok) return errorResponse(`Galaxy returned HTTP ${response.status}.`, 502, context.request);
@@ -20,7 +20,7 @@ export async function onRequest(context) {
     return jsonResponse({
       tool_id: body?.id ?? toolId,
       version: body?.version ?? null,
-      inputs: (body?.inputs ?? []).map((i) => ({ name: i?.name, type: i?.type, optional: i?.optional })),
+      raw: JSON.stringify(body).slice(0, 4000),
       outputs: (body?.outputs ?? []).map((o) => ({ name: o?.name, type: o?.type ?? o?.format })),
       params: (body?.parameters ?? []).map((p) => ({ name: p?.name, type: p?.type, value: p?.value ?? null }))
     }, 200, context.request);
@@ -28,3 +28,4 @@ export async function onRequest(context) {
     return errorResponse(`Tool schema unavailable: ${error?.message ?? error}`, 502, context.request);
   }
 }
+
