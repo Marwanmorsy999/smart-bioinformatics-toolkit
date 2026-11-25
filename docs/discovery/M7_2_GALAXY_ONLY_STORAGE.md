@@ -159,16 +159,15 @@ imported `../../../../../storage/galaxy-artifacts.js`, which resolves to
 module load. The **owning worker corrected both imports in parallel**; the final verification run
 imports `worker.js` cleanly. This verification task did **not** modify any production file.
 
-### Additional contract gap (reported, not patched)
+### Remaining contract nuance (partly closed)
 
-`createGalaxyArtifactStore.inspectDataset()` (`web-platform/storage/galaxy-artifacts.js:301-331`)
-checks `live.deleted === true` / a deleted/expired state to raise typed `410 dataset_deleted`, but
-the Galaxy adapter's `getArtifacts()` (`web-platform/providers/galaxy/index.js:489-501`) filters
-out deleted and non-`ok` datasets and its DTO does not carry `deleted`. A locally *filtered*
-deleted/expired dataset therefore surfaces as `404 dataset_not_found`, not `410`. The explicit
-`410` is still reachable when Galaxy returns an HTTP 404 whose body code contains
-`deleted`/`expired`/`purged` (`galaxy-artifacts.js:101-110`); that is the path the OFFLINE/MOCK
-tests assert. No production file was changed to close this gap.
+The Galaxy adapter's `getArtifacts()` filters out deleted and non-`ok` datasets, so a locally
+filtered deleted dataset cannot be inspected and surfaces as `404 dataset_not_found`. The adapter
+DTO now carries `deleted`, but that does not make the filtered item visible. The explicit `410`
+is reachable when Galaxy returns HTTP 404 with a body code containing `deleted`/`expired`/`purged`
+(`galaxy-artifacts.js:101-110`), which is the path the OFFLINE/MOCK tests assert. This is a
+precision limitation, not a safety gap: no deleted dataset is ever returned as downloadable.
+The earlier note that the DTO lacked a `deleted` field is now stale.
 
 ## 7. How this was verified (offline)
 

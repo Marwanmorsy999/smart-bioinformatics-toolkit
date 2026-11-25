@@ -56,7 +56,7 @@ const PROVIDER_MESSAGES = Object.freeze({
 
 export const GALAXY_ARTIFACT_SQL = Object.freeze({
   insertArtifact: "INSERT INTO galaxy_artifacts (public_id, dataset_id, galaxy_dataset_id, job_id, history_id, filename, ext, direction, sha256, bytes, project_id, created_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-  getArtifactById: "SELECT * FROM galaxy_artifacts WHERE public_id = ?",
+  getArtifactById: "SELECT * FROM galaxy_artifacts WHERE public_id = ? AND deleted_at IS NULL",
   getArtifactByDataset: "SELECT * FROM galaxy_artifacts WHERE dataset_id = ? AND direction = ? AND deleted_at IS NULL",
   getArtifactByGalaxyDataset: "SELECT * FROM galaxy_artifacts WHERE galaxy_dataset_id = ? AND deleted_at IS NULL",
   listArtifacts: "SELECT * FROM galaxy_artifacts WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT ?",
@@ -344,9 +344,14 @@ export function createGalaxyArtifactStore(db, env = {}, deps = {}) {
     const listed = await adapter.getArtifacts({ history_id: historyId }, ctx());
     if (listed?.error) throw fromProviderError(listed.error);
     const artifacts = Array.isArray(listed?.artifacts) ? listed.artifacts : [];
-    const live = artifacts.find((item) => item?.name === filename) ?? artifacts[0] ?? null;
+    // Bind only an exact filename match. Falling back to artifacts[0] could
+    // register an unrelated historical dataset in this history.
+    const live = artifacts.find((item) => item?.name === filename) ?? null;
     if (!live?.id) {
-      throw artifactError("missing_output_dataset", "Galaxy did not return an uploaded dataset.", 502, { history_id: historyId });
+      // A freshly uploaded dataset may still be queued, and the adapter's
+      // artifact list only includes completed datasets. Fail clearly rather
+      // than binding the wrong dataset; the upload must be retried later.
+      throw artifactError("missing_output_dataset", "Galaxy did not return a completed dataset with the uploaded filename.", 502, { history_id: historyId });
     }
     return register({
       dataset_id, galaxy_dataset_id: live.id,

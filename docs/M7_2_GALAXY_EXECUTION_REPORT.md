@@ -81,9 +81,10 @@ No provider job progress, output artifact or report download was observable beca
 
 | Check | Exact result |
 |---|---|
-| JavaScript suite (`npm test`, web-platform) | **320 tests, 320 pass, 0 fail, 0 skipped, 0 todo** (M7.1 baseline 299) |
+| JavaScript suite (`npm test`, web-platform) | **377 tests, 377 pass, 0 fail, 0 skipped, 0 todo** (M7.1 baseline 299) |
 | Python suite (`python -m pytest python-engine/tests -q`) | **240 passed** |
 | New M7.2 offline files | `m7_2_pipeline_offline.test.mjs` (1 full-chain test) + `m7_2_failures_offline.test.mjs` (14 failure/usage tests) + `m7_2_verify_jobs.test.mjs`/`m7_2_verify_report.test.mjs` (6 independent regression tests) = **21/21 pass** |
+| R2-free Galaxy artifact tests | `galaxy_artifacts_store` (13), `galaxy_artifacts_handlers` (13), `galaxy_artifacts_failures` (16), `galaxy_artifacts_boundaries` (7), `m7_2_galaxy_verify_offline` (8) = **57/57 pass**, all OFFLINE/MOCK |
 | Real Playwright staging run | page loaded, button worked, 3 provider rows rendered, 0 external hosts, 0 page errors, 1 expected anonymous-ledger 401; screenshot captured |
 
 All M7.2 tests use labelled MOCK fixtures and injected D1/fetch/R2. They are explicitly **not** remote execution evidence.
@@ -107,8 +108,10 @@ Prerequisite re-check (secret presence only, no values):
 installed replacement `GALAXY_API_KEY` and no `GALAXY_BASE_URL`**; `wrangler.toml` still has
 `GALAXY_ENABLED = "false"` for both top level and staging.
 
-A replacement key value was pasted into chat by the owner and was used **only** in transient,
-read-only verification commands (never written to a file, secret store, git or browser):
+A replacement key value was pasted into chat by the owner and was used **only** in transient
+verification commands (never written to a file, secret store, git or browser). These included
+read-only calls plus one history creation and several failed upload attempts — no successful job
+or result was obtained:
 - `GET /api/users/current` → 200, account `marawan20`, quota `268.4 GB` / scratch `2.2 TB`, 0 used.
 - `GET /api/users/current/usage` → 200 (two quota sources).
 - `POST /api/histories` → 200, history `11ac94870d0bb33ad52bef73e8f312cd` ("M7.2 activation check").
@@ -123,9 +126,11 @@ The earlier `403 Action requires account activation` was not reproduced with the
 secret installation from a chat-pasted value, no deployment with a provider enabled. The key must
 still be installed through `scripts/secrets/` (or `wrangler secret put`) per environment, and the
 owner must confirm activation with a successful small upload before enablement. The R2-free
-architecture, authenticated retrieval endpoints and failure tests are being completed offline.
-No Galaxy job id, output dataset id, output hash or execution time from a successful live run
-exists in this report.
+architecture, authenticated retrieval endpoints and failure tests were completed offline.
+Migration `0009_galaxy_artifacts.sql` was applied to the real staging D1 with `--remote`
+(22 tables after migration); no file bytes are stored there, only dataset references, hashes,
+ownership and download audit rows. No Galaxy job id, output dataset id, output hash or execution
+time from a successful live run exists in this report.
 
 ---
 

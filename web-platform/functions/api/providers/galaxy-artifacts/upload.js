@@ -117,13 +117,27 @@ export async function onRequest(context) {
     return typedError("Upload must be valid UTF-8 biological text.", 400, request, "invalid_encoding");
   }
 
+  // Claim the consent BEFORE transmitting bytes. The conditional update both
+  // closes the TOCTOU window and makes a spent consent fail closed even when
+  // the provider call subsequently fails (no silent second transfer).
+  let claimed;
+  try {
+    claimed = await consumeConsent(db, consentId);
+  } catch (error) {
+    return artifactFailure(error, request);
+  }
+  if (!claimed) {
+    return typedError("Consent has already been used for a transfer.", 409, request, "consent_spent", {
+      reason: "duplicate_submission"
+    });
+  }
+
   let artifact;
   try {
     artifact = await store.uploadDataset({
       dataset_id: datasetId, filename, ext: extensionOf(filename), content,
       sha256: hashed.sha256, bytes: hashed.bytes, project_id: projectId
     });
-    await consumeConsent(db, consentId);
   } catch (error) {
     return artifactFailure(error, request);
   }

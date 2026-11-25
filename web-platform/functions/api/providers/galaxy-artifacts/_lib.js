@@ -77,5 +77,6 @@ export async function verifyConsent(db, { consentId, datasetId, now = Date.now()
 
 // Single use: a spent consent cannot authorize a second external transfer.
 export async function consumeConsent(db, consentId) {
-  await runStatement(db, PROVIDER_SQL.consumeConsent, [nowIso(), consentId]);
+  const result = await runStatement(db, PROVIDER_SQL.consumeConsent, [nowIso(), consentId]);
+  return Number(result?.meta?.changes ?? result?.changes ?? 0) > 0;
 }
