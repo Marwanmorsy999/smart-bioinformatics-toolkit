@@ -122,11 +122,11 @@ credit) and `galaxy.bytes = 268435456000` (actual quota from `GET /api/users/cur
 
 | Check | Exact result |
 |---|---|
-| JavaScript (`npm test`, web-platform) | **398 tests, 398 pass, 0 fail, 0 skipped, 0 todo** |
+| JavaScript (`npm test`, web-platform) | **403 tests, 403 pass, 0 fail, 0 skipped, 0 todo** |
 | Python (`python -m pytest python-engine/tests -q`) | **240 passed** |
 | `node --check` on changed JS | clean |
 | Independent reviewer | PASS WITH NOTES; B1 documentation contradiction fixed by full rewrite |
-| Independent tester | PASS on prior state; final verification run in progress |
+| Independent tester | PASS; 5 new offline regression tests for the live-driven fixes; no product bugs |
 
 ---
 
