@@ -10,7 +10,7 @@ import {
   jsonResponse,
   parseJson,
   SQL
-} from "../../ai/_lib.js";
+} from "../../../ai/_lib.js";
 import {
   deriveOwner,
   getRun,

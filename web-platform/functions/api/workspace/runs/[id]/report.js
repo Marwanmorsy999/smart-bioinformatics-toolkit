@@ -10,7 +10,7 @@ import {
   getRow,
   isPublicId,
   jsonResponse
-} from "../../ai/_lib.js";
+} from "../../../ai/_lib.js";
 import { deriveOwner, getRun, requireAnyMethod, requireDb } from "../../_lib.js";
 
 export async function onRequest(context) {
