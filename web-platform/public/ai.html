@@ -1,11 +1,11 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Ask for a sequence analysis, review the exact plan, approve it, and inspect validated results. Research use only.">
   <meta name="theme-color" content="#0f2740">
-  <title>AI Research Workspace · Smart Bioinformatics Toolkit</title>
+  <title>AI Research Workspace آ· Smart Bioinformatics Toolkit</title>
   <link rel="stylesheet" href="css/main.css">
   <link rel="stylesheet" href="css/components.css">
 </head>
@@ -21,15 +21,15 @@
       <a href="index.html#tools">Tools</a>
       <a class="active" href="ai.html" aria-current="location">AI workspace</a>
       <a href="index.html#about">About</a>
-    </nav>
-    <span id="backend-badge" class="local-badge">Backend status: checking…</span>
+          <a href="phylo.html">Phylogenetics</a>`n    </nav>
+    <span id="backend-badge" class="local-badge">Backend status: checkingâ€¦</span>
   </header>
 
   <main id="main-content" tabindex="-1">
     <section class="section-block ai-intro">
       <div class="section-heading">
         <div>
-          <p class="eyebrow section-kicker">Plan → approve → execute → validate → explain</p>
+          <p class="eyebrow section-kicker">Plan â†’ approve â†’ execute â†’ validate â†’ explain</p>
           <h1>AI Research Workspace</h1>
           <p class="section-lede">Two labelled routes: <strong>Browser (local)</strong> validates FASTA and computes statistics in this page with no terminal; <strong>Local agent</strong> uses the Worker to plan and a local Python agent to run heavy tools. FASTA is capped at <strong>10,000 characters</strong> on the local-agent route and at <strong>64 KiB (65,536 bytes)</strong> for browser-local analysis; the applicable limit is checked before submission. No backend means a blocked request, never a simulated result.</p>
         </div>
@@ -64,13 +64,13 @@
         </article>
       </div>
 
-      <div id="backend-status" class="backend-status" role="status" aria-live="polite">Checking backend availability…</div>
+      <div id="backend-status" class="backend-status" role="status" aria-live="polite">Checking backend availabilityâ€¦</div>
       <p id="backend-detail" class="backend-detail"></p>
 
       <section class="workspace provider-workspace" aria-labelledby="cloud-title">
         <div class="workspace-header">
           <div>
-            <p class="eyebrow">CLOUD SERVICES · TRANSPARENCY</p>
+            <p class="eyebrow">CLOUD SERVICES آ· TRANSPARENCY</p>
             <h2 id="cloud-title">Remote scientific services</h2>
             <p>Each service is shown with its real availability. Nothing is sent to a remote service without a separate, dataset-scoped consent. Disabled or unavailable tools are never offered as executable. This check runs only when you ask for it.</p>
           </div>
@@ -87,9 +87,9 @@
       <div class="ai-flow">
         <section class="workspace" aria-labelledby="intake-title">
           <div class="workspace-header">
-            <div><p class="eyebrow">STEP 1 · REQUEST</p><h2 id="intake-title">Describe your question</h2><p>Ask for FASTA validation/statistics, or describe a taxonomic question. The local-agent route accepts at most 10,000 characters of FASTA; browser-local analysis accepts at most 64 KiB (65,536 bytes). The applicable limit is checked before submission.</p></div>
+            <div><p class="eyebrow">STEP 1 آ· REQUEST</p><h2 id="intake-title">Describe your question</h2><p>Ask for FASTA validation/statistics, or describe a taxonomic question. The local-agent route accepts at most 10,000 characters of FASTA; browser-local analysis accepts at most 64 KiB (65,536 bytes). The applicable limit is checked before submission.</p></div>
             <span class="stage-tag"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.7 4.6L18 9l-4.3 1.4L12 15l-1.7-4.6L6 9l4.3-1.4L12 3z"/></svg> Plan</span>
-            <span id="execution-mode" class="badge-mode">Execution: checking…</span>
+            <span id="execution-mode" class="badge-mode">Execution: checkingâ€¦</span>
           </div>
 
           <form id="request-form" novalidate>
@@ -102,8 +102,8 @@
             <div class="field-group">
               <label for="execution-route">Execution route</label>
               <select id="execution-route" aria-describedby="route-help route-availability">
-                <option value="browser-local" selected>Browser (local) — validation &amp; statistics</option>
-                <option value="local-agent">Local agent — Worker plan + heavy tools</option>
+                <option value="browser-local" selected>Browser (local) â€” validation &amp; statistics</option>
+                <option value="local-agent">Local agent â€” Worker plan + heavy tools</option>
               </select>
               <small id="route-help">Browser (local) needs no terminal or backend. Local agent requires the agent on this machine; heavy tools are blocked if it is not observed.</small>
               <small id="route-availability" class="route-availability"></small>
@@ -111,8 +111,8 @@
 
             <div class="action-row" role="group" aria-label="Example questions">
               <span class="example-label">Example prompts:</span>
-              <button id="fasta-example" type="button" class="secondary-button small-button" data-question="Validate and profile my FASTA and calculate GC content">FASTA · validate &amp; profile (browser-local)</button>
-              <button id="phylo-example" type="button" class="secondary-button small-button" data-question="Build a phylogenetic tree from my FASTA and show me the alignment and report">Phylogenetics · build a tree</button>
+              <button id="fasta-example" type="button" class="secondary-button small-button" data-question="Validate and profile my FASTA and calculate GC content">FASTA آ· validate &amp; profile (browser-local)</button>
+              <button id="phylo-example" type="button" class="secondary-button small-button" data-question="Build a phylogenetic tree from my FASTA and show me the alignment and report">Phylogenetics آ· build a tree</button>
             </div>
 
             <div class="input-grid">
@@ -143,7 +143,7 @@
             </div>
 
             <div class="action-row">
-              <button id="build-plan" class="primary-button" type="submit"><span id="build-plan-label">Analyze locally</span> <span aria-hidden="true">→</span></button>
+              <button id="build-plan" class="primary-button" type="submit"><span id="build-plan-label">Analyze locally</span> <span aria-hidden="true">â†’</span></button>
             </div>
             <p id="input-error" class="input-error" role="alert" hidden></p>
           </form>
@@ -157,7 +157,7 @@
 
         <section id="plan-panel" class="workspace plan-card" aria-labelledby="plan-title" hidden>
           <div class="workspace-header">
-            <div><p class="eyebrow">STEP 2 · REVIEW</p><h3 id="plan-title">Proposed plan</h3><p id="plan-human"></p></div>
+            <div><p class="eyebrow">STEP 2 آ· REVIEW</p><h3 id="plan-title">Proposed plan</h3><p id="plan-human"></p></div>
             <span class="stage-tag"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 3v5c0 4.6-3 8.3-7 10-4-1.7-7-5.4-7-10V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg> Approve</span>
             <span id="plan-confidence" class="badge-mode"></span>
           </div>
@@ -176,7 +176,7 @@
 
         <section id="results-panel" class="workspace results-panel" aria-live="polite" aria-labelledby="results-title" hidden>
           <div class="results-header">
-            <div><p class="eyebrow">STEP 3 · RESULT</p><h3 id="results-title">Analysis output</h3></div>
+            <div><p class="eyebrow">STEP 3 آ· RESULT</p><h3 id="results-title">Analysis output</h3></div>
             <span class="stage-tag"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18a8 8 0 1 1 16 0"/><path d="M12 18l4-5"/></svg> Validate</span>
             <span id="result-mode" class="badge-mode"></span>
           </div>
@@ -267,9 +267,10 @@
       </div>
     </div>
     <p class="footer-disclaimer"><strong>Research-use disclaimer.</strong> This toolkit produces screening evidence for research and teaching. It is not a diagnostic device, does not establish organism identity or pathogenicity, and is not validated for clinical, forensic or regulatory decisions. All outputs require independent interpretation by a qualified user.</p>
-    <div class="footer-bottom"><span>Smart Bioinformatics Toolkit · AI workspace · Milestone 0.5.0</span><span>No external fonts, images or CDNs · Static, framework-free pages</span></div>
+    <div class="footer-bottom"><span>Smart Bioinformatics Toolkit آ· AI workspace آ· Milestone 0.5.0</span><span>No external fonts, images or CDNs آ· Static, framework-free pages</span></div>
   </footer>
   <script type="module" src="js/ai-workspace.js"></script>
   <script type="module" src="js/cloud-providers.js"></script>
 </body>
 </html>
+
