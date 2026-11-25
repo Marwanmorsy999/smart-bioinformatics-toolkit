@@ -45,7 +45,10 @@ test("project creation stores the derived owner, never the raw token", async () 
   assert.equal(response.status, 201);
   const body = await response.json();
   const owner = await ownerOf(TOKEN_A);
-  assert.equal(body.project.owner, owner);
+  // The derived owner digest is an offline verifier for guessed tokens: it is
+  // persisted and used in SQL, but never exposed in a public DTO.
+  assert.equal(Object.hasOwn(body.project, "owner"), false);
+  assert.equal(Object.hasOwn(body, "owner"), false);
   assert.equal(body.project.name, "16S isolate study");
   assert.equal(body.project.scientific_objective, "Resolve species-level identities");
   assert.equal(body.project.status, "active");
@@ -56,6 +59,8 @@ test("project creation stores the derived owner, never the raw token", async () 
   assert.equal(JSON.stringify(stored).includes(TOKEN_A), false);
   assert.equal(state.tables.audit_events.length, 1);
   assert.equal(state.tables.audit_events[0].actor, owner);
+  assert.equal(Object.hasOwn(state.tables.audit_events[0], "detail_json"), true);
+  assert.equal(state.tables.audit_events[0].detail_json.includes(TOKEN_A), false);
 });
 
 test("project creation rejects missing and wrong operator tokens", async () => {
@@ -154,6 +159,10 @@ test("project patch updates only the supplied metadata fields", async () => {
   assert.equal(body.project.description, "new description");
   assert.equal(body.project.scientific_objective, "old objective");
   assert.equal(body.project.name, "Mine");
+  // Mutation DTOs must match GET/list rather than defaulting counts to zero.
+  assert.equal(body.project.dataset_count, 1);
+  assert.equal(body.project.run_count, 1);
+  assert.equal(Object.hasOwn(body.project, "owner"), false);
   assert.equal(state.tables.projects[0].updated_at !== null, true);
   assert.equal(state.tables.audit_events[0].action, "workspace_project_updated");
 });
@@ -186,12 +195,37 @@ test("archive and activate flip status with owner-checked audit events", async (
   const { env, state } = newWorkspaceEnv(seedWithTwoOwners(ownerA, await ownerOf(TOKEN_B)));
   const archived = await handleArchiveProject(makeRequest("POST", `/api/workspace/projects/${PROJECT_A}/archive`), env, PROJECT_A, { idFactory: sequentialIds() });
   assert.equal(archived.status, 200);
-  assert.equal((await archived.json()).project.status, "archived");
+  const archivedBody = await archived.json();
+  assert.equal(archivedBody.project.status, "archived");
+  assert.equal(archivedBody.project.dataset_count, 1);
+  assert.equal(archivedBody.project.run_count, 1);
+  assert.equal(Object.hasOwn(archivedBody.project, "owner"), false);
   assert.equal(state.tables.projects[0].status, "archived");
   const activated = await handleActivateProject(makeRequest("POST", `/api/workspace/projects/${PROJECT_A}/activate`), env, PROJECT_A, { idFactory: sequentialIds() });
   assert.equal(activated.status, 200);
-  assert.equal((await activated.json()).project.status, "active");
+  const activatedBody = await activated.json();
+  assert.equal(activatedBody.project.status, "active");
+  assert.equal(activatedBody.project.dataset_count, 1);
+  assert.equal(activatedBody.project.run_count, 1);
   assert.deepEqual(state.tables.audit_events.map((event) => event.action), ["workspace_project_archived", "workspace_project_activated"]);
+});
+
+test("persisted audit detail_json never contains the raw operator token", async () => {
+  const ownerA = await ownerOf(TOKEN_A);
+  const { env, state } = newWorkspaceEnv(seedWithTwoOwners(ownerA, await ownerOf(TOKEN_B)));
+  await handleCreateProject(makeRequest("POST", "/api/workspace/projects", TOKEN_A, validPayload()), env, { idFactory: sequentialIds() });
+  await handlePatchProject(
+    makeRequest("PATCH", `/api/workspace/projects/${PROJECT_A}`, TOKEN_A, { description: "audited update" }),
+    env, PROJECT_A, { idFactory: sequentialIds() }
+  );
+  await handleArchiveProject(makeRequest("POST", `/api/workspace/projects/${PROJECT_A}/archive`), env, PROJECT_A, { idFactory: sequentialIds() });
+  assert.ok(state.tables.audit_events.length >= 3);
+  for (const event of state.tables.audit_events) {
+    assert.equal(typeof event.detail_json, "string");
+    assert.equal(event.detail_json.includes(TOKEN_A), false);
+    assert.equal(event.detail_json.includes(TOKEN_B), false);
+    assert.equal(event.actor.startsWith("owner_"), true);
+  }
 });
 
 test("cross-owner archive cannot change another owner's project", async () => {

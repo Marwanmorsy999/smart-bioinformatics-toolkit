@@ -30,7 +30,10 @@ test("every demo project, dataset and run object is labelled as sample", async (
     assert.equal(object.sample, true);
     assert.equal(object.execution_mode, "precomputed");
     assert.equal(typeof object.disclaimer, "string");
+    // No derived owner digest in public DTOs, including the labelled sample.
+    assert.equal(Object.hasOwn(object, "owner"), false);
   }
+  assert.equal(Object.hasOwn(body, "owner"), false);
 });
 
 test("demo never presents a run as newly executed", async () => {

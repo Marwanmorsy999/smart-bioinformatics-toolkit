@@ -226,6 +226,26 @@ test("succeeded requires complete provenance and writes an immutable record", as
   assert.match(state.tables.provenance_records[0].public_id, /^prov_/);
 });
 
+test("explicit provenance:null at succeeded keeps the run row in sync with its prov record", async () => {
+  const ownerA = await ownerOf(TOKEN_A);
+  const seed = await baseSeed(ownerA, await ownerOf(TOKEN_B), "validation");
+  seed.workspace_runs[0].provenance_json = JSON.stringify(COMPLETE_PROVENANCE);
+  const { env, state } = newWorkspaceEnv(seed);
+  const response = await handlePatchRun(
+    makeRequest("PATCH", `/api/workspace/runs/${RUN}`, TOKEN_A, { state: "succeeded", provenance: null }),
+    env, RUN, { idFactory: idsFactory() }
+  );
+  assert.equal(response.status, 200);
+  const stored = state.tables.workspace_runs[0];
+  assert.equal(stored.state, "succeeded");
+  assert.equal(typeof stored.provenance_json, "string");
+  assert.deepEqual(JSON.parse(stored.provenance_json), COMPLETE_PROVENANCE);
+  assert.equal(state.tables.provenance_records.length, 1);
+  assert.deepEqual(JSON.parse(state.tables.provenance_records[0].record_json), JSON.parse(stored.provenance_json));
+  const body = await response.json();
+  assert.deepEqual(body.run.provenance, COMPLETE_PROVENANCE);
+});
+
 test("PATCH rejects an invalid state and cross-owner writes", async () => {
   const ownerA = await ownerOf(TOKEN_A);
   const ownerB = await ownerOf(TOKEN_B);

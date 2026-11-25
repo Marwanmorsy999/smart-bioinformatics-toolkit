@@ -90,7 +90,16 @@ try {
     labels.map((label) => [label.textContent ?? "", label.nextElementSibling?.textContent ?? ""]));
   const detail = Object.fromEntries(pairs);
   assert.match(detail["Execution status"], /planned/);
-  assert.match(detail["Execution status"], /full_workflow_completed/);
+  // Parse the displayed stages object; a UI that claims success for a planned
+  // run (or hides the flag) must fail this check.
+  const stagesText = detail["Execution status"].split("stages: ")[1];
+  assert.ok(stagesText, "execution status must display the stages object");
+  const stages = JSON.parse(stagesText);
+  assert.equal(stages.state, "planned");
+  assert.equal(stages.execution_completed, false);
+  assert.equal(stages.artifact_retrieved, false);
+  assert.equal(stages.validated, false);
+  assert.equal(stages.full_workflow_completed, false);
   assert.equal(detail["Artifact retrieval status"], "not available");
   assert.equal(detail["Validation status"], "unvalidated");
   assert.notEqual(detail["Execution status"], detail["Artifact retrieval status"]);
