@@ -26,7 +26,7 @@ export async function onRequest(context) {
   const toolId = safeString(query.get("tool_id"), 300);
   const version = safeString(query.get("version"), 100);
   const historyId = safeString(query.get("history_id"), 200);
-  if (!toolId) return errorResponse("tool_id is required.", 400, context.request);
+  if (!toolId && !jobId) return errorResponse("tool_id is required.", 400, context.request);
   const base = safeString(context.env?.GALAXY_BASE_URL).trim();
   const key = safeString(context.env?.GALAXY_API_KEY).trim();
   if (!base || !key) return errorResponse("Galaxy is not configured.", 503, context.request);
@@ -53,4 +53,5 @@ export async function onRequest(context) {
   }
   return jsonResponse({ tool_id: toolId, version, history_id: historyId ? "[ID]" : null, routes: results }, 200, context.request);
 }
+
 
