@@ -1,4 +1,4 @@
-// GET /api/ai/workflows/phylo/tool?tool_id=<id>&version=<v>&history_id=<id>
+﻿// GET /api/ai/workflows/phylo/tool?tool_id=<id>&version=<v>&history_id=<id>
 // M7.3 schema discovery: probe the instance's supported tool-schema routes in
 // a controlled sequence, returning ONLY sanitized tool metadata and status
 // codes. The Galaxy key is used server-side as a request header and is never
@@ -30,6 +30,13 @@ export async function onRequest(context) {
   const base = safeString(context.env?.GALAXY_BASE_URL).trim();
   const key = safeString(context.env?.GALAXY_API_KEY).trim();
   if (!base || !key) return errorResponse("Galaxy is not configured.", 503, context.request);
+  if (jobId) {
+    try {
+      const response = await fetch(`${base}/api/jobs/${encodeURIComponent(jobId)}`, { headers: { "X-API-Key": key, Accept: "application/json" } });
+      const text = await response.text();
+      return jsonResponse({ job_id: jobId, status: response.status, body: sanitize(text) }, 200, context.request);
+    } catch (error) { return errorResponse(`job probe failed: ${error?.message ?? error}`, 502, context.request); }
+  }
   const results = [];
   for (const build of ROUTE_BUILDERS) {
     const path = build(toolId, version, historyId);
@@ -46,3 +53,4 @@ export async function onRequest(context) {
   }
   return jsonResponse({ tool_id: toolId, version, history_id: historyId ? "[ID]" : null, routes: results }, 200, context.request);
 }
+
