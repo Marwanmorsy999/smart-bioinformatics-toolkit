@@ -1,4 +1,4 @@
-// Standalone Cloudflare Worker entrypoint.
+﻿// Standalone Cloudflare Worker entrypoint.
 //
 // The control plane is a Worker, not a Pages project. The existing
 // functions/api/** modules keep their Pages-Functions-shaped `onRequest`
@@ -10,6 +10,9 @@ import { onRequest as onAiRequests } from "./functions/api/ai/requests/index.js"
 import { onRequest as onAiBackend } from "./functions/api/ai/backend.js";
 import { onRequest as onAiJobs } from "./functions/api/ai/jobs/index.js";
 import { onRequest as onAiJobResult } from "./functions/api/ai/jobs/[id]/result.js";
+import { onRequest as onPhyloRun } from "./functions/api/ai/workflows/phylo/run.js";
+import { onRequest as onPhyloStatus } from "./functions/api/ai/workflows/phylo/status.js";
+import { onRequest as onAiJobReport } from "./functions/api/ai/jobs/[id]/report.js";
 import { onRequest as onAiPlan } from "./functions/api/ai/plans/[id]/index.js";
 import { onRequest as onAiPlanApprove } from "./functions/api/ai/plans/[id]/approve.js";
 import { onRequest as onAiRun } from "./functions/api/ai/runs/[id]/index.js";
@@ -53,6 +56,9 @@ export const handlers = {
   aiBackend: onAiBackend,
   aiJobs: onAiJobs,
   aiJobResult: onAiJobResult,
+  phyloRun: onPhyloRun,
+  phyloStatus: onPhyloStatus,
+  aiJobReport: onAiJobReport,
   aiPlan: onAiPlan,
   aiPlanApprove: onAiPlanApprove,
   aiRun: onAiRun,
@@ -122,6 +128,9 @@ const ROUTES = [
   { key: "artifactDownloadUrl", re: /^\/api\/artifacts\/([^/]+)\/download-url\/?$/, names: ["id"] },
   { key: "providers", re: /^\/api\/providers\/?$/, names: [] },
   { key: "providerDetail", re: /^\/api\/providers\/([^/]+)\/?$/, names: ["id"] },
+  { key: "aiJobReport", re: /^\\/api\\/ai\\/jobs\\/([^/]+)\\/report\\/?$/, names: ["id"] },
+  { key: "phyloStatus", re: /^\\/api\\/ai\\/workflows\\/phylo\\/status\\/?$/, names: [] },
+  { key: "phyloRun", re: /^\\/api\\/ai\\/workflows\\/phylo\\/run\\/?$/, names: [] },
   { key: "aiJobResult", re: /^\/api\/ai\/jobs\/([^/]+)\/result\/?$/, names: ["id"] },
   { key: "aiPlanApprove", re: /^\/api\/ai\/plans\/([^/]+)\/approve\/?$/, names: ["id"] },
   { key: "aiRunProvenance", re: /^\/api\/ai\/runs\/([^/]+)\/provenance\/?$/, names: ["id"] },
@@ -242,3 +251,4 @@ export function createFetch(handlerMap = handlers) {
 export const fetch = createFetch();
 
 export default { fetch };
+
