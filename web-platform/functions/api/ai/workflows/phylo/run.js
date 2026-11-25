@@ -24,6 +24,7 @@ import {
 import { validateFasta } from "../../../blast/_lib.js";
 import { createAdapter } from "../../../../../providers/galaxy/index.js";
 import { findPhyloTools } from "../../../../../providers/galaxy/galaxy_phylo.js";
+import { fetchToolSchema, buildSchemaPayload } from "../../../../../providers/galaxy/galaxy_schema.js";
 import { validateAlignment, validateTree } from "./validators.js";
 
 const STEP_IDS = Object.freeze([
@@ -140,7 +141,10 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
       await sleep(1500);
     }
     // Step 2 â€” MAFFT multiple sequence alignment.
-    const mafftInput = { input: { src: "pasted", paste_content: fasta, name: filename, ext: "fasta" } };
+    const mafftSchema = await fetchToolSchema(env, tools.mafft.id, tools.mafft.version);
+    const mafftPayload = buildSchemaPayload(mafftSchema, readyId);
+    if (!mafftPayload.valid) throw new Error(`MAFFT schema failure: ${mafftPayload.errors.join(", ")}`);
+    const mafftInput = mafftPayload.inputs;
     const mafft = await adapter.submitJob({ operation: "submit_job", tool_id: tools.mafft.id, inputs: mafftInput }, ctx);
     if (mafft.error) throw new Error(`MAFFT submission failed: ${mafft.error.message ?? mafft.error.code}`);
     const mafftState = await poll(adapter, mafft.provider_job_id, ctx);
@@ -153,7 +157,11 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
     // Step 3 â€” IQ-TREE phylogenetic inference from the alignment dataset.
     const alignmentArtifacts = await adapter.getArtifacts({ history_id: historyId }, ctx);
     const alignmentDataset = (alignmentArtifacts.artifacts ?? []).find((a) => /fasta|aln|msa/i.test(`${a.name}.${a.type}`)) ?? null;
-    const treeInput = { input: { src: "pasted", paste_content: alignmentText ?? fasta, name: "alignment.fasta", ext: "fasta" } };
+    if (!alignmentDataset) throw new Error("no retrieved alignment dataset available for tree inference");
+    const treeSchema = await fetchToolSchema(env, tools.iqtree.id, tools.iqtree.version);
+    const treePayload = buildSchemaPayload(treeSchema, alignmentDataset.id);
+    if (!treePayload.valid) throw new Error(`tree schema failure: ${treePayload.errors.join(", ")}`);
+    const treeInput = treePayload.inputs;
     const iqtree = await adapter.submitJob({ operation: "submit_job", tool_id: tools.iqtree.id, inputs: treeInput }, ctx);
     if (iqtree.error) throw new Error(`IQ-TREE submission failed: ${iqtree.error.message ?? iqtree.error.code}`);
     const iqState = await poll(adapter, iqtree.provider_job_id, ctx);
@@ -206,6 +214,7 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
     tree_newick: treeText, alignment_text: alignmentText
   }, failed ? 502 : 200, request);
 }
+
 
 
 
