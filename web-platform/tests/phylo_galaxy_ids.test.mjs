@@ -1,3 +1,9 @@
+﻿// M7.3.2 closure audit: this fixture is ILLUSTRATIVE and was authored from
+// the M7.3.1 report's claims. The original sanitized Galaxy job probe (cached
+// outside the repo) had the HDA ids redacted as [ID:32] and did NOT establish
+// that the input and output HDAs are the same. These fixtures therefore test
+// normalization behaviour only; they are NOT evidence of the real id mapping.
+
 import test from "node:test";
 import assert from "node:assert/strict";
 import { normalizeOutputAssociation, parseJobOutputs, parseHistoryContents, resolveJobOutput, classifyJobState } from "../providers/galaxy/galaxy_ids.js";
@@ -46,3 +52,4 @@ test("polling state machine: ok succeeds, running continues, timeout is genuine"
   // A completed job is never reported as timeout, even after the deadline.
   assert.equal(classifyJobState("ok", { timedOut: true }), "succeeded");
 });
+
