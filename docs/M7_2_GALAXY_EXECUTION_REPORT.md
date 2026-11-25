@@ -81,7 +81,7 @@ No provider job progress, output artifact or report download was observable beca
 
 | Check | Exact result |
 |---|---|
-| JavaScript suite (`npm test`, web-platform) | **314 tests, 314 pass, 0 fail, 0 skipped, 0 todo** (M7.1 baseline 299) |
+| JavaScript suite (`npm test`, web-platform) | **320 tests, 320 pass, 0 fail, 0 skipped, 0 todo** (M7.1 baseline 299) |
 | Python suite (`python -m pytest python-engine/tests -q`) | **240 passed** |
 | New M7.2 offline files | `m7_2_pipeline_offline.test.mjs` (1 full-chain test) + `m7_2_failures_offline.test.mjs` (14 failure/usage tests) = **15/15 pass** |
 | Real Playwright staging run | page loaded, button worked, 3 provider rows rendered, 0 external hosts, 0 page errors, 1 expected anonymous-ledger 401; screenshot captured |
@@ -90,7 +90,7 @@ All M7.2 tests use labelled MOCK fixtures and injected D1/fetch/R2. They are exp
 
 Two real defects found by the offline work were fixed before sign-off:
 1. `web-platform/functions/api/providers/jobs/index.js` now preserves the provider HTTP status/code on a failed submission, so expired credentials return **401** and account-activation failure returns **403** instead of a misleading Worker 502. Regression assertions tightened to the exact status and code.
-2. `web-platform/functions/api/ai/report.js` now renders `job.public_id` (e.g. `job_…`) instead of the internal numeric row id.
+2. `web-platform/functions/api/ai/report.js` now renders `job.public_id` (e.g. `job_…`) instead of the internal numeric row id. Both fixes have regression assertions (exact 401/403 status and code; report title/header contain the public id). Reviewer notes about stale "NOT patched" documentation were corrected; the `retryable` default for transient 5xx errors is preserved.
 
 ---
 

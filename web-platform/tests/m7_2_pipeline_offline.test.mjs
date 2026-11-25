@@ -478,10 +478,9 @@ test("OFFLINE/MOCK full chain: request/plan -> validation -> approval+consent ->
   assert.equal(reportRes.status, 200);
   const html = await reportRes.text();
   assert.match(html, /Execution mode: mock/);
-  // NOTE (reported separately): report.js renders `job.id` (the integer D1 row
-  // id) rather than `public_id`, so the public job id is absent from the HTML.
-  // This OFFLINE check asserts the plan id, which is rendered correctly.
+  // OFFLINE/MOCK regression: both plan and public job ids are rendered.
   assert.equal(html.includes(created.plan_id), true);
+  assert.equal(html.includes(aiJobId), true, "OFFLINE/MOCK: report must show the public job id");
   assert.match(html, /Data locality/);
   assert.match(html, /No external transmissions/);
   assert.match(html, /OFFLINE\/MOCK GC statistic/);

@@ -167,7 +167,9 @@ export async function onRequest(context) {
       // or an unactivated account (403) is not misreported as a Worker 502.
       failure.status = Number(result.error?.status ?? result.error?.response?.status ?? 0) || 0;
       failure.code = result.error?.code;
-      failure.retryable = Boolean(result.error?.retryable);
+      // Preserve normalizeProviderError's default (e.g. retryable 5xx) when the
+      // adapter did not explicitly report the flag.
+      if (typeof result.error?.retryable === "boolean") failure.retryable = result.error.retryable;
       throw failure;
     }
 

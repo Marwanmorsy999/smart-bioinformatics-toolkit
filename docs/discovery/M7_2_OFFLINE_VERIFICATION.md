@@ -35,9 +35,10 @@ canned data — not that science happened.
 
 Every fixture carries an explicit `__fixture` string beginning with `MOCK`, `is_mock: true`
 and `execution_mode: "mock"`. Every test name begins with `OFFLINE/MOCK`. The Galaxy base URLs
-used by the tests are `.invalid` hosts; the injected fetch is the only "server". Production
-code, `wrangler.toml`, existing tests and existing docs were not modified, and no commit was
-made.
+used by the tests are `.invalid` hosts; the injected fetch is the only "server". No `wrangler.toml`
+change, no existing test weakening and no live provider call was made. This work was committed
+together with two small production fixes described in §"Findings" below and in
+`docs/M7_2_GALAXY_EXECUTION_REPORT.md` §7.
 
 ## How to run
 
@@ -114,37 +115,26 @@ For every submit path the test asserts that reservations are either consumed exa
 fully released: `reservations === {}`, `reserved === 0`, and `used.jobs` is 1 only for a job
 that was actually submitted.
 
-## Findings exposed by the offline tests (NOT patched)
+## Findings exposed by the offline tests — FIXED
 
-Per the task constraint, no production code was changed. These are observations to review.
+Both defects below were found by these MOCK tests and corrected in the same milestone. The
+offline tests were tightened to assert the corrected behaviour; see
+`docs/M7_2_GALAXY_EXECUTION_REPORT.md` §7.
 
-### 1. Provider 401/403 status is collapsed to HTTP 502 by the governed submit handler
+### 1. Provider 401/403 status was collapsed to HTTP 502 — FIXED
 
-`web-platform/functions/api/providers/jobs/index.js:163-166` converts an adapter failure into
-`new Error(message)` (no `status`), then
-`web-platform/functions/api/providers/_lib.js:121-126` calls `normalizeProviderError`, which
-sees status 0 and maps it to 502. The adapter itself retains the correct 401/403 and code.
+The submit handler previously threw an error without a status, which `normalizeProviderError`
+mapped to 502. `web-platform/functions/api/providers/jobs/index.js` now preserves the provider
+status, code and retryability from the normalized adapter error. Regression assertions in
+`m7_2_failures_offline.test.mjs` require HTTP **401** with code `expired_api_key` and HTTP
+**403** with code `action_requires_account_activation`, with no persisted job and all
+reservations released.
 
-Minimal repro (fully offline): configure Galaxy with a MOCK fetch that returns HTTP 401
-`{"error":"expired_api_key"}` for `POST /api/tools`, then `POST /api/providers/jobs` with a
-valid MOCK consent. The response is 502 with `X-Error-Detail.code === "http_0"` and
-`error === "galaxy returned HTTP 401"`, rather than 401 with the provider code. No job is
-persisted and reservations are released, so the safety behaviour is intact; only the outward
-status/code is lost. The same applies to the 403 activation failure.
+### 2. HTML report rendered the internal numeric row id — FIXED
 
-### 2. HTML report renders the internal numeric row id instead of the public job id
-
-`web-platform/functions/api/ai/report.js:89` and `:103` interpolate `job.id`. The result
-handler passes the raw job row at
-`web-platform/functions/api/ai/jobs/[id]/result.js:139-150`, and the `jobs` table has both an
-integer primary key `id` and a `public_id` (`web-platform/migrations/0002_ai_platform.sql:60-62`).
-The rendered title/label therefore contain the internal numeric id (for example `1`), not
-`job_...`.
-
-Minimal repro (fully offline): run the full MOCK pipeline test's submit-result step, then
-`GET /api/ai/runs/:id/report`; the HTML title reads `Analysis report - <numeric id>` and the
-header reads `Job <numeric id>`, never the public job id. Plan id, provenance and all other
-report content render correctly.
+`web-platform/functions/api/ai/report.js` now uses `job.public_id ?? job.id` in both the title
+and the header. The result handler passes the raw row containing `public_id`; the public id
+`job_…` is rendered instead of the numeric primary key.
 
 ## Limitations
 
