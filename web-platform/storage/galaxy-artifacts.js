@@ -363,8 +363,11 @@ export function createGalaxyArtifactStore(db, env = {}, deps = {}) {
 
   // The adapter exposes downloadArtifact as a text-returning method, so the
   // provider body is bounded by our hard cap before it is returned to the
-  // caller as a chunked stream. If the adapter later exposes a raw stream, this
-  // is the single place to switch to true end-to-end streaming.
+  // caller as a chunked stream. It reads the verified
+  // GET /api/datasets/:id/get_content_as_text route and rejects truncated:true;
+  // this store never calls a content endpoint directly. The 1 MiB cap and the
+  // SHA-256 check below remain authoritative. If the adapter later exposes a
+  // raw stream, this is the single place to switch to end-to-end streaming.
   async function downloadDataset(row, { verifyJob = true } = {}) {
     const live = await inspectDataset(row, { verifyJob });
     const reported = Number(live.size ?? row.bytes ?? 0);

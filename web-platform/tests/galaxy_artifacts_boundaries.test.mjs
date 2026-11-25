@@ -107,9 +107,9 @@ function mockGalaxy(calls, {
   return async (input, init = {}) => {
     const url = String(input);
     calls.push({ url, method: init.method ?? "GET" });
-    if (url.endsWith("/content")) {
+    if (url.endsWith("/get_content_as_text")) {
       if (status !== 200) return json(errorBody, status);
-      return new Response(CONTENT);
+      return json({ item_data: CONTENT, truncated: false });
     }
     if (url.includes("/api/jobs/")) {
       return json({ id: JOB, state: "ok", history_id: HISTORY, ...job });
@@ -250,7 +250,7 @@ test("OFFLINE/MOCK SHA-256 verification of streamed Galaxy output bytes", async 
   const ok = await makeStore(db, mockGalaxy(calls)).downloadDataset(registered());
   assert.equal(ok.content, CONTENT);
   assert.equal(ok.sha256, sha256(CONTENT));
-  assert.equal(calls.filter((entry) => entry.url.endsWith("/content")).length, 1);
+  assert.equal(calls.filter((entry) => entry.url.endsWith("/get_content_as_text")).length, 1);
 
   const { db: badDb } = createGalaxyFakeD1({
     artifacts: [registered({ sha256: "0".repeat(64) })]

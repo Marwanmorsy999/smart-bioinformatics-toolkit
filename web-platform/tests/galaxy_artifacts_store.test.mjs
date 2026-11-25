@@ -92,8 +92,8 @@ function mockFetch(overrides = {}) {
     const url = String(input);
     const method = init.method ?? "GET";
     calls.push({ url, method, body: init.body, headers: init.headers });
-    if (overrides.dataset !== undefined && url.includes("/api/datasets/") && !url.endsWith("/content")) return overrides.dataset;
-    if (overrides.content !== undefined && url.includes("/api/datasets/") && url.endsWith("/content")) return overrides.content;
+    if (overrides.dataset !== undefined && url.includes("/api/datasets/") && !url.endsWith("/get_content_as_text")) return overrides.dataset;
+    if (overrides.content !== undefined && url.includes("/api/datasets/") && url.endsWith("/get_content_as_text")) return overrides.content;
     if (overrides.tool !== undefined && method === "POST" && (url.endsWith("/api/tools") || url.endsWith("/api/tools/fetch"))) return overrides.tool;
     if (overrides.job !== undefined && url.includes("/api/jobs/")) return overrides.job;
     if (method === "POST" && url.endsWith("/api/histories")) return json(datasets.history);
@@ -104,7 +104,7 @@ function mockFetch(overrides = {}) {
       return json(body.tool_id === "upload1" ? datasets.upload_job : datasets.tool_job);
     }
     if (url.includes("/api/histories/") && url.endsWith("/contents")) return json(datasets.contents);
-    if (url.includes("/api/datasets/") && url.endsWith("/content")) return new Response(CONTENT);
+    if (url.includes("/api/datasets/") && url.endsWith("/get_content_as_text")) return json({ item_data: CONTENT, truncated: false });
     if (url.includes("/api/datasets/")) return json(datasets.input_dataset);
     if (url.includes("/api/jobs/")) return json(datasets.job);
     return json(errors.not_found_404, 404);
@@ -216,7 +216,9 @@ test("uploadDataset uses the adapter upload path, records ids and stores no byte
 
   assert.equal(row.galaxy_dataset_id, datasets.upload_job.outputs[0].id);
   assert.equal(row.history_id, datasets.history_id);
-  // /api/tools/fetch has no stable job id; the adapter generates a local id.
+  // This `galaxy_` id regex intentionally replaces the old exact-value
+  // assertion: /api/tools/fetch has no stable provider job id, so only the
+  // adapter's generated local-id shape is assertable.
   assert.match(row.job_id, /^galaxy_[0-9a-f]+$/);
   assert.equal(row.direction, "input");
   assert.equal(row.project_id, "proj_0123456789abcdef");

@@ -20,7 +20,7 @@
 //   POST /api/jobs/:id/cancel         -> cancellation
 //   GET  /api/histories/:id/contents  -> result datasets
 //   GET  /api/datasets/:id            -> one dataset
-//   GET  /api/datasets/:id/content    -> dataset bytes
+//   GET  /api/datasets/:id/get_content_as_text -> dataset text ({item_data, truncated})
 //
 // Known limitations:
 //  * /api/users/current/usage reports disk usage/quota but does NOT expose a
@@ -41,6 +41,12 @@
 //    known to return 400 "No data was entered in the upload form"; POST
 //    /api/upload does not exist (404). `upload1` is Galaxy's generic platform
 //    upload primitive, never a discovered/advertised scientific capability.
+//  * Dataset text is read from GET /api/datasets/:id/get_content_as_text, verified
+//    live on 2026-11-25: it returns JSON {item_data, truncated, item_url}. The
+//    older GET /api/datasets/:id/content has no route on usegalaxy.eu (404).
+//    truncated:true is rejected as a typed error instead of returning partial
+//    bytes. A newly uploaded dataset stays queued/running for tens of seconds;
+//    content must only be fetched after it reaches ok/success.
 //  * A previously observed HTTP 403 "Action requires account activation" is
 //    propagated as a normalized failure; no successful upload or job is ever
 //    fabricated. Account activation is not confirmed by this change.
@@ -237,6 +243,20 @@ export function createAdapter(env = {}, deps = {}) {
       && typeof value.type === "string" && typeof value.slice === "function";
   }
 
+  // Only a real dot-separated suffix is an extension. An extension-less name
+  // such as `README` must fall back to `txt`, never become its own extension.
+  function extFromFilename(filename) {
+    const name = String(filename ?? "");
+    const dot = name.lastIndexOf(".");
+    return (dot > 0 ? name.slice(dot + 1) : "") || "txt";
+  }
+
+  function invalidContent() {
+    return Object.assign(new Error("galaxy upload requires string or Blob content"), {
+      code: "invalid_upload_content", status: 400, retryable: false
+    });
+  }
+
   // Convert a caller input descriptor into one DataElementsTarget element.
   // Strings (and {content, ...}) become `pasted` elements; an explicit Blob or
   // File becomes a `files` element plus a multipart `files` part.
@@ -244,18 +264,21 @@ export function createAdapter(env = {}, deps = {}) {
     const fallbackName = safeString(name, 200) || "input.txt";
     if (typeof value === "string") {
       const filename = fallbackName;
-      const ext = filename.split(".").pop() || "txt";
+      const ext = extFromFilename(filename);
       return { element: { src: "pasted", paste_content: value, name: filename, ext }, part: null };
     }
     const descriptor = asObject(value);
     const filename = safeString(descriptor.filename ?? descriptor.name, 200) || fallbackName;
     const ext = safeString(descriptor.extension ?? descriptor.ext, 40).replace(/^\./, "")
-      || filename.split(".").pop() || "txt";
-    const blob = [descriptor.content, descriptor.file_content, descriptor.file, descriptor.blob]
-      .find((candidate) => isBlobLike(candidate));
+      || extFromFilename(filename);
+    const candidates = [descriptor.content, descriptor.file_content, descriptor.file, descriptor.blob];
+    const blob = candidates.find((candidate) => isBlobLike(candidate));
     if (blob) return { element: { src: "files", name: filename, ext }, part: blob };
-    const content = typeof descriptor.content === "string" ? descriptor.content
-      : typeof descriptor.file_content === "string" ? descriptor.file_content : "";
+    // Never upload an empty placeholder when the caller supplied a non-text,
+    // non-blob value: fail with a typed validation error at the boundary.
+    const content = [descriptor.content, descriptor.file_content]
+      .find((candidate) => typeof candidate === "string");
+    if (content === undefined) throw invalidContent();
     return { element: { src: "pasted", paste_content: content, name: filename, ext }, part: null };
   }
 
@@ -614,23 +637,35 @@ export function createAdapter(env = {}, deps = {}) {
       }
     },
 
-    // Metadata-only dataset byte fetch. Kept off the advertised operation list
+    // Metadata-only dataset text fetch. Kept off the advertised operation list
     // because Workers must first pass the platform's artifact/download gate.
+    // GET /api/datasets/:id/content has no route on usegalaxy.eu (404); the
+    // verified route is /get_content_as_text -> {item_data, truncated, item_url}.
     async downloadArtifact(request = {}, ctx = {}) {
       const id = safeString(request?.artifact_id ?? request?.dataset_id, 200);
       if (!id) return failure(PROVIDER, Object.assign(new Error("artifact_id_required"), { code: "validation_error", status: 400, retryable: false }));
       try {
-        const { body } = await requestJson(PROVIDER, fetcher(ctx), joinUrl(baseUrl, `/api/datasets/${encodeURIComponent(id)}/content`), {
+        const { body } = await requestJson(PROVIDER, fetcher(ctx), joinUrl(baseUrl, `/api/datasets/${encodeURIComponent(id)}/get_content_as_text`), {
           method: "GET",
-          headers: { "X-API-Key": apiKey }
+          headers: { "X-API-Key": apiKey, Accept: "application/json" }
         }, {
           timeoutMs: Number(ctx?.timeoutMs) > 0 ? Number(ctx.timeoutMs) : defaultTimeout,
           signal: ctx?.signal ?? null,
-          parse: "text",
           attempts: 3,
           sleep: ctx?.sleep ?? null
         });
-        return { provider: PROVIDER, ok: true, artifact_id: id, content: body };
+        const payload = asObject(body);
+        if (payload.truncated === true) {
+          throw Object.assign(new Error("galaxy dataset content was truncated"), {
+            code: "content_truncated", status: 413, retryable: false
+          });
+        }
+        if (typeof payload.item_data !== "string") {
+          throw Object.assign(new Error("galaxy dataset content was unavailable"), {
+            code: "content_unavailable", status: 502, retryable: false
+          });
+        }
+        return { provider: PROVIDER, ok: true, artifact_id: id, content: payload.item_data };
       } catch (error) {
         return failure(PROVIDER, error, makeNow(ctx));
       }

@@ -197,3 +197,67 @@ test("OFFLINE/MOCK: uploaded dataset is discoverable by exact filename in the su
   assert.equal(found.id, "ds_created");
   assert.equal(found.history_id, HISTORY_ID);
 });
+
+test("OFFLINE/MOCK: downloadArtifact returns item_data from the verified text route", async () => {
+  const calls = [];
+  const fetchImpl = async (input, init = {}) => {
+    calls.push({ url: String(input), method: init.method ?? "GET" });
+    return json({ item_data: PASTED, truncated: false, item_url: "mock://item" });
+  };
+  const adapter = createAdapter(env());
+  const result = await adapter.downloadArtifact(
+    { dataset_id: "ds_created" }, { fetch: fetchImpl, sleep: noSleep() }
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.artifact_id, "ds_created");
+  assert.equal(result.content, PASTED);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "https://galaxy.example.invalid/api/datasets/ds_created/get_content_as_text");
+  assert.equal(calls.some((call) => call.url.endsWith("/content")), false, "the old /content route must not be used");
+  assert.equal(JSON.stringify(result).includes(TEST_KEY), false);
+});
+
+test("OFFLINE/MOCK: truncated:true is a typed failure and partial text is never returned", async () => {
+  const calls = [];
+  const fetchImpl = async (input) => {
+    calls.push(String(input));
+    return json({ item_data: PASTED.slice(0, 4), truncated: true, item_url: "mock://item" });
+  };
+  const adapter = createAdapter(env());
+  const result = await adapter.downloadArtifact(
+    { artifact_id: "ds_created" }, { fetch: fetchImpl, sleep: noSleep() }
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.provider, "galaxy");
+  assert.equal(result.error.code, "content_truncated");
+  assert.equal(result.error.status, 413);
+  assert.equal(result.error.retryable, false);
+  assert.equal(result.error.message, "galaxy dataset content was truncated");
+  assert.equal(result.content, undefined, "partial content must never be exposed");
+  assert.equal(calls.length, 1, "a truncated response must not be retried");
+  assert.equal(JSON.stringify(result).includes(TEST_KEY), false);
+});
+
+test("OFFLINE/MOCK: invalid upload content fails typed; extension-less names fall back to txt", async () => {
+  const { calls, fetchImpl, adapter } = harness();
+  const bad = await submit(adapter, fetchImpl, {
+    inputs: { file1: { src: "upload", content: 42, filename: "README" } }
+  });
+  assert.equal(bad.status, "failed");
+  assert.equal(bad.error.code, "invalid_upload_content");
+  assert.equal(bad.error.status, 400);
+  assert.equal(bad.error.retryable, false);
+  assert.deepEqual(calls, [], "invalid content must be rejected before any network call");
+
+  const good = await submit(adapter, fetchImpl, {
+    inputs: { file1: { src: "upload", content: PASTED, filename: "README" } }
+  });
+  assert.equal(good.status, "queued");
+  const form = formOf(fetchCalls(calls)[0]);
+  assert.deepEqual(JSON.parse(form.get("targets")), [{
+    destination: { type: "hdas" },
+    elements: [{ src: "pasted", paste_content: PASTED, name: "README", ext: "txt" }]
+  }]);
+});

@@ -45,7 +45,7 @@ function discoveryFetch(calls, overrides = {}) {
     if (url.endsWith("/api/upload")) return json(jobs.upload);
     if (url.includes("/api/jobs/")) return json(jobs.running_job);
     if (url.includes("/api/histories/") && url.endsWith("/contents")) return json(jobs.contents);
-    if (url.includes("/api/datasets/") && url.endsWith("/content")) return new Response("MOCK BYTES");
+    if (url.includes("/api/datasets/") && url.endsWith("/get_content_as_text")) return json({ item_data: "MOCK BYTES", truncated: false, item_url: "mock://item" });
     if (url.includes("/api/datasets/")) return json(jobs.dataset);
     if (overrides.onRequest) return overrides.onRequest(url, method, init);
     return json({}, 404);
@@ -156,6 +156,8 @@ test("Galaxy job status, artifacts, cancel and download use documented endpoints
   const download = await adapter.downloadArtifact({ artifact_id: jobs.dataset.id }, { fetch: fetchImpl, sleep: noSleep() });
   assert.equal(download.ok, true);
   assert.equal(download.content, "MOCK BYTES");
+  assert.ok(calls.some((call) => call.url.endsWith("/get_content_as_text")), "content must use the verified text route");
+  assert.equal(calls.some((call) => call.url.endsWith("/content")), false, "the old /content route has no endpoint");
 });
 
 test("Galaxy retries 503 with bounded exponential backoff and normalizes errors", async () => {

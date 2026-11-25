@@ -3,7 +3,7 @@
 **Date:** 2026-11-25
 **Branch:** `phase-1-robustness-safety`
 **Foundation commits:** `dcbb7cf`, `c81a1a5`, `514c274`
-**Verdict:** **BLOCKED — NOT COMPLETE.** No genuine Galaxy workflow was executed. Every Phase 1 prerequisite is missing, so Phases 2–5 could not legitimately run. Only independent offline work and a real browser verification of the honest "providers disabled" state were performed.
+**Verdict:** **BLOCKED for the website workflow — NOT COMPLETE.** A genuine two-test Galaxy upload verification has now passed at API level (§7c), proving activation and the corrected upload contract. The rotated key is still not installed as a secret and `GALAXY_ENABLED=false`, so no provider is live in the Worker and no end-to-end website workflow or scientific job has run.
 
 > Per the mission, a blocked integration is reported as blocked. There are **no Galaxy job IDs, no
 > input/output hashes from an M7.2 execution, and no execution times** in this report, because no job
@@ -16,7 +16,7 @@
 | Prerequisite | Command / source | Result |
 |---|---|---|
 | Replacement Galaxy key installed | `npx wrangler secret list --env staging` | **MISSING.** Only `AI_AGENT_TOKEN` and `MOCK_NCBI` were listed. No `GALAXY_API_KEY` and no `GALAXY_BASE_URL`. |
-| Galaxy activation complete | `GET https://usegalaxy.eu/api/configuration` (public, no key) | `200`, **`user_activation_on: true`**. The previously authenticated account still returned `403 Action requires account activation` before this milestone; no activated-account proof was supplied, and no bypass was attempted. |
+| Galaxy activation complete | `GET https://usegalaxy.eu/api/configuration` (public, no key); later live uploads (§7c) | `200`, **`user_activation_on: true`**. The old `403 Action requires account activation` is no longer observed. Two real uploads into dedicated histories succeeded (§7c), which confirms the account can upload data. No bypass was attempted. |
 | R2 enabled | `npx wrangler r2 bucket list` | **FAILED**, code `10042`: "Please enable R2 through the Cloudflare Dashboard." |
 | Private staging artifact bucket | same | **MISSING** (R2 not enabled, so no bucket can exist). |
 | Staging signing secret | `npx wrangler secret list --env staging` | **MISSING** (`ARTIFACT_SIGNING_KEY` absent). |
@@ -81,7 +81,7 @@ No provider job progress, output artifact or report download was observable beca
 
 | Check | Exact result |
 |---|---|
-| JavaScript suite (`npm test`, web-platform) | **383 tests, 383 pass, 0 fail, 0 skipped, 0 todo** (M7.1 baseline 299) |
+| JavaScript suite (`npm test`, web-platform) | **396 tests, 396 pass, 0 fail, 0 skipped, 0 todo** (M7.1 baseline 299) |
 | Python suite (`python -m pytest python-engine/tests -q`) | **240 passed** |
 | New M7.2 offline files | `m7_2_pipeline_offline.test.mjs` (1 full-chain test) + `m7_2_failures_offline.test.mjs` (14 failure/usage tests) + `m7_2_verify_jobs.test.mjs`/`m7_2_verify_report.test.mjs` (6 independent regression tests) = **21/21 pass** |
 | R2-free Galaxy artifact tests | `galaxy_artifacts_store` (13), `galaxy_artifacts_handlers` (13), `galaxy_artifacts_failures` (16), `galaxy_artifacts_boundaries` (7), `m7_2_galaxy_verify_offline` (8) = **57/57 pass**, all OFFLINE/MOCK |
@@ -148,11 +148,47 @@ time from a successful live run exists in this report.
 
 ---
 
+## 7c. Live upload-contract verification (2026-11-25) — BOTH TESTS PASSED
+
+Using the previously supplied (therefore compromised) key **transiently via environment variables
+only** — never written to a file, secret store, git or browser — the opt-in smoke script was run
+once. This did **not** install a secret or enable any provider.
+
+| Step | Test A — pasted text (`src:"pasted"`) | Test B — real FASTA (`src:"files"` + `files` part) |
+|---|---|---|
+| `POST /api/histories` | 200 | 200 |
+| `POST /api/tools/fetch` | **200** | **200** |
+| History id | `11ac94870d0bb33a421fe648fe235638` | `11ac94870d0bb33aee565b9befc94a7d` |
+| Dataset id (exact filename match) | `40160950115d555e4a07f3ebf2c9631f` | `40160950115d555e37e69b35a2a071e4` |
+| Final state after bounded polling | `ok` | `ok` |
+| History membership | OK | OK |
+| Content endpoint | `GET /api/datasets/{id}/get_content_as_text` → `{item_data, truncated:false}` | same |
+| Input SHA-256 | `e7d09d04a66bb582cc87f76bd8671bef87b7cbcc7df60f7a2dbe71fe5478867c` | `9614b1b4e5192b84786c4e907f1426b66c9911c5c9d3baa687b23c40bc3fe950` |
+| Retrieved-content SHA-256 | **identical** | **identical** |
+
+Additional verified endpoint facts: `GET /api/datasets/{id}/content` has **no route** (404); the
+documented content route is `/api/datasets/{id}/get_content_as_text` (or
+`/api/histories/{history_id}/contents/{id}/display`). Datasets transition `queued → running → ok`,
+so content retrieval must poll with a bounded wait.
+
+After the content-endpoint fix and bounded polling were added, the corrected script was re-run
+once with the same transient configuration. Both tests reported `complete: OK`: each created a
+history, `POST /api/tools/fetch` → 200, polled to `state=ok` (attempt 19/30 and 25/30), confirmed
+history membership, read content via `get_content_as_text` → 200, and verified SHA-256.
+
+**Conclusion:** the `400 No data was entered in the upload form` was caused by the adapter using
+`POST /api/tools` with `upload1`, not by account activation. Activation, upload, content retrieval
+and hash verification are now proven at API level. These are **API-level** results: no website
+workflow, no remote scientific job, no output artifact and no report has been produced through the
+Worker. The key used is exposed and must be rotated; no provider is enabled.
+
+---
+
 ## 8. Remaining blockers and next steps
 
 1. Rotate the exposed Galaxy key and install `GALAXY_API_KEY`/`GALAXY_BASE_URL` with `scripts/secrets/` for staging only.
-2. Complete the provider's official email-confirmation activation for that account; re-verify with a small authenticated call. No bypass.
-3. Supply `GALAXY_BASE_URL` as a staging secret; R2 is **deferred** and is not required for this workflow.
+2. Account activation is now evidenced by two successful real uploads (§7c); no bypass was used.
+3. Supply rotated `GALAXY_API_KEY` and `GALAXY_BASE_URL` as staging secrets through `scripts/secrets/`; R2 is **deferred** and not required.
 4. Set `GALAXY_ENABLED="true"` for staging **only**, deploy, and re-run the live probes before any website workflow.
 5. Then execute one small real Galaxy job through the consent-gated pipeline, record job id, history id, dataset ids, output hashes and provenance, and only afterwards select a second workflow.
 6. Production promotion remains forbidden in this milestone; staging and production credentials and D1 stay separate.

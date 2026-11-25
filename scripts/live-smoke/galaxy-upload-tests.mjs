@@ -12,12 +12,16 @@
 // With missing config or no consent the script prints [SKIPPED] and makes no
 // network call. With config it creates a dedicated history per test (A: pasted
 // text, B: FASTA file), uploads through /api/tools/fetch, resolves the dataset
-// by exact filename, checks history membership, retrieves bytes and compares
-// their SHA-256 with the original input. Output is [LIVE]/[SKIPPED] and all
-// strings pass through scrub(): the API key and secret-bearing query values
-// are never printed. A failed check sets exit code 1; no success is implied.
+// by exact filename, waits for a bounded ok/success state, retrieves text from
+// the verified GET /api/datasets/{id}/get_content_as_text route and compares the
+// SHA-256 of `item_data` with the original input. Output is [LIVE]/[SKIPPED]
+// and all strings pass through scrub(): the API key and secret-bearing query
+// values are never printed. A failed check sets exit code 1; no success is
+// implied. Importing this module is side-effect free; the live run only starts
+// when the file is executed directly.
 
 import { createHash } from "node:crypto";
+import { pathToFileURL } from "node:url";
 import { joinUrl } from "../../web-platform/providers/common/normalize.js";
 
 const REDACT_NAMES = [
@@ -27,8 +31,14 @@ const TIMEOUT_MS = (() => {
   const raw = Number(process.env.GALAXY_UPLOAD_TIMEOUT_MS);
   return Number.isFinite(raw) && raw > 0 ? Math.min(raw, 120_000) : 15_000;
 })();
-const POLL_ATTEMPTS = 10;
-const POLL_INTERVAL_MS = 600;
+
+// Bounded poll: fixed 2s interval, at most 30 checks and a 60s wall-clock
+// deadline. A newly uploaded dataset stays queued -> running -> ok for tens of
+// seconds, and its content is not readable until it reaches ok/success.
+export const POLL_INTERVAL_MS = 2_000;
+export const POLL_MAX_ATTEMPTS = 30;
+export const POLL_TIMEOUT_MS = 60_000;
+const TERMINAL_BAD_STATES = new Set(["error", "failed", "cancelled", "canceled", "deleted", "purged", "expired"]);
 
 function env(name) {
   const value = process.env[name];
@@ -52,14 +62,14 @@ async function sleep(ms) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function request(base, path, { method = "GET", headers = {}, body, rawText = false } = {}) {
+async function request(base, path, { method = "GET", headers = {}, body } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
     const response = await fetch(joinUrl(base, path), { method, headers, body, signal: controller.signal });
     const text = await response.text();
     let parsed = text;
-    if (text && !rawText) {
+    if (text) {
       try { parsed = JSON.parse(text); } catch { /* non-JSON body: keep raw text */ }
     }
     return { ok: response.ok, status: response.status, body: parsed };
@@ -101,6 +111,9 @@ async function createHistory(base, headers, name) {
 async function submitFetch(base, headers, historyId, target) {
   const form = new FormData();
   form.append("history_id", historyId);
+  // Exact adapter shape (providers/galaxy/index.js uploadElement): a pasted
+  // element carries only {src, paste_content, name, ext} (no to_posix_lines);
+  // a file element carries {src, name, ext} plus one multipart `files` part.
   form.append("targets", JSON.stringify([{
     destination: { type: "hdas" },
     elements: [target.element]
@@ -113,21 +126,41 @@ async function submitFetch(base, headers, historyId, target) {
   return submitted;
 }
 
-async function resolveDataset(base, headers, historyId, filename) {
+// Exported so an OFFLINE test can assert the poll is strictly bounded (no
+// infinite loop) without any network call or credential.
+export async function resolveDataset(base, headers, historyId, filename, options = {}) {
+  const {
+    fetchImpl = request,
+    intervalMs = POLL_INTERVAL_MS,
+    maxAttempts = POLL_MAX_ATTEMPTS,
+    timeoutMs = POLL_TIMEOUT_MS,
+    sleepFn = sleep,
+    now = Date.now,
+    log = live
+  } = options;
   const path = `/api/histories/${encodeURIComponent(historyId)}/contents`;
+  const deadline = now() + timeoutMs;
   let lastStatus = 0;
-  for (let attempt = 1; attempt <= POLL_ATTEMPTS; attempt += 1) {
-    const listed = await request(base, path, { headers });
+  let lastState = "unknown";
+  for (let attempt = 1; attempt <= maxAttempts && now() < deadline; attempt += 1) {
+    const listed = await fetchImpl(base, path, { headers });
     lastStatus = listed.status;
     const items = Array.isArray(listed.body) ? listed.body : [];
     const match = items.find((item) => item && item.name === filename && item.deleted !== true);
     if (match?.id) {
-      live(`GET /api/histories/{id}/contents -> ${listed.status} (exact filename match: ${match.state || "unknown"})`);
-      return match;
+      lastState = String(match.state ?? "unknown").toLowerCase();
+      if (lastState === "ok" || lastState === "success") {
+        log(`GET /api/histories/{id}/contents -> ${listed.status} (state=${lastState}, attempt ${attempt}/${maxAttempts})`);
+        return match;
+      }
+      if (TERMINAL_BAD_STATES.has(lastState)) {
+        throw new Error(`dataset "${filename}" entered terminal state ${lastState}`);
+      }
     }
-    if (attempt < POLL_ATTEMPTS) await sleep(POLL_INTERVAL_MS);
+    if (attempt < maxAttempts && now() < deadline) await sleepFn(intervalMs);
   }
-  throw new Error(`dataset "${filename}" not found after ${POLL_ATTEMPTS} attempts (last status ${lastStatus})`);
+  throw new Error(`dataset "${filename}" did not reach ok/success within ${timeoutMs / 1000}s `
+    + `(${maxAttempts} attempts, last state ${lastState}, last status ${lastStatus})`);
 }
 
 async function verifyMembership(base, headers, historyId, datasetId) {
@@ -142,12 +175,15 @@ async function verifyMembership(base, headers, historyId, datasetId) {
 }
 
 async function verifyBytes(base, headers, datasetId, original) {
-  const fetched = await request(base, `/api/datasets/${encodeURIComponent(datasetId)}/content`, {
-    headers, rawText: true
-  });
-  live(`GET /api/datasets/{id}/content -> ${fetched.status}`);
+  // GET /api/datasets/{id}/content has no route on usegalaxy.eu (404). The
+  // verified text route returns JSON {item_data, truncated, item_url}.
+  const fetched = await request(base, `/api/datasets/${encodeURIComponent(datasetId)}/get_content_as_text`, { headers });
+  live(`GET /api/datasets/{id}/get_content_as_text -> ${fetched.status}`);
   if (!fetched.ok) throw new Error(`content fetch failed: ${errorMessage(fetched.body, fetched.status)}`);
-  const actualHash = sha256(String(fetched.body));
+  const payload = fetched.body && typeof fetched.body === "object" ? fetched.body : {};
+  if (payload.truncated === true) throw new Error("Galaxy returned truncated dataset content");
+  const itemData = typeof payload.item_data === "string" ? payload.item_data : "";
+  const actualHash = sha256(itemData);
   const expectedHash = sha256(original);
   live(`SHA-256 comparison: ${actualHash === expectedHash ? "OK" : "MISMATCH"}`);
   if (actualHash !== expectedHash) {
@@ -173,14 +209,19 @@ async function runTest(base, headers, options) {
   }
 }
 
-const base = env("GALAXY_BASE_URL");
-const key = env("GALAXY_API_KEY");
-const missing = [!base && "GALAXY_BASE_URL", !key && "GALAXY_API_KEY"].filter(Boolean);
-if (missing.length) {
-  skipped(`set ${missing.join(", ")} to enable live upload verification; no network call made`);
-} else if (env("GALAXY_UPLOAD_TESTS") !== "1") {
-  skipped("set GALAXY_UPLOAD_TESTS=1 to explicitly allow live write tests; no network call made");
-} else {
+export async function main() {
+  const base = env("GALAXY_BASE_URL");
+  const key = env("GALAXY_API_KEY");
+  const missing = [!base && "GALAXY_BASE_URL", !key && "GALAXY_API_KEY"].filter(Boolean);
+  if (missing.length) {
+    skipped(`set ${missing.join(", ")} to enable live upload verification; no network call made`);
+    return;
+  }
+  if (env("GALAXY_UPLOAD_TESTS") !== "1") {
+    skipped("set GALAXY_UPLOAD_TESTS=1 to explicitly allow live write tests; no network call made");
+    return;
+  }
+
   const headers = { "X-API-Key": key, Accept: "application/json" };
   const workspace = safeLabel(env("GALAXY_WORKSPACE"));
   const stamp = Date.now();
@@ -208,7 +249,7 @@ if (missing.length) {
     filename: pastedName,
     content: pastedText,
     target: {
-      element: { src: "pasted", paste_content: pastedText, name: pastedName, ext: "txt", to_posix_lines: false },
+      element: { src: "pasted", paste_content: pastedText, name: pastedName, ext: "txt" },
       part: null
     }
   });
@@ -224,4 +265,9 @@ if (missing.length) {
       part: new File([fastaText], fastaName, { type: "text/plain" })
     }
   });
+}
+
+const entry = process.argv[1] ? pathToFileURL(process.argv[1]).href : "";
+if (import.meta.url === entry) {
+  await main();
 }

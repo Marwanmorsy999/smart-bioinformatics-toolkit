@@ -290,9 +290,9 @@ function mockFetch(calls, { error = null, state = "queued", invocation = null, c
     if (url.includes("/api/jobs/")) return json({ ...jobs.running_job, state });
     if (url.includes("/api/invocations/")) return json({ ...jobs.invocation, state });
     if (url.includes("/api/histories/") && url.endsWith("/contents")) return json(contents);
-    if (url.includes("/api/datasets/") && url.endsWith("/content")) {
+    if (url.includes("/api/datasets/") && url.endsWith("/get_content_as_text")) {
       if (error) return json(error.body, error.status);
-      return new Response(jobs.dataset_content);
+      return json({ item_data: jobs.dataset_content, truncated: false });
     }
     if (url.includes("/api/datasets/")) {
       if (error) return json(error.body, error.status);
@@ -436,7 +436,7 @@ test("OFFLINE/MOCK deleted/expired Galaxy datasets (404/410) are not surfaced or
     assert.equal(failed.error.status, status);
     assert.equal(failed.error.retryable, false);
     assertNoSecret(failed, `${status} download`);
-    assert.equal(calls.filter((entry) => entry.url.endsWith("/content")).length, 1, `${status} must not be retried`);
+    assert.equal(calls.filter((entry) => entry.url.endsWith("/get_content_as_text")).length, 1, `${status} must not be retried`);
   }
 });
 
@@ -672,9 +672,9 @@ function galaxyArtifactFetch(calls, {
     }
     if (url.includes("/api/histories/") && url.endsWith("/contents")) return json(artifactDatasets.contents);
     if (url.includes("/api/jobs/")) return json({ ...artifactDatasets.job, history_id: jobHistory });
-    if (url.includes("/api/datasets/") && url.endsWith("/content")) {
+    if (url.includes("/api/datasets/") && url.endsWith("/get_content_as_text")) {
       if (datasetStatus !== 200) return json(datasetError, datasetStatus);
-      return new Response(content);
+      return json({ item_data: content, truncated: false });
     }
     if (url.includes("/api/datasets/")) {
       if (datasetStatus !== 200) return json(datasetError, datasetStatus);

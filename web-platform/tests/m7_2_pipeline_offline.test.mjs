@@ -280,7 +280,7 @@ function mockGalaxyFetch(calls, flags = {}) {
     if (url.includes("/api/jobs/")) return json({ ...jobs.running_job, state: flags.jobState ?? "queued" });
     if (url.includes("/api/invocations/")) return json({ ...jobs.invocation, state: flags.jobState ?? "queued" });
     if (url.includes("/api/histories/") && url.endsWith("/contents")) return json(jobs.contents);
-    if (url.includes("/api/datasets/") && url.endsWith("/content")) return new Response(jobs.dataset_content);
+    if (url.includes("/api/datasets/") && url.endsWith("/get_content_as_text")) return json({ item_data: jobs.dataset_content, truncated: false });
     if (url.includes("/api/datasets/")) return json(jobs.dataset);
     return json(errors.not_found_404, 404);
   };

@@ -1,8 +1,9 @@
 # M7.2 — Galaxy dataset upload contract (verified)
 
-**Status:** discovery/contract record. **No live upload success is claimed here.**
-The request shape below was read from the instance's own OpenAPI document; it
-was not inferred from a successful execution.
+**Status:** discovery/contract record. The request shape below was read from
+the instance's own OpenAPI document and then confirmed by an opt-in live run on
+**2026-11-25**; the evidence is recorded below. No credential is stored in this
+document or anywhere in the repository.
 
 ## Source of truth
 
@@ -32,11 +33,15 @@ omits it. Element shapes:
 
 ```json
 // text: bytes are inline in the target JSON
-{ "src": "pasted", "paste_content": "<text>", "name": "input.txt", "ext": "txt", "to_posix_lines": false }
+{ "src": "pasted", "paste_content": "<text>", "name": "input.txt", "ext": "txt" }
 
 // file: bytes are supplied as a multipart `files` part
 { "src": "files", "name": "input.fasta", "ext": "fasta" }
 ```
+
+The adapter's pasted element carries exactly `{src, paste_content, name, ext}`:
+no `to_posix_lines` field is sent. The opt-in live script mirrors this exact
+shape rather than building a different FormData.
 
 The successful fetch response carries no stable provider job id. The adapter
 therefore returns a generated `provider_job_id`, keeps `history_id` in
@@ -44,6 +49,28 @@ therefore returns a generated `provider_job_id`, keeps `history_id` in
 filename** through `GET /api/histories/{history_id}/contents` (the same lookup
 `storage/galaxy-artifacts.js` already performs). No dataset id is invented when
 the lookup finds nothing.
+
+## Verified content read and dataset-state polling
+
+- **Content endpoint:** `GET /api/datasets/{id}/get_content_as_text` → 200 with
+  JSON `{item_data:"<content>", truncated:false, item_url:"..."}`. Hashing
+  `item_data` reproduces the uploaded bytes exactly. The adapter parses this
+  JSON and returns `item_data` as its text content; `downloadArtifact`'s
+  `{ok, provider, artifact_id, content}` contract is unchanged.
+- `GET /api/datasets/{id}/content` is **not a route** on usegalaxy.eu (404) and
+  must never be used.
+- `truncated:true` means Galaxy did not return the whole dataset. The adapter
+  rejects it as a typed `content_truncated` failure (status 413, non-retryable)
+  instead of returning partial bytes; the artifact store still enforces its
+  1 MiB cap and SHA-256 check independently.
+- **Polling requirement:** after `/api/tools/fetch` returns, the dataset moves
+  `queued → running → ok` over tens of seconds. Fetching its content immediately
+  returns 404. Any verifier must poll `GET /api/histories/{history_id}/contents`
+  for an exact filename match whose state is `ok`/`success` before reading the
+  content. The live script uses a **bounded** poll: a fixed 2 s interval, at most
+  30 checks and a 60 s wall-clock deadline. It fails fast on terminal
+  `error`/`failed`/`cancelled`/`deleted`/`purged`/`expired` states and never
+  loops without a ceiling.
 
 ## Old shape (broken) vs new shape (verified)
 
@@ -53,7 +80,7 @@ the lookup finds nothing.
 | Content type | `application/json` | `multipart/form-data` (boundary from `fetch`) |
 | Body | `{ tool_id:"upload1", history_id, inputs:{ file1:{ file_content, filename, ext } } }` | `history_id`, `targets` (JSON string), optional `files` parts |
 | Bytes | JSON `file_content` string | `paste_content` string or a `files` Blob/File part |
-| Observed result | `400 No data was entered in the upload form` for every tried shape | Contract verified from OpenAPI; **live execution still unverified** |
+| Observed result | `400 No data was entered in the upload form` for every tried shape | Contract from OpenAPI **and confirmed live**, 2026-11-25 (evidence below) |
 
 Other routes were checked and are **not** usable on this instance:
 
@@ -85,54 +112,79 @@ asserts, without any network access:
    history is never recreated.
 5. After a successful upload, `getArtifacts({history_id})` finds the dataset by
    exact filename.
+6. `downloadArtifact` reads `item_data` from `/get_content_as_text` and never
+   calls the old `/content` route; `truncated:true` is a typed, non-retryable
+   failure that returns no partial content.
+7. Non-string, non-blob upload content is a typed `invalid_upload_content`
+   error before any network call, and an extension-less filename such as
+   `README` falls back to `ext:"txt"`.
 
-## Verification procedure (live, opt-in, NOT run for this record)
+`web-platform/tests/galaxy_upload_smoke.test.mjs` imports the opt-in script
+without side effects and asserts the poll is bounded by its interval, attempt
+ceiling and deadline, fails fast on a terminal state, and stops as soon as the
+dataset reaches `ok`.
+
+## Verification procedure (live, opt-in — evidence recorded below)
 
 `scripts/live-smoke/galaxy-upload-tests.mjs` is never executed by `npm test`.
 It makes no network call unless `GALAXY_BASE_URL`, `GALAXY_API_KEY` and
 `GALAXY_UPLOAD_TESTS=1` are all set. Optional `GALAXY_WORKSPACE` labels history
 names; optional `GALAXY_HISTORY`/`GALAXY_HISTORY_ID` is read-only preflight only.
-It writes no files and never prints the key. Per test it:
+It writes no files, never prints the key, and every message passes through a
+scrubber. Per test it:
 
 - **Test A** — creates a dedicated history, uploads a tiny pasted-text dataset
-  (`src:"pasted"`).
+  (`src:"pasted"`, exact adapter element shape).
 - **Test B** — creates a dedicated history, uploads a small FASTA as a `files`
   multipart part (`src:"files"`).
 
-For each test it records the HTTP status and a sanitized error, resolves the
-dataset by exact filename, verifies `dataset.history_id` equals the freshly
-created history, downloads the bytes and compares their SHA-256 to the original
-input. Output is labelled `[LIVE]` or `[SKIPPED]`.
+For each test it records the HTTP status and a sanitized error, polls the
+history contents for an exact filename match in state `ok`/`success` (bounded to
+~60 s), verifies `dataset.history_id` equals the freshly created history,
+downloads text from `GET /api/datasets/{id}/get_content_as_text`, rejects
+`truncated:true`, and compares the SHA-256 of `item_data` to the original input.
+Output is labelled `[LIVE]` or `[SKIPPED]`; a failed check sets exit code 1.
 
-## Known OFFLINE/MOCK fixture drift (full-suite result)
+## Live evidence (2026-11-25, transient key — identifiers only)
 
-After the adapter change, `npm test` reports 383 tests / 378 pass / 5 fail.
-The five failures are legacy mocks that only stub `POST /api/tools` for
-`tool_id:"upload1"` and therefore answer `404` to the now-correct
-`POST /api/tools/fetch`:
+Both uploads returned HTTP 200 from `POST /api/tools/fetch`, both datasets
+transitioned `queued → running → ok`, and final-state `item_data` hashes matched
+the input bytes exactly. The history/dataset ids below are public object
+identifiers, **not credentials**; the API key used was transient and is not
+recorded here or in the repository.
 
-- `tests/galaxy_artifacts_handlers.test.mjs` — happy upload + provider 403 cases
-- `tests/galaxy_artifacts_store.test.mjs` — `uploadDataset` success + 403 cases
-- `tests/m7_2_galaxy_verify_offline.test.mjs` — metadata-only D1 row case
+| Test | Upload source | Dedicated history id | Dataset id | SHA-256 of `item_data` |
+| --- | --- | --- | --- | --- |
+| A | `src=pasted` | `11ac94870d0bb33a421fe648fe235638` | `40160950115d555e4a07f3ebf2c9631f` | `e7d09d04a66bb582cc87f76bd8671bef87b7cbcc7df60f7a2dbe71fe5478867c` |
+| B | `src=files` + multipart `files` part | `11ac94870d0bb33aee565b9befc94a7d` | `40160950115d555e37e69b35a2a071e4` | `9614b1b4e5192b84786c4e907f1426b66c9911c5c9d3baa687b23c40bc3fe950` |
 
-These fixtures need a `/api/tools/fetch` branch (and a fetch response without a
-job id) to reflect the verified contract. They were **not** edited here: the
-task's file ownership is limited to the adapter, the new regression test, the
-live script and this document, and no test assertion was weakened.
+This is why content must only be read after the state poll: an immediate fetch
+of `get_content_as_text` (or the non-existent `/content`) returned 404 while the
+datasets were still `queued`/`running`.
 
-## Current blocker
+## Resolved: earlier OFFLINE/MOCK fixture drift (historical)
 
-No credential is installed in this environment and there is **no confirmation
-that the Galaxy account has been activated**. Consequently:
+An earlier snapshot of this record reported `npm test` at 383 tests / 378 pass /
+5 fail because five legacy mocks still answered only `POST /api/tools` for
+`tool_id:"upload1"` and returned 404 to the now-correct `POST /api/tools/fetch`.
+**That drift was resolved**: the five mocks were updated to the verified
+`/api/tools/fetch` branch (with a fetch response carrying no job id) and the
+suite reached **383/383**, with no assertion weakened. The affected fixtures
+were `tests/galaxy_artifacts_handlers.test.mjs` (happy upload + provider 403),
+`tests/galaxy_artifacts_store.test.mjs` (`uploadDataset` success + 403) and
+`tests/m7_2_galaxy_verify_offline.test.mjs` (metadata-only D1 row). Later changes
+added further offline tests, so the live suite count is verified separately at
+the end of each change rather than frozen in this record.
 
-- The live script was **not run**; no live upload, dataset or history was
-  created for this change.
-- The previously reported 403 `Action requires account activation` is treated
-  as an unresolved account/permission condition, not as evidence that this
-  request shape works.
-- The contract itself is verified from the live OpenAPI document only. Live
-  confirmation of a completed upload and byte-for-byte hash match is still
-  pending an activated account with an installed key.
+## Current limits
 
-The architecture remains R2-free: Galaxy histories are the only byte store; no
-file bytes are written to D1, disk or this repository.
+- The transient key used for the 2026-11-25 live run is no longer installed;
+  re-running the opt-in script needs a freshly supplied key and explicit
+  `GALAXY_UPLOAD_TESTS=1` consent.
+- The earlier `403 Action requires account activation` is an account/permission
+  condition. It did not recur in the successful run and is still propagated as a
+  typed failure if it appears again.
+- Content larger than 1 MiB is out of this MVP: the store rejects it before
+  reading and `truncated:true` is treated as a typed failure.
+- The architecture remains R2-free: Galaxy histories are the only byte store;
+  no file bytes are written to D1, disk or this repository.

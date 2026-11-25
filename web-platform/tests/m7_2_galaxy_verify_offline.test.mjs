@@ -128,8 +128,8 @@ function mockFetch(overrides = {}) {
     const url = String(input);
     const method = init.method ?? "GET";
     calls.push({ url, method, headers: init.headers });
-    if (overrides.dataset !== undefined && url.includes("/api/datasets/") && !url.endsWith("/content")) return overrides.dataset;
-    if (overrides.content !== undefined && url.includes("/api/datasets/") && url.endsWith("/content")) return overrides.content;
+    if (overrides.dataset !== undefined && url.includes("/api/datasets/") && !url.endsWith("/get_content_as_text")) return overrides.dataset;
+    if (overrides.content !== undefined && url.includes("/api/datasets/") && url.endsWith("/get_content_as_text")) return overrides.content;
     if (overrides.job !== undefined && url.includes("/api/jobs/")) return overrides.job;
     if (overrides.tool !== undefined && method === "POST" && (url.endsWith("/api/tools") || url.endsWith("/api/tools/fetch"))) return overrides.tool;
     if (method === "POST" && url.endsWith("/api/histories")) return json(datasets.history);
@@ -140,7 +140,7 @@ function mockFetch(overrides = {}) {
       return json(body.tool_id === "upload1" ? datasets.upload_job : datasets.tool_job);
     }
     if (url.includes("/api/histories/") && url.endsWith("/contents")) return json(datasets.contents);
-    if (url.includes("/api/datasets/") && url.endsWith("/content")) return new Response(CONTENT);
+    if (url.includes("/api/datasets/") && url.endsWith("/get_content_as_text")) return json({ item_data: CONTENT, truncated: false });
     if (url.includes("/api/datasets/")) return json(datasets.input_dataset);
     if (url.includes("/api/jobs/")) return json(datasets.job);
     return json(errors.not_found_404, 404);
