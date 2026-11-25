@@ -496,7 +496,11 @@ export function createAdapter(env = {}, deps = {}) {
             type: safeString(item.extension ?? item.file_ext ?? item.type, 100),
             size: finite(item.file_size ?? item.size),
             state: safeString(item.state, 80),
-            history_id: historyId || safeString(item.history_id, 200) || null,
+            // The provider's own value is authoritative. A caller-supplied
+            // history_id must never overwrite it, or a history mismatch could
+            // not be detected by the storage layer.
+            history_id: safeString(item.history_id, 200) || historyId || null,
+            deleted: item.deleted === true,
             source: "galaxy:/api/histories/:id/contents"
           }));
         return { provider: PROVIDER, artifacts, ok: true, at };

@@ -94,13 +94,48 @@ Two real defects found by the offline work were fixed before sign-off:
 
 ---
 
+## 7b. Continuation — R2-free Galaxy storage (owner decision, 2026-11-25)
+
+The owner deferred R2. R2 is therefore **no longer a prerequisite** for the first Galaxy workflow:
+it stays implemented but optional and disabled, with no bucket, binding or signing key required.
+Galaxy histories hold input and output datasets; D1 holds metadata, hashes, provenance and ownership;
+the Worker exposes authenticated retrieval and on-demand reports. No large biological file is stored
+in D1 and no public artifact URL is created.
+
+Prerequisite re-check (secret presence only, no values):
+`npx wrangler secret list --env staging` still lists only `AI_AGENT_TOKEN` and `MOCK_NCBI` — **no
+installed replacement `GALAXY_API_KEY` and no `GALAXY_BASE_URL`**; `wrangler.toml` still has
+`GALAXY_ENABLED = "false"` for both top level and staging.
+
+A replacement key value was pasted into chat by the owner and was used **only** in transient,
+read-only verification commands (never written to a file, secret store, git or browser):
+- `GET /api/users/current` → 200, account `marawan20`, quota `268.4 GB` / scratch `2.2 TB`, 0 used.
+- `GET /api/users/current/usage` → 200 (two quota sources).
+- `POST /api/histories` → 200, history `11ac94870d0bb33ad52bef73e8f312cd` ("M7.2 activation check").
+- Multiple upload shapes to `POST /api/tools` (`tool_id=upload1`) — JSON `inputs.file1.file_content`,
+  input-array, multipart form, `?key=` variant, and `tool_version` pin — **all returned 400**
+  `No data was entered in the upload form, please go back and choose data to upload.`
+  No dataset id, no job id, no successful upload.
+
+The earlier `403 Action requires account activation` was not reproduced with the new key, but
+**successful upload/execution was not achieved**, so activation and execution eligibility remain
+**UNCONFIRMED**. Per the mission, **live provider activation was stopped**: no flag change, no
+secret installation from a chat-pasted value, no deployment with a provider enabled. The key must
+still be installed through `scripts/secrets/` (or `wrangler secret put`) per environment, and the
+owner must confirm activation with a successful small upload before enablement. The R2-free
+architecture, authenticated retrieval endpoints and failure tests are being completed offline.
+No Galaxy job id, output dataset id, output hash or execution time from a successful live run
+exists in this report.
+
+---
+
 ## 8. Remaining blockers and next steps
 
 1. Rotate the exposed Galaxy key and install `GALAXY_API_KEY`/`GALAXY_BASE_URL` with `scripts/secrets/` for staging only.
 2. Complete the provider's official email-confirmation activation for that account; re-verify with a small authenticated call. No bypass.
-3. Enable R2 in the Cloudflare Dashboard, create a **private** staging bucket, bind `ARTIFACTS`, and set `ARTIFACT_SIGNING_KEY`.
+3. Supply `GALAXY_BASE_URL` as a staging secret; R2 is **deferred** and is not required for this workflow.
 4. Set `GALAXY_ENABLED="true"` for staging **only**, deploy, and re-run the live probes before any website workflow.
-5. Then execute one small real Galaxy job through the consent-gated pipeline, record job id/hash/provenance, and only afterwards select a second workflow.
-6. Production promotion remains forbidden in this milestone; staging and production credentials/D1/storage stay separate.
+5. Then execute one small real Galaxy job through the consent-gated pipeline, record job id, history id, dataset ids, output hashes and provenance, and only afterwards select a second workflow.
+6. Production promotion remains forbidden in this milestone; staging and production credentials and D1 stay separate.
 
 **Acceptance gate:** M7.2 is incomplete until at least one genuine Galaxy workflow has passed through the complete website pipeline. That condition is **not met**.

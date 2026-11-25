@@ -34,6 +34,10 @@ import { onRequest as onProviderJobs } from "./functions/api/providers/jobs/inde
 import { onRequest as onProviderJob } from "./functions/api/providers/jobs/[id]/index.js";
 import { onRequest as onProviderJobCancel } from "./functions/api/providers/jobs/[id]/cancel.js";
 import { onRequest as onProviderJobArtifacts } from "./functions/api/providers/jobs/[id]/artifacts.js";
+import { onRequest as onGalaxyUpload } from "./functions/api/providers/galaxy-artifacts/upload.js";
+import { onRequest as onGalaxyDatasetMetadata } from "./functions/api/providers/galaxy-artifacts/datasets/[id]/metadata.js";
+import { onRequest as onGalaxyDatasetDownload } from "./functions/api/providers/galaxy-artifacts/datasets/[id]/download.js";
+import { onRequest as onGalaxyArtifacts } from "./functions/api/providers/galaxy-artifacts/artifacts.js";
 import { onRequest as onArtifactUploadUrl } from "./functions/api/artifacts/upload-url.js";
 import { onRequest as onArtifactUpload } from "./functions/api/artifacts/upload.js";
 import { onRequest as onArtifactDownloadUrl } from "./functions/api/artifacts/[id]/download-url.js";
@@ -73,6 +77,10 @@ export const handlers = {
   providerJob: onProviderJob,
   providerJobCancel: onProviderJobCancel,
   providerJobArtifacts: onProviderJobArtifacts,
+  galaxyUpload: onGalaxyUpload,
+  galaxyDatasetMetadata: onGalaxyDatasetMetadata,
+  galaxyDatasetDownload: onGalaxyDatasetDownload,
+  galaxyArtifacts: onGalaxyArtifacts,
   artifactUploadUrl: onArtifactUploadUrl,
   artifactUpload: onArtifactUpload,
   artifactDownloadUrl: onArtifactDownloadUrl,
@@ -84,6 +92,14 @@ export const handlers = {
 // specific dynamic routes are listed first so future additions stay unambiguous.
 // `names` maps capture groups to the `params` object the handlers expect.
 const ROUTES = [
+  // Galaxy artifact routes. These static/specific paths MUST precede the
+  // dynamic /api/providers/:id routes so "galaxy" is never captured as a
+  // provider id and the dataset sub-paths stay unambiguous.
+  { key: "galaxyDatasetMetadata", re: /^\/api\/providers\/galaxy\/datasets\/([^/]+)\/metadata\/?$/, names: ["id"] },
+  { key: "galaxyDatasetDownload", re: /^\/api\/providers\/galaxy\/datasets\/([^/]+)\/download\/?$/, names: ["id"] },
+  { key: "galaxyUpload", re: /^\/api\/providers\/galaxy\/upload\/?$/, names: [] },
+  { key: "galaxyArtifacts", re: /^\/api\/providers\/galaxy\/artifacts\/?$/, names: [] },
+
   // M7 provider routes. Static paths precede dynamic /api/providers/:id so a
   // name like "usage" can never be captured as a provider id.
   { key: "providerJobCancel", re: /^\/api\/providers\/jobs\/([^/]+)\/cancel\/?$/, names: ["id"] },

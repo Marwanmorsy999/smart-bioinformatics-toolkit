@@ -4,6 +4,8 @@
 **Companion:** `SYSTEM_ARCHITECTURE.md` §10, `AI_AGENT_ARCHITECTURE.md`, `COMPUTE_INFRASTRUCTURE.md`, `THREAT_MODEL.md`, `PRIVACY_NOTE.md`.
 **Scope:** every path by which sequence/dataset bytes can move between the browser, the Worker control plane, the local execution agent, storage and external scientific APIs.
 
+> **Reading guide:** §§1–5 are the verified M6 implementation record and are preserved unchanged. **§6 is the new M7.2 section**: it describes the first cloud workflow mode, in which **Galaxy histories hold dataset bytes and R2 is optional/disabled**. No live execution occurred for §6 (see the explicit notice there).
+
 > **No silent upload of local datasets to Cloudflare R2.** This is true by construction today: no R2 binding exists in `web-platform/wrangler.toml` (only `BLAST_DB`, a D1 binding), and no `functions/**` module references an R2 bucket. Uploaded FASTA text is stored inline in D1 under a `d1://datasets/...` reference; generated artifacts and reports are stored inline in D1 as well. R2 is a **future storage tier**, not an implemented path.
 
 ## 1. The four distinct transport domains
@@ -114,3 +116,95 @@ Adding automatic retention/expiry and a user-facing deletion flow is an M7 item;
 ### 5.5 External transmission remains consent-gated
 
 Nothing in this section changes the consent invariant of §3/§4: a sequence leaves the machine only through a consented `CMD=Put` step with a single-use token. Browser-local and local-agent steps produce `external_transmissions: []` in the locality receipt.
+
+---
+
+## 6. M7.2 — Galaxy-history storage mode (NEW; first cloud workflow mode, R2 optional/disabled)
+
+> **OFFLINE DESIGN / VERIFICATION ONLY — NO LIVE EXECUTION.** This section records an owner
+> decision (R2 deferred) and the contracts verified offline with labelled MOCK fixtures and
+> injected D1/fetch. Operator prerequisites are still absent: no `GALAXY_API_KEY` secret, no
+> confirmed account activation, and `GALAXY_ENABLED=false`. Live activation is **STOPPED**.
+> No Galaxy job, history, dataset id, output hash or execution time from a live run exists.
+> Evidence notes: `docs/discovery/M7_2_GALAXY_ONLY_STORAGE.md`.
+
+### 6.1 Decision and precedence
+
+The owner deferred R2. **This is the FIRST mode in which a cloud workflow can carry biological
+dataset bytes**, and it deliberately uses **Galaxy histories** as the byte store instead of R2.
+
+- **R2 remains optional and disabled** for this mode: no bucket binding, no signing key and no
+  upload/download ticket are required. The existing R2 code path is left intact for a later,
+  separately consented tier; it is not part of the first Galaxy workflow.
+- Nothing in §§1–5 is retracted. The M6 facts (browser-local default, 64 KiB inline input cap,
+  2 MiB inline result cap, lineage of D1 rows, legacy BLAST consent gate) remain the verified
+  record for the browser-local and local-agent modes. §6 adds a *new* cloud mode alongside them.
+
+### 6.2 Byte locations — authoritative matrix
+
+| Domain / store | Owner | Holds sequence bytes? | Role in M7.2 |
+|---|---|---|---|
+| **Browser-local memory** | Browser (File API / in-memory strings) | Yes, transient, on device | Default for local analysis. Nothing leaves the device until an explicit, consented workflow starts. |
+| **Galaxy history (input)** | Authenticated Galaxy account | **Yes** | A consented upload creates an input dataset in a job-scoped Galaxy history via the adapter's `upload1` primitive. |
+| **Galaxy history (output)** | Authenticated Galaxy account | **Yes** | Tool/workflow outputs are datasets in that same history. Only completed, non-deleted datasets are treated as artifacts. |
+| **Cloudflare D1 (metadata only)** | Worker control plane | **No large files. Hashes and metadata only.** | `galaxy_artifacts` rows hold dataset references (`galaxy_dataset_id`, `history_id`, `job_id`), filename/ext, direction, SHA-256, byte count, ownership and lifecycle markers. `galaxy_artifact_downloads` is the retrieval audit trail. |
+| **Optional R2 (DISABLED)** | Cloudflare R2 bucket | Would, if enabled | Not used by this mode. No binding/key is provisioned; no public URL is created. |
+| **Other external databases** | Third parties (NCBI, future providers) | Only with explicit consent | Unchanged from §1.4/§5: consented egress only, recorded in the locality receipt and transfer ledger. |
+
+**Hard rule:** no large biological file is written to D1. The Worker proxies bounded text bytes
+from Galaxy for the MVP (1 MiB cap, enforced before any provider call and again on the response
+body) and hashes them while streaming; D1 receives only hashes, sizes and references.
+
+### 6.3 Consent and transfer ledger
+
+- A per-provider, per-dataset `pcon_` consent is still mandatory before any external transfer.
+  It is checked **before the upload streams any bytes to Galaxy**, is single-use (spent even when
+  the later provider call fails), and is scoped to one dataset and one destination.
+- Every egress produces a transfer/ledger row (`provider_transfers`) with source, destination,
+  input hash, byte count, consent id and status; the locality receipt keeps `external_egress`
+  honest. Downloads add a `galaxy_artifact_downloads` row (actor, timestamp, dataset, bytes,
+  SHA-256, status and error code) — a failed retrieval is audited as well as a successful one.
+- The consent token and the Galaxy API key never appear in a D1 row, a response body, a URL or a
+  log. Provider error bodies are replaced by whitelisted status/code messages.
+
+### 6.4 Retrieval contract — authenticated endpoints only, no public URLs
+
+| Endpoint | Method | Gate | Returns |
+|---|---|---|---|
+| `/api/providers/galaxy/upload` | POST | valid `X-Consent-Id` + `X-Dataset-Id`, allowed extension, SHA-256, ≤1 MiB | metadata-only artifact DTO (id, dataset ids, history id, hash, bytes) |
+| `/api/providers/galaxy/artifacts?limit=` | GET | `X-Agent-Token` owner | metadata-only registry (max 100 rows) |
+| `/api/providers/galaxy/datasets/:id/metadata` | GET | owner token | live Galaxy metadata confirmed through the adapter, never the key |
+| `/api/providers/galaxy/datasets/:id/download` | GET | owner token | bounded streamed bytes from Galaxy with hash verification and audit row |
+
+- `:id` may be the artifact id, the platform dataset id or the Galaxy dataset id; all resolve to
+  the same registered metadata row. **An unregistered id is a typed 404** — there is no path from
+  a bare id to an arbitrary Galaxy dataset.
+- Before serving bytes the Worker re-checks that the live dataset exists, is not deleted/expired,
+  and belongs to **both the recorded history and the recorded job**; mismatches are typed 409/410.
+- Responses carry `Content-Security-Policy: default-src 'none'`, `nosniff`, `no-referrer` and
+  `no-store`. There is **no public/static artifact URL**; every byte read is authenticated.
+
+### 6.5 Retention and deletion
+
+- Dataset bytes live for as long as the **Galaxy history** keeps them. Galaxy may purge or expire
+  a dataset (404/410); the Worker must treat that as authoritative and stop serving it, not
+  resurrect bytes from D1 or a cache.
+- D1 holds only the metadata side of the lifecycle: `galaxy_artifacts.deleted_at` marks a
+  deregistration, and `galaxy_artifact_downloads` is append-only. Deleting the D1 row does not
+  purge Galaxy bytes, and purging Galaxy bytes does not by itself erase D1 metadata — operators
+  must reconcile both sides. No automatic expiry is claimed.
+- The local agent workspace and browser memory keep their §5 lifetimes; neither becomes a cloud
+  byte store under this mode.
+
+### 6.6 Failure contract (offline-verified)
+
+Typed errors (whitelisted code in `X-Error-Detail`, no provider body/secret) cover: 401 invalid
+credentials, 403 activation restriction / disabled provider / consent denial, 404 missing history
+or unregistered dataset, 410 deleted/expired dataset, 413 oversize upload, 409 duplicate
+registration or wrong job/history binding, invalid input hash, provider timeout, failed remote
+job and cancelled job. Retries are bounded by the adapter's attempt caps; 401/403/404/410 are
+never retried. Failure paths release reservations and never persist a submitted job.
+
+Verification is MOCK-only: `web-platform/tests/galaxy_artifacts_failures.test.mjs` and
+`web-platform/tests/galaxy_artifacts_boundaries.test.mjs` use injected fake D1/fetch and cannot
+substantiate any live claim.

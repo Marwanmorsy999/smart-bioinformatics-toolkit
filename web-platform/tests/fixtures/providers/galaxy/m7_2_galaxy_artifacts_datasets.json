@@ -1,0 +1,45 @@
+{
+  "__fixture": "MOCK - synthetic Galaxy history/dataset responses for the M7.2 OFFLINE Galaxy-artifact storage tests ONLY. NOT live Galaxy data. Every id, byte count and body below is canned; no credential, network call or real job execution is involved.",
+  "execution_mode": "mock",
+  "is_mock": true,
+  "history_id": "m7-2-artifact-history",
+  "job_id": "m7-2-artifact-job",
+  "history": { "id": "m7-2-artifact-history", "name": "provider-job-m7-2-artifact-mock", "state": "new" },
+  "job": { "id": "m7-2-artifact-job", "state": "ok", "history_id": "m7-2-artifact-history", "progress": 100 },
+  "upload_job": {
+    "__fixture": "MOCK - canned POST /api/tools upload1 response. outputs[0].id is the synthetic uploaded dataset id.",
+    "id": "m7-2-artifact-upload-job",
+    "state": "queued",
+    "outputs": [{ "id": "m7-2-artifact-upload-ds", "name": "artifact-input.fasta", "state": "queued" }]
+  },
+  "tool_job": { "id": "m7-2-artifact-job", "state": "ok", "history_id": "m7-2-artifact-history" },
+  "input_dataset": {
+    "id": "m7-2-artifact-upload-ds",
+    "name": "artifact-input.fasta",
+    "extension": "fasta",
+    "file_size": 15,
+    "state": "ok",
+    "history_id": "m7-2-artifact-history"
+  },
+  "output_dataset": {
+    "id": "m7-2-artifact-ds-output",
+    "name": "artifact-output.tsv",
+    "extension": "tsv",
+    "file_size": 15,
+    "state": "ok",
+    "history_id": "m7-2-artifact-history"
+  },
+  "contents": [
+    { "id": "m7-2-artifact-upload-ds", "name": "artifact-input.fasta", "extension": "fasta", "file_size": 15, "state": "ok", "history_id": "m7-2-artifact-history" },
+    { "id": "m7-2-artifact-ds-output", "name": "artifact-output.tsv", "extension": "tsv", "file_size": 15, "state": "ok", "history_id": "m7-2-artifact-history" }
+  ],
+  "content": ">seq1\nACGTACGT\n",
+  "other_history_dataset": {
+    "id": "m7-2-artifact-other-ds",
+    "name": "artifact-input.fasta",
+    "extension": "fasta",
+    "file_size": 15,
+    "state": "ok",
+    "history_id": "m7-2-artifact-other-history"
+  }
+}
