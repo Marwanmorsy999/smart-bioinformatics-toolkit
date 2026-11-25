@@ -4,9 +4,11 @@
 
 ## 1. Commit range
 
-Branch `phase-1-robustness-safety`, from the starting HEAD
-`1b6f0ad1cfb97af43f98eab398c5b7c49cddcc13` to final HEAD
-`83de048849b6b803002219c49f5297dea8afd935` (11 commits, small and reviewable):
+Branch `phase-1-robustness-safety`. Code commits run from the starting HEAD
+`1b6f0ad1cfb97af43f98eab398c5b7c49cddcc13` through
+`83de048849b6b803002219c49f5297dea8afd935` (11 commits, small and reviewable).
+A final documentation-only commit rewrites this report; it does not change the
+deployed Worker, which was built from `83de0488…`.
 
 | Commit | Subject |
 |---|---|
