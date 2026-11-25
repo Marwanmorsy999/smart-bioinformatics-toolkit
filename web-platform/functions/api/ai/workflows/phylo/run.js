@@ -1,4 +1,4 @@
-// POST /api/ai/workflows/phylo/run — M7.3 real multi-step Galaxy workflow.
+﻿// POST /api/ai/workflows/phylo/run â€” M7.3 real multi-step Galaxy workflow.
 //
 // Upload FASTA -> validate -> MAFFT (MSA) -> IQ-TREE (tree) -> retrieve ->
 // validate alignment/tree -> persist provenance and job records in D1.
@@ -22,8 +22,8 @@ import {
   safeString
 } from "../../_lib.js";
 import { validateFasta } from "../../../blast/_lib.js";
-import { createAdapter } from "../../../../providers/galaxy/index.js";
-import { findPhyloTools } from "../../../../providers/galaxy/galaxy_phylo.js";
+import { createAdapter } from "../../../../../providers/galaxy/index.js";
+import { findPhyloTools } from "../../../../../providers/galaxy/galaxy_phylo.js";
 import { validateAlignment, validateTree } from "./validators.js";
 
 const STEP_IDS = Object.freeze([
@@ -120,7 +120,7 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
   }
 
   try {
-    // Step 1 — upload (Galaxy's generic pasted-content upload primitive).
+    // Step 1 â€” upload (Galaxy's generic pasted-content upload primitive).
     const upload = await adapter.submitJob({
       operation: "submit_job", tool_id: "upload1",
       inputs: { file1: { src: "pasted", paste_content: fasta, name: filename, ext: "fasta" } }
@@ -130,7 +130,7 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
     await recordStep("upload_input", "upload1", upload.provider_job_id, "succeeded", createdAt, nowIso(now),
       { dataset_id: upload.output?.structured?.dataset_id ?? null, history_id: historyId });
 
-    // Step 2 — MAFFT multiple sequence alignment.
+    // Step 2 â€” MAFFT multiple sequence alignment.
     const mafftInput = upload.output?.structured?.dataset_id
       ? { input: { src: "hda", id: upload.output.structured.dataset_id } }
       : { input: { src: "pasted", paste_content: fasta, name: filename, ext: "fasta" } };
@@ -143,7 +143,7 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
     await recordStep("galaxy_mafft", tools.mafft.id, mafft.provider_job_id, "succeeded", createdAt, nowIso(now),
       { tool_version: tools.mafft.version, output_ids: mafft.output?.structured?.outputs ?? [] });
 
-    // Step 3 — IQ-TREE phylogenetic inference from the alignment dataset.
+    // Step 3 â€” IQ-TREE phylogenetic inference from the alignment dataset.
     const alignmentArtifacts = await adapter.getArtifacts({ history_id: historyId }, ctx);
     const alignmentDataset = (alignmentArtifacts.artifacts ?? []).find((a) => /fasta|aln|msa/i.test(`${a.name}.${a.type}`)) ?? null;
     const treeInput = alignmentDataset
@@ -158,7 +158,7 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
     await recordStep("galaxy_iqtree", tools.iqtree.id, iqtree.provider_job_id, "succeeded", createdAt, nowIso(now),
       { tool_version: tools.iqtree.version, output_ids: iqtree.output?.structured?.outputs ?? [] });
 
-    // Step 4 — retrieve intermediate and final datasets.
+    // Step 4 â€” retrieve intermediate and final datasets.
     const finalArtifacts = await adapter.getArtifacts({ history_id: historyId }, ctx);
     for (const item of finalArtifacts.artifacts ?? []) {
       const downloaded = await adapter.downloadArtifact({ dataset_id: item.id }, ctx);
@@ -177,7 +177,7 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
     failed = e?.message ?? String(e);
   }
 
-  // Steps 5-7 — validation and report (independent of remote success, never fabricated).
+  // Steps 5-7 â€” validation and report (independent of remote success, never fabricated).
   const alignment = alignmentText ? validateAlignment(alignmentText) : { valid: false, error: "no alignment retrieved" };
   const tree = treeText && alignment.names ? validateTree(treeText, alignment.names) : { valid: false, error: "no tree retrieved" };
   const validation = { status: failed ? "failed" : (alignment.valid && tree.valid ? "pass" : "fail"),
@@ -201,3 +201,4 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
     tree_newick: treeText, alignment_text: alignmentText
   }, failed ? 502 : 200, request);
 }
+
