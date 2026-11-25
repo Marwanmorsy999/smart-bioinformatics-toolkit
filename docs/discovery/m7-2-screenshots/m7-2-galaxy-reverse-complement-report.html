@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+<meta name="referrer" content="no-referrer">
+<title>Analysis report - pjob_681907a5b64630f4</title>
+<style>
+  body{font:15px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:#1b2d3d;background:#f4f8fa;margin:0;padding:24px}
+  main{max-width:960px;margin:0 auto;background:#fff;border:1px solid #d8e3e8;border-radius:12px;padding:28px}
+  h1,h2,h3{line-height:1.25}h1{font-size:1.7rem}h2{font-size:1.15rem;margin-top:32px;border-bottom:1px solid #e8eff2;padding-bottom:6px}
+  table{border-collapse:collapse;width:100%;margin:12px 0}th,td{border:1px solid #d8e3e8;padding:8px;text-align:left;vertical-align:top;font-size:.875rem}
+  th{background:#f8fbfc}code{font-family:ui-monospace,Consolas,monospace;word-break:break-all}pre{white-space:pre-wrap;word-break:break-word;background:#f8fbfc;border:1px solid #e8eff2;border-radius:8px;padding:12px;font-size:.8125rem}
+  .badge{display:inline-block;border-radius:999px;padding:3px 10px;font-size:.75rem;font-weight:700;background:#e7f5ee;color:#136b54}
+  .badge.mock{background:#fff4e2;color:#7d4e0b}.note{color:#4e6373;font-size:.875rem}ul{margin:8px 0 8px 20px;padding:0}
+</style>
+</head>
+<body>
+<main>
+  <h1>Smart Bioinformatics Toolkit - Analysis Report</h1>
+  <p class="note">Generated 2026-11-25T19:48:10.247Z &middot; Job <code>pjob_681907a5b64630f4</code> &middot; Plan <code>plan_m7_2_galaxy</code></p>
+  <p><span class="badge">Execution mode: real</span></p>
+  <p class="note">Research use only. Outputs are screening evidence, not proof of identity and not a clinical diagnosis. Interpretation remains the user's responsibility.</p>
+
+  <h2>Summary</h2>
+  <table>
+    <tbody>
+      <tr><th scope="row">Status</th><td>succeeded</td></tr>
+      <tr><th scope="row">Tool</th><td>toolshed.g2.bx.psu.edu/repos/devteam/fastx_reverse_complement/cshl_fastx_reverse_complement/1.0.2+galaxy2</td></tr>
+      <tr><th scope="row">Step</th><td>step_1</td></tr>
+      <tr><th scope="row">Intent</th><td>reverse_complement</td></tr>
+      <tr><th scope="row">Validation</th><td>pass</td></tr>
+      <tr><th scope="row">Uncertainty</th><td>none</td></tr>
+    </tbody>
+  </table>
+  <p>Galaxy Europe executed FastX Reverse-Complement (1.0.2+galaxy2) on the uploaded FASTA. The output sequence TAGCCGAACGTT is the exact reverse complement of the input sequence AACGTTCGGCTA.</p>
+
+  <h2>Findings</h2>
+  <table><thead><tr><th scope="col">Finding</th><th scope="col">Artifact</th><th scope="col">Field path</th></tr></thead><tbody>
+    <tr>
+      <td>Output sequence TAGCCGAACGTT matches the independently computed reverse complement of the input.</td>
+      <td>reverse_complement.fasta</td>
+      <td><code>sequence</code></td>
+    </tr></tbody></table>
+
+  <h2>Artifacts</h2>
+  <table><thead><tr><th scope="col">Name</th><th scope="col">Kind</th><th scope="col">SHA-256</th><th scope="col">Bytes</th></tr></thead><tbody>
+    <tr>
+      <td>input.fasta</td>
+      <td>fasta</td>
+      <td><code>b947f1b587327eb5039a6bcd9a4d390257f07950618e5d7e81ada6727a7c584a</code></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td>reverse_complement.fasta</td>
+      <td>fasta</td>
+      <td><code>4a19e4efd7dd87c416de9cd3b664df3241e4dd30a018b34a30293343fe77168c</code></td>
+      <td></td>
+    </tr></tbody></table>
+  
+    <section aria-labelledby="artifact-input-fasta">
+      <h3 id="artifact-input-fasta">Artifact: input.fasta</h3>
+      <pre>&gt;m7_2_decisive
+AACGTTCGGCTA
+</pre>
+    </section>
+    <section aria-labelledby="artifact-reverse_complement-fasta">
+      <h3 id="artifact-reverse_complement-fasta">Artifact: reverse_complement.fasta</h3>
+      <pre>&gt;m7_2_decisive
+TAGCCGAACGTT
+</pre>
+    </section>
+
+  <h2>Validation</h2>
+  <p>Status: <strong>pass</strong></p>
+  <p>Checked rules:</p><ul><li>output artifact present</li><li>SHA-256 verified</li><li>reverse-complement known-answer</li></ul>
+  <p>Flags:</p><p>None recorded.</p>
+
+  <h2>Reproducibility</h2>
+  <table>
+    <tbody>
+      <tr><th scope="row">Tool id / version</th><td>galaxy:fastx_reverse_complement / 1.0.2+galaxy2</td></tr>
+      <tr><th scope="row">Backend</th><td>galaxy-europe</td></tr>
+      <tr><th scope="row">Dataset id</th><td><code>ds_0123456789abcdee</code></td></tr>
+      <tr><th scope="row">Input filename</th><td>decisive.fasta</td></tr>
+      <tr><th scope="row">Input SHA-256</th><td><code>b947f1b587327eb5039a6bcd9a4d390257f07950618e5d7e81ada6727a7c584a</code></td></tr>
+      <tr><th scope="row">Parameters</th><td><pre>{}</pre></td></tr>
+      <tr><th scope="row">Database</th><td>None used </td></tr>
+      <tr><th scope="row">Started / finished</th><td>2026-11-25T19:45:00.000Z / 2026-11-25T19:47:00.000Z</td></tr>
+      <tr><th scope="row">Execution mode</th><td>real</td></tr>
+    </tbody>
+  </table>
+  <p class="note">To reproduce, run the registered tool with the exact parameters and dataset hash above through the local execution agent. Artifact hashes are verified before display.</p>
+
+  <h2>Data locality</h2>
+  <table>
+    <tbody>
+      <tr><th scope="row">Receipt mode</th><td>not recorded</td></tr>
+      <tr><th scope="row">No external egress</th><td></td></tr>
+    </tbody>
+  </table>
+  <p>Local operations:</p>
+  <p>No local operations recorded.</p>
+  <p>External transmissions:</p>
+  <p>No external transmissions (no data left the machine).</p>
+  <p>Consent records:</p><p>None recorded.</p>
+
+  <h2>Education notes</h2>
+  <p>No education notes recorded.</p>
+
+  <h2>Limitations</h2>
+  <ul><li>Screening/research use only; not a clinical or diagnostic result.</li><li>Execution used the owner-supplied Galaxy account and the staging Worker.</li></ul>
+  <p class="note">Taxonomic claims require verified BLAST evidence from a local database; this MVP does not produce them from FASTA alone.</p>
+
+  <h2>References</h2>
+  <p>No references recorded.</p>
+</main>
+</body>
+</html>

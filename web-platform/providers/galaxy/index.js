@@ -167,6 +167,22 @@ export function createAdapter(env = {}, deps = {}) {
     return { body: parsed, response, attempts };
   }
 
+  // GET /api/tools returns a panel: sections with nested `elems`, plus entries
+  // such as ToolSection/DataSourceTool that are not API-executable. Only real
+  // Tool entries may be advertised as executable capabilities.
+  function flattenToolPanel(items) {
+    const out = [];
+    for (const entry of asArray(items)) {
+      const item = asObject(entry);
+      if (Array.isArray(item.elems) || item.model_class === "ToolSection") {
+        out.push(...flattenToolPanel(item.elems));
+      } else {
+        out.push(item);
+      }
+    }
+    return out;
+  }
+
   function normalizeTool(raw) {
     const item = asObject(raw);
     const id = safeString(item.id, 300);
@@ -220,7 +236,13 @@ export function createAdapter(env = {}, deps = {}) {
 
   async function quota(ctx) {
     const { body } = await call("GET", "/api/users/current/usage", undefined, ctx);
-    return parseQuota(body);
+    // usegalaxy.eu returns an ARRAY of quota sources (primary + scratch).
+    // The first source carrying quota_bytes is the account's primary quota.
+    const list = Array.isArray(body) ? body : [body];
+    const primary = list.find((item) => finite(asObject(item).quota_bytes) !== null) ?? asObject(list[0]);
+    const parsed = parseQuota(primary);
+    parsed.sources = list.map((item) => parseQuota(item));
+    return parsed;
   }
 
   function systemPromptGuard() {
@@ -295,8 +317,17 @@ export function createAdapter(env = {}, deps = {}) {
       if (part) fileParts.push(part);
     }
     const targets = [{ destination: { type: "hdas" }, elements }];
-    await callFetch(historyId, targets, fileParts, ctx);
-    return targets;
+    const { body } = await callFetch(historyId, targets, fileParts, ctx);
+    // POST /api/tools/fetch returns outputs[0].{id,history_id,name}, jobs[0].id.
+    // These are authoritative and available immediately (state is still queued),
+    // so downstream registration must not wait for getArtifacts() state='ok'.
+    const outputs = asArray(body?.outputs);
+    const jobs = asArray(body?.jobs);
+    return {
+      dataset_id: safeId(asObject(outputs[0]).id, { max: 200 }) || null,
+      history_id: safeString(asObject(outputs[0]).history_id, 200) || historyId,
+      job_id: safeId(asObject(jobs[0]).id, { max: 200 }) || null
+    };
   }
 
   // Legacy path for inline {src:"upload"} descriptors that feed a *scientific*
@@ -351,7 +382,12 @@ export function createAdapter(env = {}, deps = {}) {
       let version = null;
       let user = null;
       let quotaInfo = null;
-      try { version = safeString((await call("GET", "/api/version", undefined, ctx)).body?.version, 100) || null; } catch { /* degraded */ }
+      try {
+        const raw = asObject((await call("GET", "/api/version", undefined, ctx)).body);
+        // usegalaxy.eu reports {version_major, version_minor}, not `version`.
+        version = safeString(raw.version, 100)
+          || [safeString(raw.version_major, 40), safeString(raw.version_minor, 40)].filter(Boolean).join(".") || null;
+      } catch { /* degraded */ }
       try {
         const raw = asObject((await call("GET", "/api/users/current", undefined, ctx)).body);
         user = pick(raw, ["id", "username"]);
@@ -380,7 +416,10 @@ export function createAdapter(env = {}, deps = {}) {
       let live = false;
       try {
         const { body } = await call("GET", "/api/tools", undefined, ctx);
-        tools = asArray(body).map(normalizeTool).filter((tool) => tool.id);
+        tools = flattenToolPanel(body)
+          .filter((item) => !item.model_class || item.model_class === "Tool")
+          .map(normalizeTool)
+          .filter((tool) => tool.id);
         live = true;
       } catch { /* no tool catalog: nothing may be advertised */ }
       try {
@@ -491,8 +530,10 @@ export function createAdapter(env = {}, deps = {}) {
         // POST /api/tools + upload1 body is rejected by Galaxy.
         if (payload.operation === OPERATIONS.SUBMIT_JOB
           && safeString(payload.tool_id, 300) === UPLOAD_TOOL_ID) {
-          await uploadDataset(payload.inputs, historyId, ctx);
-          return jobResult(makeId(ctx, "galaxy"), "new", historyId, { submitted_at: submittedAt });
+          const upload = await uploadDataset(payload.inputs, historyId, ctx);
+          const result = jobResult(upload.job_id ?? makeId(ctx, "galaxy"), "new", upload.history_id ?? historyId, { submitted_at: submittedAt });
+          result.output.structured.dataset_id = upload.dataset_id;
+          return result;
         }
         let response;
         if (payload.operation === OPERATIONS.INVOKE_WORKFLOW) {
@@ -512,9 +553,18 @@ export function createAdapter(env = {}, deps = {}) {
             inputs: merged
           }, ctx, { attempts: 2 })).body;
         }
-        const job = asObject(response);
-        const result = jobResult(job.id ?? job.provider_job_id, job.state, historyId, { submitted_at: submittedAt });
+        // POST /api/tools returns {outputs:[...], jobs:[{id,state,...}]}.
+        // The real job id lives in jobs[0], not at the top level.
+        const returnedJobs = asArray(asObject(response).jobs);
+        const job = asObject(returnedJobs[0]);
+        const result = jobResult(
+          job.id ?? asObject(response).id ?? null,
+          job.state ?? asObject(response).state ?? "new",
+          historyId,
+          { submitted_at: submittedAt }
+        );
         result.provider_job_id = result.provider_job_id || makeId(ctx, "galaxy");
+        result.output.structured.outputs = asArray(asObject(response).outputs).map((item) => asObject(item).id).filter(Boolean);
         return result;
       } catch (error) {
         return {

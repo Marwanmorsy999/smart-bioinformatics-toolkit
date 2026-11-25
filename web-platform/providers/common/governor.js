@@ -150,6 +150,9 @@ export class UsageGovernor {
   // reservation state and refuses unknown budgets.
   async reserve({ provider, unit, amount, category = "general", consentVerified = true, operation = null, idFactory = null }) {
     if (!this.state) await this.initialize();
+    // Persisted state may have been seeded by an operator row; ensure the
+    // per-provider containers exist before any read/write.
+    ensureProviderContainers(this.state, provider);
     const denial = (reason, extra = {}) => ({ ok: false, reason, provider, ...extra });
 
     if (!PROVIDER_IDS.includes(provider)) return denial("unknown_provider");
@@ -192,6 +195,7 @@ export class UsageGovernor {
     if (!reservation) return { ok: false, reason: "unknown_reservation" };
     const quantity = Math.max(0, Number(actual) || 0);
     const { provider, unit, category, amount } = reservation;
+    ensureProviderContainers(this.state, provider);
     this.state.reserved[provider][unit] = Math.max(0, Number(this.state.reserved[provider][unit] ?? 0) - Number(amount));
     this.state.used[provider][unit] = Number(this.state.used[provider][unit] ?? 0) + quantity;
     if (!this.state.usedByCategory[provider]) this.state.usedByCategory[provider] = {};
@@ -207,6 +211,7 @@ export class UsageGovernor {
     const reservation = this.state.reservations[reservationId];
     if (!reservation) return { ok: false, reason: "unknown_reservation" };
     const { provider, unit, amount } = reservation;
+    ensureProviderContainers(this.state, provider);
     this.state.reserved[provider][unit] = Math.max(0, Number(this.state.reserved[provider][unit] ?? 0) - Number(amount));
     delete this.state.reservations[reservationId];
     await this.storage.save(this.state);

@@ -37,7 +37,8 @@ name = "smart-bioinformatics-toolkit-staging"
 assets = { directory = "./public", binding = "ASSETS", run_worker_first = true }
 
 [env.staging.vars]
-GALAXY_ENABLED = "false"
+# M7.2: Galaxy is the first enabled provider, staging only. Production stays off.
+GALAXY_ENABLED = "true"
 SMARTSBIO_ENABLED = "false"
 NINEROUTER_ENABLED = "false"
 

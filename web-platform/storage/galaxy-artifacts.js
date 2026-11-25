@@ -341,6 +341,17 @@ export function createGalaxyArtifactStore(db, env = {}, deps = {}) {
     if (submitted?.error) throw fromProviderError(submitted.error);
     const historyId = String(submitted?.output?.structured?.history_id ?? "");
     if (!historyId) throw artifactError("missing_history", "Galaxy did not return a history for the upload.", 502);
+    // /api/tools/fetch returns the new dataset id immediately. Use it directly;
+    // getArtifacts() only lists completed datasets and would race the upload job.
+    const returned = String(submitted?.output?.structured?.dataset_id ?? "");
+    const returnedDatasetId = /^[0-9a-f]{16,64}$/.test(returned) ? returned : null;
+    if (returnedDatasetId) {
+      return register({
+        dataset_id, galaxy_dataset_id: returnedDatasetId,
+        job_id: submitted.provider_job_id ?? null, history_id: historyId,
+        filename, ext, direction: DIRECTIONS.INPUT, sha256, bytes, project_id
+      });
+    }
     const listed = await adapter.getArtifacts({ history_id: historyId }, ctx());
     if (listed?.error) throw fromProviderError(listed.error);
     const artifacts = Array.isArray(listed?.artifacts) ? listed.artifacts : [];

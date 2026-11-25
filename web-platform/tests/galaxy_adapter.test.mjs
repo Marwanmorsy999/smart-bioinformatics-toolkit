@@ -52,6 +52,45 @@ function discoveryFetch(calls, overrides = {}) {
   };
 }
 
+test("Galaxy tool submission uses the real job id from jobs[0]", async () => {
+  const calls = [];
+  const baseFetch = discoveryFetch(calls);
+  const fetchImpl = async (input, init = {}) => {
+    if (String(input).endsWith("/api/tools") && (init.method ?? "GET") === "POST") {
+      return json({
+        outputs: [{ id: "mock-output-ds" }],
+        jobs: [{ id: "mock-real-galaxy-job", state: "queued" }]
+      });
+    }
+    return baseFetch(input, init);
+  };
+  const result = await createAdapter(env()).submitJob({
+    operation: OPERATIONS.SUBMIT_JOB, tool_id: "mock.tool.alpha",
+    history_id: "mock-history-id", inputs: {}, params: {}
+  }, { fetch: fetchImpl, sleep: noSleep() });
+  assert.equal(result.status, "queued");
+  assert.equal(result.provider_job_id, "mock-real-galaxy-job");
+  assert.deepEqual(result.output.structured.outputs, ["mock-output-ds"]);
+});
+
+test("Galaxy quota parsing handles the live array-of-sources response", async () => {
+  const calls = [];
+  const baseFetch = discoveryFetch(calls);
+  const fetchImpl = async (input, init = {}) => {
+    if (String(input).endsWith("/api/users/current/usage")) {
+      return json([
+        { quota_bytes: 268435456000, total_disk_usage: 0, quota_percent: 0, quota: "268.4 GB" },
+        { quota_bytes: 2199023255552, total_disk_usage: 0, quota_source_label: "scratch", quota: "2.2 TB" }
+      ]);
+    }
+    return baseFetch(input, init);
+  };
+  const limits = await createAdapter(env()).getLimits({ fetch: fetchImpl, sleep: noSleep() });
+  assert.equal(limits.units.bytes.total, 268435456000, "primary quota must be selected from the array");
+  assert.equal(limits.units.bytes.used, 0);
+  assert.equal(limits.units.jobs.total, null, "no invented concurrency quota");
+});
+
 test("Galaxy tool/workflow discovery is fully dynamic: no hardcoded expected id", async () => {
   const calls = [];
   const adapter = createAdapter(env());
