@@ -289,6 +289,41 @@ export function isTerminalState(state) {
   return TERMINAL_STATES.has(state);
 }
 
+// The single state-machine facade. providers/workspace/states.js is a shim over
+// these functions so there is exactly one transition map (STATE_TRANSITIONS)
+// and one list of states (WORKSPACE_STATES) in the codebase.
+export const RUN_STATES = WORKSPACE_STATES;
+
+export function canTransition(from, to) {
+  return isValidTransition(from, to);
+}
+
+export function assertTransition(from, to) {
+  if (!canTransition(from, to)) throw new Error(`invalid_run_transition:${from}->${to}`);
+  return to;
+}
+
+export function isTerminal(state) {
+  return isTerminalState(state);
+}
+
+/**
+ * Stage reporting derived from the authoritative run state. A completed
+ * execution stage never implies artifact retrieval or validation succeeded.
+ */
+export function runSummary(row) {
+  const state = String(row?.state ?? "");
+  return {
+    state,
+    submitted: !["draft", "planned"].includes(state),
+    running: ["running", "execution_completed", "artifact_retrieval", "validation", "succeeded"].includes(state),
+    execution_completed: ["execution_completed", "artifact_retrieval", "validation", "succeeded"].includes(state),
+    artifact_retrieved: ["artifact_retrieval", "validation", "succeeded"].includes(state),
+    validated: ["validation", "succeeded"].includes(state),
+    full_workflow_completed: state === "succeeded"
+  };
+}
+
 /**
  * A succeeded run must have a complete provenance record. This is the honesty
  * gate: the API never marks a run successful on incomplete evidence.
