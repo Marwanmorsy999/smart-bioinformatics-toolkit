@@ -72,3 +72,18 @@ A real request was sent from the deployed staging Worker (`Version ID dcc827cf-6
 
 **Security note**: the debug schema endpoint (`/api/ai/workflows/phylo/tool`) returns only tool metadata; `X-API-Key` is used server-side and never returned.
 
+
+
+## Recovery addendum â€” schema discovery and first verified MAFFT execution (final)
+
+**Schema discovery (authenticated, live, redacted):** the endpoint
+`GET /api/tools/{tool_id}?io_details=true&tool_version={version}` returned HTTP 200 with the full, instance-specific tool definition. Routes tested: `?io_details=true` â†’ 200 with `inputs`; `/interop` â†’ 200 panel metadata only; `/build` (with a valid history) â†’ 200 with resolved HDA options and exact field names; `/parameter_request_schema` â†’ 200 panel metadata only. All responses sanitized (32+ char IDs redacted); no credentials or headers returned.
+
+MAFFT `toolshed.g2.bx.psu.edu/repos/rnateam/mafft/rbc_mafft/7.526+galaxy2` real inputs: conditional `input` (test param `mapping`, verified default `implicit`), inside case `implicit` a repeat `batches` (default 1) containing required data parameter `inputs` (extensions `fasta`); conditional `datatype_selection` (test param `datatype`, default `""` = auto-detect); optional `seed`. Derived Galaxy form names: `input|mapping`, `input|batches_0|inputs`, `datatype_selection|datatype`. IQ-TREE `toolshed.g2.bx.psu.edu/repos/iuc/iqtree/iqtree/3.1.4+galaxy1`: section `general_options` containing data param `s` (FASTA/PHYLIP/etc.), plus verified defaults (`seqtype=DNA`, etc.); derived name `general_options|s`.
+
+**Real MAFFT run:** after implementing the schema-driven payload (`web-platform/providers/galaxy/galaxy_schema.js`, tests in `tests/phylo_galaxy_schema.test.mjs`), a real MAFFT job was submitted through the deployed staging Worker and **completed**: Galaxy job `4838ba20a6d8676526e1c47a033d95de`, state `ok`, exit_code 0, tool version reported by the instance as `v7.526 (2024/Apr/26)`, create_time `2026-11-25T21:44:34`, update_time `2026-11-25T21:46:21`. Its real output dataset UUID is `cf2a6760-b219-4212-a609-aa37286628f5` (from the job's `outputs.outputAlignment` / command line). Input dataset `40160950115d555ef559061fbced7bce` in history `11ac94870d0bb33adfdcc31d5164dd84`, input SHA-256 `a0e181d42477ba4e466d678d647e3b8544b7c84af281734eb908d90c9a5782e4`.
+
+**Known defect:** the run endpoint's bounded poll reported `timeout` although Galaxy shows the job `ok` â€” the poll window was consumed by upload-readiness waiting plus a 120s cap; this is a timing defect, not a Galaxy failure. A resume path was added to use the completed alignment dataset, but `getArtifacts({dataset_id})` did not resolve that dataset (`resume dataset unavailable`), so retrieval/tree inference/validation remain blocked.
+
+**Verdict components:** schema discovery PASS; MAFFT submission + real completion PASS (job evidence above); tree schema discovery PASS; alignment artifact retrieval, tree job, independent remote artifact validation, run-derived report with remote artifacts, and full website E2E with a real completed workflow â€” NOT ACHIEVED. Key rotation not performed (no new credential supplied; no secret printed).
+
