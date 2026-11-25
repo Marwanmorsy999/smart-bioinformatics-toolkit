@@ -1,0 +1,44 @@
+{
+    "model_class":  "Tool",
+    "id":  "toolshed.g2.bx.psu.edu/repos/iuc/fasttree/fasttree/2.1.10+galaxy1",
+    "name":  "FASTTREE",
+    "version":  "2.1.10+galaxy1",
+    "description":  "build maximum-likelihood phylogenetic trees",
+    "labels":  [
+
+               ],
+    "icon":  null,
+    "edam_operations":  [
+                            "operation_0547",
+                            "operation_0540"
+                        ],
+    "edam_topics":  [
+                        "topic_0080",
+                        "topic_3293"
+                    ],
+    "hidden":  "",
+    "is_workflow_compatible":  true,
+    "xrefs":  [
+                  {
+                      "value":  "fasttree",
+                      "type":  "bio.tools"
+                  }
+              ],
+    "versions":  [
+                     "2.1.10",
+                     "2.1.10+galaxy1"
+                 ],
+    "hidden_versions":  [
+
+                        ],
+    "tool_shed_repository":  {
+                                 "name":  "fasttree",
+                                 "owner":  "iuc",
+                                 "changeset_revision":  "e7dca6f804c1",
+                                 "tool_shed":  "toolshed.g2.bx.psu.edu"
+                             },
+    "has_parameters":  true,
+    "panel_section_id":  "genome_diversity",
+    "panel_section_name":  "Genome Diversity",
+    "form_style":  "regular"
+}

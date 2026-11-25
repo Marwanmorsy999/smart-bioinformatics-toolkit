@@ -1,0 +1,41 @@
+{
+    "model_class":  "Tool",
+    "id":  "toolshed.g2.bx.psu.edu/repos/crs4/muscle/muscle/0.0.11",
+    "name":  "MUSCLE",
+    "version":  "0.0.11",
+    "description":  "multiple aligner",
+    "labels":  [
+
+               ],
+    "icon":  null,
+    "edam_operations":  [
+                            "operation_0492"
+                        ],
+    "edam_topics":  [
+                        "topic_0080"
+                    ],
+    "hidden":  "",
+    "is_workflow_compatible":  true,
+    "xrefs":  [
+                  {
+                      "value":  "muscle",
+                      "type":  "bio.tools"
+                  }
+              ],
+    "versions":  [
+                     "0.0.11"
+                 ],
+    "hidden_versions":  [
+
+                        ],
+    "tool_shed_repository":  {
+                                 "name":  "muscle",
+                                 "owner":  "crs4",
+                                 "changeset_revision":  "533b3b2a1e66",
+                                 "tool_shed":  "toolshed.g2.bx.psu.edu"
+                             },
+    "has_parameters":  true,
+    "panel_section_id":  "multiple_alignments",
+    "panel_section_name":  "Multiple Alignments",
+    "form_style":  "regular"
+}
