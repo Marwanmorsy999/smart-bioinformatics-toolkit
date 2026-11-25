@@ -25,6 +25,7 @@ import { validateFasta } from "../../../blast/_lib.js";
 import { createAdapter } from "../../../../../providers/galaxy/index.js";
 import { findPhyloTools } from "../../../../../providers/galaxy/galaxy_phylo.js";
 import { fetchToolSchema, buildSchemaPayload } from "../../../../../providers/galaxy/galaxy_schema.js";
+import { classifyJobState, parseJobOutputs, parseHistoryContents, resolveJobOutput } from "../../../../../providers/galaxy/galaxy_ids.js";
 import { validateAlignment, validateTree } from "./validators.js";
 
 const STEP_IDS = Object.freeze([
@@ -42,10 +43,11 @@ async function poll(adapter, jobId, ctx, { attempts = 60, intervalMs = 2000 } = 
   for (let i = 0; i < attempts; i += 1) {
     const status = await adapter.getJobStatus({ job_id: jobId }, ctx);
     const state = String(status.status ?? "").toLowerCase();
-    if (terminal(state)) return status;
+    const classified = classifyJobState(state);
+    if (classified === "succeeded" || classified === "failed") return { ...status, status: classified };
     await sleep(intervalMs);
   }
-  return { status: "timeout", provider_job_id: jobId };
+  return { status: "timeout", provider_job_id: jobId, timed_out: true };
 }
 
 export async function onRequest(context) {
@@ -124,9 +126,12 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
   try {
     let readyId = null;
     if (resumeId) {
-      const prior = await adapter.getArtifacts({ dataset_id: resumeId }, ctx);
-      if (!prior.ok || (prior.artifacts ?? []).length === 0) throw new Error("resume dataset unavailable");
-      readyId = prior.artifacts[0].id;
+      // A dataset UUID is NOT an HDA id. Resolve it against history contents
+      // and use the HDA id for all dataset content/download routes.
+      const contents = historyId ? await adapter.getArtifacts({ history_id: historyId }, ctx) : { artifacts: [] };
+      const match = (contents.artifacts ?? []).find((a) => a.id === resumeId || a.uuid === resumeId || a.dataset_id === resumeId);
+      if (!match) throw new Error("resume output association unavailable: no HDA matching UUID in verified history contents");
+      readyId = match.id;
       historyId = prior.artifacts[0].history_id ?? null;
       await recordStep("upload_input", "upload1", null, "succeeded", createdAt, nowIso(now), { resumed: true });
       await recordStep("galaxy_mafft", tools.mafft.id, null, "succeeded", createdAt, nowIso(now),
@@ -220,6 +225,7 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
     tree_newick: treeText, alignment_text: alignmentText
   }, failed ? 502 : 200, request);
 }
+
 
 
 
