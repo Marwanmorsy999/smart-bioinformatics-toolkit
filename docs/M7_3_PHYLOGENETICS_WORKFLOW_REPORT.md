@@ -87,3 +87,13 @@ MAFFT `toolshed.g2.bx.psu.edu/repos/rnateam/mafft/rbc_mafft/7.526+galaxy2` real 
 
 **Verdict components:** schema discovery PASS; MAFFT submission + real completion PASS (job evidence above); tree schema discovery PASS; alignment artifact retrieval, tree job, independent remote artifact validation, run-derived report with remote artifacts, and full website E2E with a real completed workflow â€” NOT ACHIEVED. Key rotation not performed (no new credential supplied; no secret printed).
 
+## M7.3.1 diagnosis and offline fixes (no further live execution; key not rotated)
+
+**Cause of `resume dataset unavailable`:** the resume path used the dataset UUID `cf2a6760-b219-4212-a609-aa37286628f5` as though it were a Galaxy HDA id. The Galaxy job probe showed `outputs.outputAlignment` with both `id` (the HDA id used by `/api/datasets/{id}` and history contents) and a different `uuid`; `job.params.input` carried a numeric HDA id (`310912901`). Passing the UUID to `getArtifacts({dataset_id})` therefore resolved no history dataset. Fixed by explicit identifier types (`galaxyHdaId`, `galaxyDatasetId`, `galaxyDatasetUuid`) and membership validation in `providers/galaxy/galaxy_ids.js`; regression fixtures use an HDA id distinct from the UUID.
+
+**Polling defect:** the old poll treated any non-terminal state after its window as `timeout` without reconciling Galaxy's `ok` state; the completed job (state `ok`, exit 0) was reported as timeout. Fixed with an explicit state machine (`classifyJobState`): `ok` â†’ succeeded; queued/running continue; failed/deleted â†’ failed; timeout only after the genuine deadline. A completed job is never reported as timeout; missing artifacts do not masquerade as a failed/timeout job.
+
+**Live evidence already captured (not renewed):** MAFFT job `4838ba20a6d8676526e1c47a033d95de` state `ok`, exit 0, version `v7.526`, output association with HDA id `40160950115d555ef559061fbced7bce`, dataset UUID `cf2a6760-b219-4212-a609-aa37286628f5`, history `11ac94870d0bb33adfdcc31d5164dd84`, input SHA-256 `a0e181d42477ba4e466d678d647e3b8544b7c84af281734eb908d90c9a5782e4`.
+
+**Security:** the exposed staging key has NOT been rotated (no replacement credential supplied; no credential printed). Per milestone rules, NO further live Galaxy calls were made in this continuation; recovery of the alignment through the live API, IQ-TREE execution, Newick retrieval, and the full website E2E with a real cloud workflow were therefore NOT performed or claimed. Overall verdict: BLOCKED pending rotation and verified live recovery.
+

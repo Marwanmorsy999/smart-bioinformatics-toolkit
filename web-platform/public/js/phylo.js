@@ -1,4 +1,4 @@
-// M7.3 website controller — upload, plan, approval, live progress, tree view.
+﻿// M7.3 website controller â€” upload, plan, approval, live progress, tree view.
 const $ = (id) => document.getElementById(id);
 if (typeof window !== "undefined") window.__phylo = { renderTree, parseNewick };
 let state = { fasta: "", filename: "", objective: "", plan: null, planId: null, pollTimer: null };
@@ -25,7 +25,7 @@ $("phylo-file").addEventListener("change", async (event) => {
 
 $("phylo-plan").addEventListener("click", async () => {
   if (!state.fasta.trim()) { $("phylo-status").textContent = "Choose a FASTA file first."; return; }
-  $("phylo-status").textContent = "Validating input and preparing plan…";
+  $("phylo-status").textContent = "Validating input and preparing planâ€¦";
   state.objective = $("phylo-objective").value.trim();
   const hash = await sha256(state.fasta);
   // The plan is computed from the verified step list; no bytes are transmitted
@@ -40,9 +40,9 @@ $("phylo-plan").addEventListener("click", async () => {
     { id: "generate_report", tool_id: "phylogenetics.report", note: "Job-derived reproducible report" }
   ], input_sha256: hash, filename: state.filename, objective: state.objective };
   $("phylo-plan-steps").innerHTML = state.plan.steps.map((s) =>
-    `<li><strong>${s.id}</strong> — ${s.note}${s.tool_id ? ` <code>${s.tool_id}</code>` : ""}</li>`).join("");
+    `<li><strong>${s.id}</strong> â€” ${s.note}${s.tool_id ? ` <code>${s.tool_id}</code>` : ""}</li>`).join("");
   $("phylo-plan-view").hidden = false;
-  $("phylo-status").textContent = "Plan ready. Nothing has been uploaded yet — approve to execute.";
+  $("phylo-status").textContent = "Plan ready. Nothing has been uploaded yet â€” approve to execute.";
 });
 
 $("phylo-approve-check").addEventListener("change", (e) => {
@@ -119,7 +119,7 @@ function renderTree(newick, mount) {
 
 $("phylo-run").addEventListener("click", async () => {
   $("phylo-run").disabled = true;
-  $("phylo-status").textContent = "Approved — submitting to Galaxy…";
+  $("phylo-status").textContent = "Approved â€” submitting to Galaxyâ€¦";
   $("phylo-progress").hidden = false;
   const response = await fetch("/api/ai/workflows/phylo/run", {
     method: "POST", headers: { "Content-Type": "application/json" },
@@ -128,7 +128,8 @@ $("phylo-run").addEventListener("click", async () => {
   const body = await response.json();
   if (!response.ok) { $("phylo-status").textContent = `Run failed: ${body.error ?? response.status}`; $("phylo-run").disabled = false; return; }
   state.planId = body.plan_id;
-  $("phylo-status").textContent = `Run ${body.run_id} started; validation: ${body.validation?.status ?? "unknown"}.`;
+  const stage = body.workflow_completed ? "FULL WORKFLOW COMPLETED" : "JOB SUBMITTED / INCOMPLETE â€” artifacts may not be retrieved or validated";
+  $("phylo-status").textContent = `Run ${body.run_id}: ${stage} (validation: ${body.validation?.status ?? "unknown"})`;
   $("phylo-provenance").textContent = JSON.stringify(body.provenance, null, 2);
   $("phylo-validation").textContent = `Alignment: ${body.validation?.alignment?.valid ? "PASS" : "FAIL"}; Tree: ${body.validation?.tree?.valid ? "PASS" : "FAIL"}`;
   const treeJob = body.job_ids?.galaxy_iqtree;
@@ -142,3 +143,4 @@ $("phylo-run").addEventListener("click", async () => {
   if (body.tree_newick) renderTree(body.tree_newick, $("phylo-tree"));
   else $("phylo-tree").textContent = "Tree is available in the job-derived report; awaiting tree dataset text.";
 });
+
