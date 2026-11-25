@@ -1,11 +1,11 @@
-// M7.3.1 — explicit Galaxy identifier handling.
+﻿// M7.3.1 â€” explicit Galaxy identifier handling.
 // Galaxy instances expose several different identifiers for one output:
-//   hda id       (`id` in history contents and job outputs) — used by /api/datasets/{id}
-//   dataset id   (`dataset_id`) — underlying dataset association
-//   dataset UUID (`uuid`) — persistent dataset identity, NOT an HDA id
+//   hda id       (`id` in history contents and job outputs) â€” used by /api/datasets/{id}
+//   dataset id   (`dataset_id`) â€” underlying dataset association
+//   dataset UUID (`uuid`) â€” persistent dataset identity, NOT an HDA id
 // This module never guesses: it parses actual instance responses and validates
 // that the chosen HDA belongs to the run's history before any download.
-const HEX_ID = /^[0-9a-f]{8,64}$/i;
+const HEX_ID = /^[0-9a-f]{8,64}(-[0-9a-f]{4,12}){0,4}$/i;
 
 export function normalizeOutputAssociation(raw, { historyId = null } = {}) {
   const item = raw && typeof raw === "object" ? raw : {};
@@ -71,3 +71,4 @@ export function classifyJobState(rawState, { timedOut = false } = {}) {
   if (ACTIVE.has(state)) return timedOut ? "timeout" : "running";
   return timedOut ? "timeout" : "unknown";
 }
+
