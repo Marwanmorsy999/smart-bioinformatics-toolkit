@@ -6,7 +6,7 @@ import {
   requireEnabled, getGovernor, providerPayload, normalizeForApi,
   safeString, nowIso, isPublicId, rateLimit
 } from "../_lib.js";
-import { getDb, insertRow, getRow, makeId, parseJson } from "../../ai/_lib.js";
+import { getDb, insertRow, getRow, makeId, parseJson, runStatement } from "../../ai/_lib.js";
 import { PROVIDER_SQL } from "../_lib.js";
 import { OPERATIONS, JOB_STATUS } from "../../../../providers/common/contract.js";
 
@@ -60,7 +60,19 @@ export async function onRequest(context) {
   if (!db) return errorResponse("D1 binding is unavailable; job submission is fail-closed.", 503, request);
 
   const consent = await getRow(db, PROVIDER_SQL.getConsentRecord, [consentId]);
-  if (!consent || consent.granted !== 1 || consent.provider !== providerId || consent.dataset_id !== datasetId) {
+  if (!consent || consent.provider !== providerId || consent.dataset_id !== datasetId) {
+    return errorResponse("Consent does not cover this provider and dataset.", 403, request, {
+      "X-Governor-Reason": "consent_mismatch"
+    });
+  }
+  // A spent consent is an idempotency signal, not a generic mismatch: repeat
+  // submissions must be distinguishable from "no consent for this dataset".
+  if (consent.used_at) {
+    return errorResponse("Consent has already been used for a submission.", 409, request, {
+      "X-Governor-Reason": "duplicate_submission"
+    });
+  }
+  if (Number(consent.granted) !== 1) {
     return errorResponse("Consent does not cover this provider and dataset.", 403, request, {
       "X-Governor-Reason": "consent_mismatch"
     });
@@ -74,6 +86,16 @@ export async function onRequest(context) {
   }
   if (scope.destination && scope.destination !== providerId) {
     return errorResponse("Consent does not cover this destination.", 403, request, { "X-Governor-Reason": "consent_scope_destination" });
+  }
+
+  // Single-use consent claim: the conditional update is the atomic gate that
+  // prevents two concurrent requests from submitting the same transfer twice.
+  // A spent consent is never restored, even if the later provider call fails.
+  const claim = await runStatement(db, PROVIDER_SQL.consumeConsent, [nowIso(), consentId]);
+  if (!(Number(claim?.meta?.changes ?? claim?.changes ?? 0) > 0)) {
+    return errorResponse("Consent has already been used for a submission.", 409, request, {
+      "X-Governor-Reason": "duplicate_submission"
+    });
   }
 
   const byteCount = Number(payload.size_bytes ?? 0);
@@ -120,7 +142,8 @@ export async function onRequest(context) {
   try {
     const provider = registry.getProvider(providerId);
     const validation = provider.validateRequest(operation, {
-      tool_id: toolId, workflow_id: workflowId, params: payload.params ?? {}, inputs: payload.inputs ?? {}
+      tool_id: toolId || undefined, workflow_id: workflowId || undefined,
+      params: payload.params ?? {}, inputs: payload.inputs ?? {}
     });
     if (!validation.valid) throw new Error(validation.error ?? "Invalid provider request.");
 

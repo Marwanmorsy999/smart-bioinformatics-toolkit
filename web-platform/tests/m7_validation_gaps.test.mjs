@@ -65,6 +65,13 @@ function createProviderDb(seed = {}) {
             state.consents.set(public_id, { public_id, dataset_id, provider, destination, scope_json, granted, created_at, expires_at });
             return { success: true, meta: { changes: 1 } };
           }
+          if (sql === PROVIDER_SQL.consumeConsent) {
+            const row = state.consents.get(v[1]);
+            if (!row || row.granted !== 1 || row.used_at) return { success: true, meta: { changes: 0 } };
+            row.granted = 0;
+            row.used_at = v[0];
+            return { success: true, meta: { changes: 1 } };
+          }
           if (sql === PROVIDER_SQL.insertProviderJob) { state.jobs.push([...v]); return { success: true, meta: { changes: 1 } }; }
           if (sql === PROVIDER_SQL.insertTransfer) { state.transfers.push([...v]); return { success: true, meta: { changes: 1 } }; }
           if (sql === GOVERNOR_ALERT_SQL) { state.alerts.push([...v]); return { success: true, meta: { changes: 1 } }; }

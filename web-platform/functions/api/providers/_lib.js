@@ -31,6 +31,9 @@ export const PROVIDER_SQL = {
   listTransfers: "SELECT * FROM provider_transfers ORDER BY created_at DESC LIMIT ?",
   insertConsentRecord: "INSERT INTO provider_consents (public_id, dataset_id, provider, destination, scope_json, granted, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
   getConsentRecord: "SELECT * FROM provider_consents WHERE public_id = ?",
+  // Single-use consent: after a successful submission the record is spent, so
+  // the same consent cannot authorize a second external transfer.
+  consumeConsent: "UPDATE provider_consents SET granted = 0, used_at = ? WHERE public_id = ? AND granted = 1",
   insertArtifactRecord: "INSERT INTO provider_artifacts (public_id, dataset_id, object_key, filename, mime, sha256, bytes, status, created_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   getArtifactRecord: "SELECT * FROM provider_artifacts WHERE public_id = ?",
   markArtifactDeleted: "UPDATE provider_artifacts SET status = ?, deleted_at = ? WHERE public_id = ?",

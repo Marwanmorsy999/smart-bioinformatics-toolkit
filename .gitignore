@@ -4,6 +4,7 @@ __pycache__/
 .venv/
 venv/
 .env
+.dev.vars
 .DS_Store
 Thumbs.db
 python-engine/output/
