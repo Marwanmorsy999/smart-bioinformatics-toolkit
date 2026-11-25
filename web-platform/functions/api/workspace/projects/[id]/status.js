@@ -32,7 +32,8 @@ export async function handleSetProjectStatus(request, env, projectId, status, { 
     if (!row) return errorResponse("Project not found.", 404, request);
     const timestamp = nowIso(now);
     await runStatement(db, SQL.setProjectStatus, [status, timestamp, projectId, owner]);
-    await workspaceAudit(db, owner, `workspace_project_${status}`, projectId, {
+    const action = status === "archived" ? "workspace_project_archived" : "workspace_project_activated";
+    await workspaceAudit(db, owner, action, projectId, {
       previous_status: row.status ?? "active"
     }, idFactory, timestamp);
     return jsonResponse({

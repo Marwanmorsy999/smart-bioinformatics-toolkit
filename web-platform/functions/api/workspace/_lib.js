@@ -125,8 +125,15 @@ function hasForbiddenUrl(payload) {
   return Object.keys(payload).some((key) => FORBIDDEN_URL_KEYS.has(key.toLowerCase()));
 }
 
+function tooLong(payload, key, max) {
+  return typeof payload[key] === "string" && payload[key].length > max;
+}
+
 export function validateProjectCreate(payload) {
   if (!isPlainObject(payload)) return { error: "Request body must be an object." };
+  if (tooLong(payload, "name", 200)) return { error: "name is too long (200 character limit)." };
+  if (tooLong(payload, "description", 2000)) return { error: "description is too long (2000 character limit)." };
+  if (tooLong(payload, "scientific_objective", 2000)) return { error: "scientific_objective is too long (2000 character limit)." };
   const name = field(payload, "name", 200);
   if (!name) return { error: "name is required (max 200 characters)." };
   const status = field(payload, "status", 40, "active");
@@ -144,6 +151,9 @@ export function validateProjectCreate(payload) {
 
 export function validateProjectPatch(payload) {
   if (!isPlainObject(payload)) return { error: "Request body must be an object." };
+  if (tooLong(payload, "name", 200) || tooLong(payload, "description", 2000) || tooLong(payload, "scientific_objective", 2000)) {
+    return { error: "A project field exceeds its length limit." };
+  }
   const value = {};
   if (Object.hasOwn(payload, "name")) {
     value.name = field(payload, "name", 200);

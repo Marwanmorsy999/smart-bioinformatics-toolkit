@@ -52,7 +52,8 @@ export const WORKFLOWS = Object.freeze([
 export const WORKFLOW_IDS = Object.freeze(WORKFLOWS.map((workflow) => workflow.id));
 
 export function listWorkflows() {
-  return WORKFLOWS.map((workflow) => ({ ...workflow }));
+  // Deep copy: callers may not mutate the frozen catalog's nested metadata.
+  return JSON.parse(JSON.stringify(WORKFLOWS));
 }
 
 export function getWorkflow(id) {
