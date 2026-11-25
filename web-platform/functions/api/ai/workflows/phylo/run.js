@@ -122,47 +122,44 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
   }
 
   try {
-    // Step 1 â€” upload (Galaxy's generic pasted-content upload primitive).
-    const upload = await adapter.submitJob({
-      operation: "submit_job", tool_id: "upload1",
-      inputs: { file1: { filename, extension: "fasta", content: fasta } }
-    }, ctx);
-    historyId = upload.output?.structured?.history_id ?? null;
-    if (upload.error) throw new Error(`Galaxy upload failed: ${upload.error.message ?? upload.error.code}`);
-    await recordStep("upload_input", "upload1", upload.provider_job_id, "succeeded", createdAt, nowIso(now),
-      { dataset_id: upload.output?.structured?.dataset_id ?? null, history_id: historyId });
-
+    let readyId = null;
     if (resumeId) {
-      // Resume from a previously completed real MAFFT output dataset.
       const prior = await adapter.getArtifacts({ dataset_id: resumeId }, ctx);
       if (!prior.ok || (prior.artifacts ?? []).length === 0) throw new Error("resume dataset unavailable");
       readyId = prior.artifacts[0].id;
+      historyId = prior.artifacts[0].history_id ?? null;
       await recordStep("upload_input", "upload1", null, "succeeded", createdAt, nowIso(now), { resumed: true });
-      await recordStep("galaxy_mafft", tools.mafft.id, null, "succeeded", createdAt, nowIso(now), { resumed: true, dataset_id: readyId });
+      await recordStep("galaxy_mafft", tools.mafft.id, null, "succeeded", createdAt, nowIso(now),
+        { resumed: true, dataset_id: readyId, tool_version: tools.mafft.version });
+    } else {
+      const upload = await adapter.submitJob({
+        operation: "submit_job", tool_id: "upload1",
+        inputs: { file1: { filename, extension: "fasta", content: fasta } }
+      }, ctx);
+      historyId = upload.output?.structured?.history_id ?? null;
+      if (upload.error) throw new Error(`Galaxy upload failed: ${upload.error.message ?? upload.error.code}`);
+      await recordStep("upload_input", "upload1", upload.provider_job_id, "succeeded", createdAt, nowIso(now),
+        { dataset_id: upload.output?.structured?.dataset_id ?? null, history_id: historyId });
+      readyId = upload.output?.structured?.dataset_id ?? null;
+      for (let i = 0; i < 30 && historyId; i += 1) {
+        const contents = await adapter.getArtifacts({ history_id: historyId }, ctx);
+        const ready = (contents.artifacts ?? []).find((a) => a.id === readyId || a.name === filename);
+        if (ready) { readyId = ready.id; break; }
+        await sleep(1500);
+      }
+      // MAFFT payload built from the live schema discovered on this instance.
+      const mafftSchema = await fetchToolSchema(env, tools.mafft.id, tools.mafft.version);
+      const mafftPayload = buildSchemaPayload(mafftSchema, readyId);
+      if (!mafftPayload.valid) throw new Error(`MAFFT schema failure: ${mafftPayload.errors.join(", ")}`);
+      const mafft = await adapter.submitJob({ operation: "submit_job", tool_id: tools.mafft.id, inputs: mafftPayload.inputs }, ctx);
+      if (mafft.error) throw new Error(`MAFFT submission failed: ${mafft.error.message ?? mafft.error.code}`);
+      const mafftState = await poll(adapter, mafft.provider_job_id, ctx);
+      if (!["ok", "success", "succeeded"].includes(String(mafftState.status).toLowerCase())) {
+        throw new Error(`MAFFT job ${mafft.provider_job_id} ended in state ${mafftState.status}`);
+      }
+      await recordStep("galaxy_mafft", tools.mafft.id, mafft.provider_job_id, "succeeded", createdAt, nowIso(now),
+        { tool_version: tools.mafft.version, output_ids: mafft.output?.structured?.outputs ?? [] });
     }
-    // Galaxy keeps a freshly uploaded HDA queued for tens of seconds. Waiting
-    // for state=ok before referencing it avoids HTTP 400 from downstream tools.
-    let readyId = resumeId || upload.output?.structured?.dataset_id ?? null;
-    for (let i = 0; i < 30 && historyId; i += 1) {
-      const contents = await adapter.getArtifacts({ history_id: historyId }, ctx);
-      const ready = (contents.artifacts ?? []).find((a) => a.id === readyId || a.name === filename);
-      if (ready) { readyId = ready.id; break; }
-      await sleep(1500);
-    }
-    // Step 2 â€” MAFFT multiple sequence alignment.
-    const mafftSchema = await fetchToolSchema(env, tools.mafft.id, tools.mafft.version);
-    const mafftPayload = buildSchemaPayload(mafftSchema, readyId);
-    if (!mafftPayload.valid) throw new Error(`MAFFT schema failure: ${mafftPayload.errors.join(", ")}`);
-    const mafftInput = mafftPayload.inputs;
-    const mafft = await adapter.submitJob({ operation: "submit_job", tool_id: tools.mafft.id, inputs: mafftInput }, ctx);
-    if (mafft.error) throw new Error(`MAFFT submission failed: ${mafft.error.message ?? mafft.error.code}`);
-    const mafftState = await poll(adapter, mafft.provider_job_id, ctx);
-    if (!["ok", "success", "succeeded"].includes(String(mafftState.status).toLowerCase())) {
-      throw new Error(`MAFFT job ${mafft.provider_job_id} ended in state ${mafftState.status}`);
-    }
-    await recordStep("galaxy_mafft", tools.mafft.id, mafft.provider_job_id, "succeeded", createdAt, nowIso(now),
-      { tool_version: tools.mafft.version, output_ids: mafft.output?.structured?.outputs ?? [] });
-
     // Step 3 â€” IQ-TREE phylogenetic inference from the alignment dataset.
     const alignmentArtifacts = await adapter.getArtifacts({ history_id: historyId }, ctx);
     const alignmentDataset = (alignmentArtifacts.artifacts ?? []).find((a) => /fasta|aln|msa/i.test(`${a.name}.${a.type}`)) ?? null;
@@ -223,6 +220,7 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
     tree_newick: treeText, alignment_text: alignmentText
   }, failed ? 502 : 200, request);
 }
+
 
 
 
