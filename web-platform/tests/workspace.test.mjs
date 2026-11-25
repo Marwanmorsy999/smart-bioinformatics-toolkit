@@ -115,3 +115,69 @@ test("M7.4 demo UI labels sample data as precomputed", () => {
   const html = readFileSync(resolve(HERE, "../public/workspace.html"), "utf8");
   assert.ok(html.includes("precomputed"));
 });
+
+test("M7.4 catch-all demo delegates to the authoritative labelled payload", async () => {
+  const env = { AI_AGENT_TOKEN: TOKEN_A, BLAST_DB: {} };
+  const throughShim = await catchAll({ request: makeRequest("GET", "/api/workspace/demo"), env });
+  assert.equal(throughShim.status, 200);
+  const body = await throughShim.json();
+  assert.equal(body.sample, true);
+  assert.equal(body.execution_mode, "precomputed");
+  assert.match(body.disclaimer, /NOT a newly executed analysis/);
+  assert.equal(body.project.id, "proj_0000000000000000");
+});
+
+test("M7.4 browser catalog mirror matches the authoritative catalog ids", () => {
+  const source = readFileSync(resolve(HERE, "../public/js/workspace.js"), "utf8");
+  const start = source.indexOf("const LOCAL_CATALOG");
+  const end = source.indexOf("// Display legend");
+  assert.ok(start > -1 && end > start);
+  const block = source.slice(start, end);
+  const ids = [...block.matchAll(/id: "([^"]+)"/g)].map((match) => match[1]);
+  assert.deepEqual(ids, WORKFLOW_IDS);
+  assert.ok(block.includes("available-browser-and-local-agent"));
+  assert.ok(block.includes("partial-not-production-ready"));
+  assert.doesNotMatch(block, /16s-identification|phylogenetics-msa-tree/);
+});
+
+test("M7.4 browser UI keeps tokens out of storage and URLs", () => {
+  const source = readFileSync(resolve(HERE, "../public/js/workspace.js"), "utf8");
+  assert.ok(source.includes("m74_workspace_local_v1"));
+  assert.doesNotMatch(source, /localStorage\.(?:setItem|getItem)\([^)]*token/i);
+  assert.doesNotMatch(source, /[?&]token=/i);
+  assert.doesNotMatch(source, /innerHTML/);
+  assert.match(source, /X-Agent-Token/);
+});
+
+test("M7.4 workspace HTML is local-first, labelled and accessible", () => {
+  const html = readFileSync(resolve(HERE, "../public/workspace.html"), "utf8");
+  assert.ok(html.includes(
+    "Local browser session — not persisted to the server; no server-side ownership applies. " +
+    "For durable owner-scoped projects, operators can use the authenticated API."));
+  assert.match(html, /id="ws-status" role="status" aria-live="polite"/);
+  assert.match(html, /<details id="ws-operator">/);
+  assert.match(html, /not a visitor login/);
+  assert.match(html, /Metadata only — no file bytes are stored; provider references are not proof of durable storage\./);
+  assert.match(html, /SAMPLE \/ PRECOMPUTED/);
+  for (const href of ["index.html", "ai.html", "blast.html", "phylo.html"]) {
+    assert.ok(html.includes(`href="${href}"`), `workspace nav is missing ${href}`);
+  }
+  assert.match(html, /class="active" href="workspace\.html" aria-current="location"/);
+  assert.doesNotMatch(html, /onclick\s*=/i);
+  assert.doesNotMatch(html, /\b(?:src|href)\s*=\s*["']https?:\/\//i);
+});
+
+test("M7.4 every entry page links back to the research workspace", () => {
+  for (const page of ["index.html", "ai.html", "blast.html", "phylo.html"]) {
+    const html = readFileSync(resolve(HERE, `../public/${page}`), "utf8");
+    assert.ok(html.includes('href="workspace.html"'), `${page} nav is missing Research workspace`);
+  }
+  // Only the workflow destinations need the small project-context note.
+  for (const page of ["ai.html", "blast.html", "phylo.html"]) {
+    const html = readFileSync(resolve(HERE, `../public/${page}`), "utf8");
+    assert.ok(html.includes('id="project-context"'), `${page} is missing the project context note`);
+  }
+  const context = readFileSync(resolve(HERE, "../public/js/project-context.js"), "utf8");
+  assert.match(context, /URLSearchParams/);
+  assert.match(context, /textContent/);
+});

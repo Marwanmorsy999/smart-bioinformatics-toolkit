@@ -1,8 +1,8 @@
 # M7.4 — Unified Research Workspace (design, batch 1)
 
-**Status: DESIGN + API LAYER IMPLEMENTED; BROWSER UI NOT BUILT IN THIS BATCH.** This document describes the control-plane surface only. It does not claim new scientific capability, new providers, multi-user accounts, durable file storage, or production deployment.
+**Status: API LAYER + BROWSER UI IMPLEMENTED (batches 1 and 2).** This document describes the control-plane surface and the local-first browser client. It does not claim new scientific capability, new providers, multi-user accounts, durable file storage, or production deployment.
 
-Batch 1 deliverables: this design, additive migration `0011_workspace.sql`, the static workflow catalog, the workspace API handlers, Worker route registration, and offline tests. Batch 2 (separate assignment) builds the browser UI.
+Batch 1 deliverables: this design, additive migration `0011_workspace.sql`, the static workflow catalog, the workspace API handlers, Worker route registration, and offline tests. Batch 2 deliverables: reconciled compatibility shims, the unified browser workspace and its Playwright E2E (see §11).
 
 ---
 
@@ -163,3 +163,15 @@ No new scientific domain; no live Galaxy calls; no new provider activation; no R
 4. Reports come from persisted rows or 404; never generated on the fly from unverified data.
 5. `execution_mode` is always present in responses; no handler claims a real execution it did not perform.
 6. Audit and DTOs use the derived owner principal only — never the raw token.
+
+---
+
+## 11. Batch 2 — browser workspace
+
+**Local mode (default).** `public/workspace.html` + `public/js/workspace.js` open with no token. Projects, dataset metadata and planned/draft run records live in `localStorage` under the labelled key `m74_workspace_local_v1` as metadata JSON only — never file bytes, never a token, never a URL. The page displays the exact banner: "Local browser session — not persisted to the server; no server-side ownership applies. For durable owner-scoped projects, operators can use the authenticated API." A **Clear local sample/session** control removes only that key.
+
+**Operator mode (optional).** A collapsed `<details>` "Operator access" panel accepts the existing `X-Agent-Token`. The token is kept only in a module-scoped variable in page memory; it is never written to localStorage, a URL or a link, and is explicitly described as the operator identity — not a visitor login. With a token present the UI calls the real `/api/workspace/**` handlers (projects, datasets, runs, workflows, demo, run detail). Without one it uses the labelled local metadata. No login was invented.
+
+**One catalog.** The competing implementations were rewritten as compatibility shims, not deleted: `functions/api/workspace/index.js` now aliases the authoritative `/api/workspace/workflows` catalog DTO and delegates `/api/workspace/demo` to `demo.js`, 404-ing everything else with security headers and no SQL; `providers/workspace/catalog.js` and `providers/workspace/states.js` re-export the authoritative `functions/api/workspace/catalog.js` / `_lib.js`. There is exactly one transition map (`STATE_TRANSITIONS`) and one workflow id list. The offline UI catalog mirror is drift-checked against the authoritative ids by unit tests. Authoritative availability remains `available-browser-and-local-agent` for 16S and `partial-not-production-ready` for phylogenetics.
+
+**UI and E2E.** The page uses the existing topbar/nav, `.research-strip`, `.section-block`, `.info-card` and `.field-group` visual language; labels, `aria-live` status, keyboard focusable controls and `hidden` panels. It provides project create/list/open/edit/archive, metadata-only dataset registration (64-hex SHA-256), a two-entry scientific catalog, a real run-history table with an 11-state legend, a run detail that separates execution / artifact retrieval / validation and reports "not available" when provenance or reports do not exist, and a visibly `SAMPLE / PRECOMPUTED` demo. Launching a workflow records a planned/draft run only (local metadata or the authenticated draft-run API) and links to `ai.html?project=<id>` / `phylo.html?project=<id>`; those destination pages show a small text-only project-context note. `tests/workspace.e2e.mjs` drives the full local flow in real Chromium, asserts no console/page errors and writes `web-platform/test-results/m7_4_workspace.png`. No scientific execution is claimed anywhere.
