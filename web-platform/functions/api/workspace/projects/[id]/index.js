@@ -88,6 +88,12 @@ export async function handlePatchProject(request, env, projectId, { now = Date.n
     await workspaceAudit(db, owner, "workspace_project_updated", projectId, {
       fields: Object.keys(patch)
     }, idFactory, nowIso(now));
+    // Mutation DTOs must be consistent with GET/list: compute the same counts
+    // instead of returning the toProjectDto defaults of zero.
+    const [datasets, runs] = await Promise.all([
+      listRows(db, SQL.listDatasetsForProject, [projectId, owner]),
+      listRows(db, SQL.listRunsForProject, [projectId, owner])
+    ]);
     return jsonResponse({
       project: toProjectDto({
         ...row,
@@ -96,7 +102,7 @@ export async function handlePatchProject(request, env, projectId, { now = Date.n
         scientific_objective: values[2],
         status: values[3],
         updated_at: values[4]
-      }),
+      }, { dataset_count: datasets.length, run_count: runs.length }),
       execution_mode: envExecutionMode(env)
     }, 200, request);
   } catch {

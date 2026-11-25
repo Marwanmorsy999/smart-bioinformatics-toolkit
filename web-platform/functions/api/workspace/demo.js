@@ -26,7 +26,6 @@ const DEMO_PAYLOAD = Object.freeze({
     description: "Illustrative project used only to demonstrate workspace layout.",
     scientific_objective: "Demonstrate how a 16S objective is displayed beside its runs.",
     status: "active",
-    owner: "owner_demo0000000000",
     created_at: "2026-11-26T00:00:00.000Z",
     updated_at: "2026-11-26T00:00:00.000Z",
     dataset_count: 2,

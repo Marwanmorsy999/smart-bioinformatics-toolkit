@@ -7,6 +7,7 @@ import {
   errorResponse,
   isPublicId,
   jsonResponse,
+  listRows,
   nowIso,
   runStatement
 } from "../../../ai/_lib.js";
@@ -36,8 +37,16 @@ export async function handleSetProjectStatus(request, env, projectId, status, { 
     await workspaceAudit(db, owner, action, projectId, {
       previous_status: row.status ?? "active"
     }, idFactory, timestamp);
+    // Keep the mutation DTO identical in shape to GET/list, including counts.
+    const [datasets, runs] = await Promise.all([
+      listRows(db, SQL.listDatasetsForProject, [projectId, owner]),
+      listRows(db, SQL.listRunsForProject, [projectId, owner])
+    ]);
     return jsonResponse({
-      project: toProjectDto({ ...row, status, updated_at: timestamp }),
+      project: toProjectDto({ ...row, status, updated_at: timestamp }, {
+        dataset_count: datasets.length,
+        run_count: runs.length
+      }),
       execution_mode: envExecutionMode(env)
     }, 200, request);
   } catch {

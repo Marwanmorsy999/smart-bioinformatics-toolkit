@@ -381,7 +381,8 @@ export function toProjectDto(row, counts = {}) {
     description: row.description ?? null,
     scientific_objective: row.scientific_objective ?? null,
     status: row.status ?? "active",
-    owner: row.owner ?? null,
+    // The derived owner digest is an offline verifier for guessed tokens:
+    // keep it internal to SQL predicates and audit actors, never in a DTO.
     created_at: row.created_at,
     updated_at: row.updated_at ?? null,
     dataset_count: counts.dataset_count ?? 0,
@@ -405,7 +406,6 @@ export function toDatasetDto(row) {
     storage_ref: row.storage_ref ?? null,
     uploaded_at: row.uploaded_at ?? null,
     created_at: row.created_at,
-    owner: row.owner ?? null,
     is_demo: Number(row.is_demo ?? 0) === 1,
     fasta_text_present: Boolean(row.fasta_text)
   };

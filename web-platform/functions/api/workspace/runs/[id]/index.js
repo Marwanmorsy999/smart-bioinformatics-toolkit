@@ -112,6 +112,12 @@ export async function handlePatchRun(request, env, runId, { now = Date.now(), id
       runId,
       owner
     ];
+    if (nextState === "succeeded") {
+      // The immutable prov_* record is written from this same validated object.
+      // Never let an explicit provenance:null bookkeeping value NULL out the
+      // run row while the provenance record still holds the complete evidence.
+      values[5] = JSON.stringify(provenanceForRecord);
+    }
     await runStatement(db, SQL.updateWorkspaceRun, values);
 
     if (nextState === "succeeded") {
