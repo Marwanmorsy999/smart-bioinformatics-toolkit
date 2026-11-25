@@ -1,0 +1,8 @@
+# MOCK - synthetic smarts.bio SSE payload for unit tests only. NOT live data.
+data: {"type":"status","status":"Mock step running"}
+
+data: {"type":"content","content":"Mock "}
+
+data: {"type":"content","content":"streamed answer."}
+
+data: {"type":"done"}

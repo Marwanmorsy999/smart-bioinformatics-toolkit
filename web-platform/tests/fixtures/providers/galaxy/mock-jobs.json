@@ -1,0 +1,18 @@
+{
+  "__fixture": "MOCK - synthetic Galaxy job/history/dataset responses, NOT live data.",
+  "history": { "id": "mock-history-01", "name": "provider-job-mock", "state": "new" },
+  "job": { "id": "mock-job-01", "state": "queued", "history_id": "mock-history-01", "progress": 0 },
+  "running_job": { "id": "mock-job-01", "state": "running", "history_id": "mock-history-01", "progress": 42 },
+  "invocation": { "id": "mock-invocation-01", "state": "queued", "history_id": "mock-history-01" },
+  "upload": {
+    "__fixture": "MOCK - Galaxy POST /api/tools upload1 response: VERIFIED shape is a job with outputs[].id as the new dataset id.",
+    "id": "mock-upload-job-01",
+    "state": "queued",
+    "outputs": [{ "id": "mock-dataset-01", "name": "input.txt", "state": "queued" }]
+  },
+  "contents": [
+    { "id": "mock-dataset-01", "name": "alpha_output.txt", "extension": "txt", "file_size": 128, "state": "ok" },
+    { "id": "mock-dataset-02", "name": "pending.txt", "extension": "txt", "file_size": 64, "state": "queued" }
+  ],
+  "dataset": { "id": "mock-dataset-01", "name": "alpha_output.txt", "extension": "txt", "file_size": 128, "state": "ok" }
+}

@@ -1,0 +1,8 @@
+# MOCK - synthetic OpenAI-compatible SSE stream for unit tests only. NOT live data.
+data: {"id":"chatcmpl_mock003","model":"mock-reasoner-1","choices":[{"index":0,"delta":{"role":"assistant","content":"Mock "},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_mock003","model":"mock-reasoner-1","choices":[{"index":0,"delta":{"content":"streamed reasoning."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_mock003","model":"mock-reasoner-1","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":6,"completion_tokens":4,"total_tokens":10}}
+
+data: [DONE]

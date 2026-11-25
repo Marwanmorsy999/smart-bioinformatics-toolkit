@@ -1,0 +1,8 @@
+{
+  "__fixture": "MOCK - synthetic OpenAI-compatible model list, NOT live data.",
+  "object": "list",
+  "data": [
+    { "id": "mock-reasoner-1", "object": "model", "owned_by": "mock" },
+    { "id": "mock-reasoner-2", "object": "model", "owned_by": "mock" }
+  ]
+}

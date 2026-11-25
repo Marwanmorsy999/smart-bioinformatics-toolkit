@@ -1,0 +1,50 @@
+{
+  "__fixture": "MOCK - synthetic test data, NOT live Galaxy data. Identifiers and quotas are fabricated.",
+  "version": { "version": "24.1.mock", "api_version": "1.0" },
+  "user": { "id": "mock-user-01", "username": "mock_operator", "email": "mock@example.invalid" },
+  "usage": {
+    "total_disk_usage": 1048576,
+    "nice_total_disk_usage": "1.0 MB",
+    "quota_bytes": 10485760,
+    "quota_percent": 10
+  },
+  "tools": [
+    {
+      "id": "mock.tool.alpha",
+      "name": "Mock Alpha Tool",
+      "version": "1.2.3",
+      "description": "Synthetic tool used only by unit tests.",
+      "inputs": [
+        { "name": "input", "type": "txt", "optional": false },
+        { "name": "mode", "type": "text", "optional": true }
+      ],
+      "outputs": [{ "name": "output", "type": "txt" }]
+    },
+    {
+      "id": "mock.tool.beta",
+      "name": "Mock Beta Tool",
+      "version": "2.0.0",
+      "description": "Second synthetic tool.",
+      "inputs": [{ "name": "in", "type": "fasta", "optional": false }],
+      "outputs": [{ "name": "out", "type": "txt" }]
+    },
+    {
+      "id": "mock.tool.hidden",
+      "name": "Mock Disabled Tool",
+      "version": "0.1.0",
+      "description": "Synthetic tool that must never be advertised.",
+      "disabled": true,
+      "inputs": [],
+      "outputs": []
+    }
+  ],
+  "workflows": [
+    {
+      "id": "mock.workflow.one",
+      "name": "Mock Workflow One",
+      "version": "0.4.0",
+      "description": "Synthetic workflow.",
+      "steps": [{ "id": "s1" }, { "id": "s2" }]
+    }
+  ]
+}

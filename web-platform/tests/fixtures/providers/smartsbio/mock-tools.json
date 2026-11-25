@@ -1,0 +1,23 @@
+{
+  "__fixture": "MOCK - synthetic smarts.bio tools catalog, NOT live data. Shapes mirror the VERIFIED 2026-11-25 live response {status:'success', tools:[...]}; ids and schemas are fabricated.",
+  "status": "success",
+  "tools": [
+    {
+      "id": "alphafold-db",
+      "name": "Mock AlphaFold DB",
+      "description": "Synthetic tool used to test the verified singular `input` request key.",
+      "parameters": {
+        "query_type": { "type": "string", "enum": ["uniprot", "pdb"], "required": true },
+        "identifier": { "type": "string", "required": true },
+        "format": { "type": "string", "default": "json" },
+        "limit": { "type": "integer", "default": 1 }
+      }
+    },
+    {
+      "id": "mock_quality_control",
+      "name": "Mock QC",
+      "description": "Second synthetic tool.",
+      "parameters": { "fastq": { "type": "string", "required": true } }
+    }
+  ]
+}
