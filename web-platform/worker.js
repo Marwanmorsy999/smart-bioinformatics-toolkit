@@ -131,7 +131,7 @@ const ROUTES = [
   { key: "providers", re: /^\/api\/providers\/?$/, names: [] },
   { key: "providerDetail", re: /^\/api\/providers\/([^/]+)\/?$/, names: ["id"] },
   { key: "aiJobReport", re: /^\/api\/ai\/jobs\/([^/]+)\/report\/?$/, names: ["id"] },
-  { key: "phyloTool", re: /^\\/api\\/ai\\/workflows\\/phylo\\/tool\\/?$/, names: [] },
+  { key: "phyloTool", re: /^\/api\/ai\/workflows\/phylo\/tool\/?$/, names: [] },
   { key: "phyloStatus", re: /^\/api\/ai\/workflows\/phylo\/status\/?$/, names: [] },
   { key: "phyloRun", re: /^\/api\/ai\/workflows\/phylo\/run\/?$/, names: [] },
   { key: "aiJobResult", re: /^\/api\/ai\/jobs\/([^/]+)\/result\/?$/, names: ["id"] },
@@ -254,6 +254,7 @@ export function createFetch(handlerMap = handlers) {
 export const fetch = createFetch();
 
 export default { fetch };
+
 
 
 
