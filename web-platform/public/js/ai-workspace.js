@@ -115,6 +115,7 @@ function renderBackendStatus() {
   // be presented as a connected agent or as a real execution.
   elements.backendBadge.textContent = backendDescription.badge;
   elements.backendBadge.classList.toggle("mock", backendDescription.mode === "mock");
+  elements.backendBadge.classList.toggle("unavailable", !backendDescription.connected);
   elements.mode.textContent = executionBadge(currentRoute(), backendDescription);
   elements.mode.classList.toggle("mock", backendDescription.mode === "mock");
   elements.mode.classList.toggle("unavailable", currentRoute() === ROUTE_AGENT && !backendDescription.connected);
