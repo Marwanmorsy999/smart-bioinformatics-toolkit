@@ -26,6 +26,7 @@ export async function onRequest(context) {
   const toolId = safeString(query.get("tool_id"), 300);
   const version = safeString(query.get("version"), 100);
   const historyId = safeString(query.get("history_id"), 200);
+  const jobId = safeString(query.get("job_id"), 200);
   if (!toolId && !jobId) return errorResponse("tool_id is required.", 400, context.request);
   const base = safeString(context.env?.GALAXY_BASE_URL).trim();
   const key = safeString(context.env?.GALAXY_API_KEY).trim();
@@ -53,5 +54,6 @@ export async function onRequest(context) {
   }
   return jsonResponse({ tool_id: toolId, version, history_id: historyId ? "[ID]" : null, routes: results }, 200, context.request);
 }
+
 
 
