@@ -128,9 +128,9 @@ const ROUTES = [
   { key: "artifactDownloadUrl", re: /^\/api\/artifacts\/([^/]+)\/download-url\/?$/, names: ["id"] },
   { key: "providers", re: /^\/api\/providers\/?$/, names: [] },
   { key: "providerDetail", re: /^\/api\/providers\/([^/]+)\/?$/, names: ["id"] },
-  { key: "aiJobReport", re: /^\\/api\\/ai\\/jobs\\/([^/]+)\\/report\\/?$/, names: ["id"] },
-  { key: "phyloStatus", re: /^\\/api\\/ai\\/workflows\\/phylo\\/status\\/?$/, names: [] },
-  { key: "phyloRun", re: /^\\/api\\/ai\\/workflows\\/phylo\\/run\\/?$/, names: [] },
+  { key: "aiJobReport", re: /^\/api\/ai\/jobs\/([^/]+)\/report\/?$/, names: ["id"] },
+  { key: "phyloStatus", re: /^\/api\/ai\/workflows\/phylo\/status\/?$/, names: [] },
+  { key: "phyloRun", re: /^\/api\/ai\/workflows\/phylo\/run\/?$/, names: [] },
   { key: "aiJobResult", re: /^\/api\/ai\/jobs\/([^/]+)\/result\/?$/, names: ["id"] },
   { key: "aiPlanApprove", re: /^\/api\/ai\/plans\/([^/]+)\/approve\/?$/, names: ["id"] },
   { key: "aiRunProvenance", re: /^\/api\/ai\/runs\/([^/]+)\/provenance\/?$/, names: ["id"] },
@@ -251,4 +251,5 @@ export function createFetch(handlerMap = handlers) {
 export const fetch = createFetch();
 
 export default { fetch };
+
 
