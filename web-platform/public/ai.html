@@ -67,6 +67,23 @@
       <div id="backend-status" class="backend-status" role="status" aria-live="polite">Checking backend availability…</div>
       <p id="backend-detail" class="backend-detail"></p>
 
+      <section class="workspace provider-workspace" aria-labelledby="cloud-title">
+        <div class="workspace-header">
+          <div>
+            <p class="eyebrow">CLOUD SERVICES · TRANSPARENCY</p>
+            <h2 id="cloud-title">Remote scientific services</h2>
+            <p>Each service is shown with its real availability. Nothing is sent to a remote service without a separate, dataset-scoped consent. Disabled or unavailable tools are never offered as executable. This check runs only when you ask for it.</p>
+          </div>
+          <button id="check-cloud" class="secondary-button small-button" type="button">Check cloud services</button>
+        </div>
+        <div id="cloud-status" class="backend-status" role="status" aria-live="polite">Cloud service status not checked yet.</div>
+        <div id="cloud-providers" class="step-list"></div>
+        <details id="cloud-transfers">
+          <summary>Data-transfer ledger</summary>
+          <div id="cloud-transfer-list" class="results-note">Not checked yet.</div>
+        </details>
+      </section>
+
       <div class="ai-flow">
         <section class="workspace" aria-labelledby="intake-title">
           <div class="workspace-header">
@@ -253,5 +270,6 @@
     <div class="footer-bottom"><span>Smart Bioinformatics Toolkit · AI workspace · Milestone 0.5.0</span><span>No external fonts, images or CDNs · Static, framework-free pages</span></div>
   </footer>
   <script type="module" src="js/ai-workspace.js"></script>
+  <script type="module" src="js/cloud-providers.js"></script>
 </body>
 </html>

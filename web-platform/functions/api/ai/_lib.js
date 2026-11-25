@@ -14,7 +14,10 @@ export const MAX_REQUEST_BODY_CHARS = 128 * 1024;
 export const MAX_RESULT_BODY_CHARS = 2 * 1024 * 1024;
 export const MIN_CONFIDENCE = 0.5;
 
-const PUBLIC_ID_PATTERN = /^(req|ds|plan|job|art|apr|run|proj|ref)_[0-9a-f]{16}$/;
+// M7 adds pcon (provider consent), pjob (provider job), xfer (transfer),
+// rsv (reservation) and gal (governor alert) identifiers. They share the same
+// random 16-hex form and are validated by the same whitelist.
+const PUBLIC_ID_PATTERN = /^(req|ds|plan|job|art|apr|run|proj|ref|pcon|pjob|xfer|rsv|gal)_[0-9a-f]{16}$/;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 
 // SQL is centralised so the fake D1 in tests can assert exactly what runs.

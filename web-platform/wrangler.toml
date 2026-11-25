@@ -10,6 +10,18 @@ compatibility_date = "2026-11-22"
 # Pages-specific validation, which conflicts with `main` + `assets`.
 assets = { directory = "./public", binding = "ASSETS", run_worker_first = true }
 
+# M7 feature flags. Everything defaults OFF. Secrets (API keys, signing key)
+# are set only with `wrangler secret put` for each environment, never here.
+[vars]
+GALAXY_ENABLED = "false"
+SMARTSBIO_ENABLED = "false"
+NINEROUTER_ENABLED = "false"
+
+# Private artifact storage is OPTIONAL and must be provisioned explicitly:
+#   [[r2_buckets]] binding = "ARTIFACTS" bucket_name = "<private-bucket>"
+#   wrangler secret put ARTIFACT_SIGNING_KEY [--env staging]
+# Without both, artifact endpoints fail closed; no public bucket is assumed.
+
 # Free-tier D1 database holding both BLAST requests and the AI control plane.
 # The binding name MUST stay `BLAST_DB` (handlers read env.BLAST_DB).
 [[d1_databases]]
@@ -23,6 +35,11 @@ database_id = "d277fe22-f99d-46d8-9ae9-6de17942a6a9"
 [env.staging]
 name = "smart-bioinformatics-toolkit-staging"
 assets = { directory = "./public", binding = "ASSETS", run_worker_first = true }
+
+[env.staging.vars]
+GALAXY_ENABLED = "false"
+SMARTSBIO_ENABLED = "false"
+NINEROUTER_ENABLED = "false"
 
 [[env.staging.d1_databases]]
 binding = "BLAST_DB"

@@ -532,3 +532,9 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
   .download-links-row > * { flex: 1 1 auto; }
   .ai-flow .workspace-header { flex-direction: column; align-items: flex-start; }
 }
+
+/* M7 cloud service transparency panel */
+.provider-workspace { margin: 1.5rem 0; }
+.provider-workspace .step-item { padding: .75rem 0; border-bottom: 1px solid var(--border, #d9dee2); }
+.provider-workspace .step-item p { margin: .35rem 0 0; font-size: .8125rem; color: var(--muted, #4a5560); }
+.provider-workspace details { margin-top: 1rem; }

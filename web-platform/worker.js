@@ -19,6 +19,26 @@ import { onRequest as onBlastSubmit } from "./functions/api/blast/submit.js";
 import { onRequest as onBlastStatus } from "./functions/api/blast/status/[rid].js";
 import { onRequest as onBlastResults } from "./functions/api/blast/results/[rid].js";
 import { onRequest as onBlastHistory } from "./functions/api/blast/history.js";
+import { onRequest as onProviders } from "./functions/api/providers/index.js";
+import { onRequest as onProviderDetail } from "./functions/api/providers/[id]/index.js";
+import { onRequest as onProviderCapabilities } from "./functions/api/providers/[id]/capabilities.js";
+import { onRequest as onProviderLimits } from "./functions/api/providers/[id]/limits.js";
+import { onRequest as onProviderUsage } from "./functions/api/providers/usage.js";
+import { onRequest as onProviderChat } from "./functions/api/providers/chat.js";
+import { onRequest as onProviderPlan } from "./functions/api/providers/plan.js";
+import { onRequest as onProviderConsent } from "./functions/api/providers/consent.js";
+import { onRequest as onProviderTransfers } from "./functions/api/providers/transfers.js";
+import { onRequest as onProviderEmergencyStop } from "./functions/api/providers/emergency-stop.js";
+import { onRequest as onProviderBudget } from "./functions/api/providers/budget.js";
+import { onRequest as onProviderJobs } from "./functions/api/providers/jobs/index.js";
+import { onRequest as onProviderJob } from "./functions/api/providers/jobs/[id]/index.js";
+import { onRequest as onProviderJobCancel } from "./functions/api/providers/jobs/[id]/cancel.js";
+import { onRequest as onProviderJobArtifacts } from "./functions/api/providers/jobs/[id]/artifacts.js";
+import { onRequest as onArtifactUploadUrl } from "./functions/api/artifacts/upload-url.js";
+import { onRequest as onArtifactUpload } from "./functions/api/artifacts/upload.js";
+import { onRequest as onArtifactDownloadUrl } from "./functions/api/artifacts/[id]/download-url.js";
+import { onRequest as onArtifactContent } from "./functions/api/artifacts/content.js";
+import { onRequest as onArtifactDelete } from "./functions/api/artifacts/delete.js";
 import { errorResponse } from "./functions/api/ai/_lib.js";
 
 // Stable keys let unit tests inject stubbed handlers without changing the
@@ -37,13 +57,55 @@ export const handlers = {
   blastSubmit: onBlastSubmit,
   blastStatus: onBlastStatus,
   blastResults: onBlastResults,
-  blastHistory: onBlastHistory
+  blastHistory: onBlastHistory,
+  providers: onProviders,
+  providerDetail: onProviderDetail,
+  providerCapabilities: onProviderCapabilities,
+  providerLimits: onProviderLimits,
+  providerUsage: onProviderUsage,
+  providerChat: onProviderChat,
+  providerPlan: onProviderPlan,
+  providerConsent: onProviderConsent,
+  providerTransfers: onProviderTransfers,
+  providerEmergencyStop: onProviderEmergencyStop,
+  providerBudget: onProviderBudget,
+  providerJobs: onProviderJobs,
+  providerJob: onProviderJob,
+  providerJobCancel: onProviderJobCancel,
+  providerJobArtifacts: onProviderJobArtifacts,
+  artifactUploadUrl: onArtifactUploadUrl,
+  artifactUpload: onArtifactUpload,
+  artifactDownloadUrl: onArtifactDownloadUrl,
+  artifactContent: onArtifactContent,
+  artifactDelete: onArtifactDelete
 };
 
 // Order is explicit. Static and dynamic patterns do not overlap, but the more
 // specific dynamic routes are listed first so future additions stay unambiguous.
 // `names` maps capture groups to the `params` object the handlers expect.
 const ROUTES = [
+  // M7 provider routes. Static paths precede dynamic /api/providers/:id so a
+  // name like "usage" can never be captured as a provider id.
+  { key: "providerJobCancel", re: /^\/api\/providers\/jobs\/([^/]+)\/cancel\/?$/, names: ["id"] },
+  { key: "providerJobArtifacts", re: /^\/api\/providers\/jobs\/([^/]+)\/artifacts\/?$/, names: ["id"] },
+  { key: "providerJob", re: /^\/api\/providers\/jobs\/([^/]+)\/?$/, names: ["id"] },
+  { key: "providerCapabilities", re: /^\/api\/providers\/([^/]+)\/capabilities\/?$/, names: ["id"] },
+  { key: "providerLimits", re: /^\/api\/providers\/([^/]+)\/limits\/?$/, names: ["id"] },
+  { key: "providerUsage", re: /^\/api\/providers\/usage\/?$/, names: [] },
+  { key: "providerEmergencyStop", re: /^\/api\/providers\/emergency-stop\/?$/, names: [] },
+  { key: "providerBudget", re: /^\/api\/providers\/budget\/?$/, names: [] },
+  { key: "providerChat", re: /^\/api\/providers\/chat\/?$/, names: [] },
+  { key: "providerPlan", re: /^\/api\/providers\/plan\/?$/, names: [] },
+  { key: "providerConsent", re: /^\/api\/providers\/consent\/?$/, names: [] },
+  { key: "providerTransfers", re: /^\/api\/providers\/transfers\/?$/, names: [] },
+  { key: "providerJobs", re: /^\/api\/providers\/jobs\/?$/, names: [] },
+  { key: "artifactUploadUrl", re: /^\/api\/artifacts\/upload-url\/?$/, names: [] },
+  { key: "artifactUpload", re: /^\/api\/artifacts\/upload\/?$/, names: [] },
+  { key: "artifactContent", re: /^\/api\/artifacts\/content\/?$/, names: [] },
+  { key: "artifactDelete", re: /^\/api\/artifacts\/delete\/?$/, names: [] },
+  { key: "artifactDownloadUrl", re: /^\/api\/artifacts\/([^/]+)\/download-url\/?$/, names: ["id"] },
+  { key: "providers", re: /^\/api\/providers\/?$/, names: [] },
+  { key: "providerDetail", re: /^\/api\/providers\/([^/]+)\/?$/, names: ["id"] },
   { key: "aiJobResult", re: /^\/api\/ai\/jobs\/([^/]+)\/result\/?$/, names: ["id"] },
   { key: "aiPlanApprove", re: /^\/api\/ai\/plans\/([^/]+)\/approve\/?$/, names: ["id"] },
   { key: "aiRunProvenance", re: /^\/api\/ai\/runs\/([^/]+)\/provenance\/?$/, names: ["id"] },
