@@ -7,6 +7,7 @@
 
 import { onRequest as onTools } from "./functions/api/tools.js";
 import { onRequest as onAiRequests } from "./functions/api/ai/requests/index.js";
+import { onRequest as onWorkspace } from "./functions/api/workspace/index.js";
 import { onRequest as onAiBackend } from "./functions/api/ai/backend.js";
 import { onRequest as onAiJobs } from "./functions/api/ai/jobs/index.js";
 import { onRequest as onAiJobResult } from "./functions/api/ai/jobs/[id]/result.js";
@@ -47,6 +48,17 @@ import { onRequest as onArtifactUpload } from "./functions/api/artifacts/upload.
 import { onRequest as onArtifactDownloadUrl } from "./functions/api/artifacts/[id]/download-url.js";
 import { onRequest as onArtifactContent } from "./functions/api/artifacts/content.js";
 import { onRequest as onArtifactDelete } from "./functions/api/artifacts/delete.js";
+import { onRequest as onWorkspaceProjects } from "./functions/api/workspace/projects/index.js";
+import { onRequest as onWorkspaceProject } from "./functions/api/workspace/projects/[id]/index.js";
+import { onRequest as onWorkspaceProjectArchive } from "./functions/api/workspace/projects/[id]/archive.js";
+import { onRequest as onWorkspaceProjectActivate } from "./functions/api/workspace/projects/[id]/activate.js";
+import { onRequest as onWorkspaceProjectDatasets } from "./functions/api/workspace/projects/[id]/datasets.js";
+import { onRequest as onWorkspaceProjectRuns } from "./functions/api/workspace/projects/[id]/runs.js";
+import { onRequest as onWorkspaceWorkflows } from "./functions/api/workspace/workflows.js";
+import { onRequest as onWorkspaceRun } from "./functions/api/workspace/runs/[id]/index.js";
+import { onRequest as onWorkspaceRunProvenance } from "./functions/api/workspace/runs/[id]/provenance.js";
+import { onRequest as onWorkspaceRunReport } from "./functions/api/workspace/runs/[id]/report.js";
+import { onRequest as onWorkspaceDemo } from "./functions/api/workspace/demo.js";
 import { errorResponse } from "./functions/api/ai/_lib.js";
 
 // Stable keys let unit tests inject stubbed handlers without changing the
@@ -54,6 +66,7 @@ import { errorResponse } from "./functions/api/ai/_lib.js";
 export const handlers = {
   tools: onTools,
   aiRequests: onAiRequests,
+  workspace: onWorkspace,
   aiBackend: onAiBackend,
   aiJobs: onAiJobs,
   aiJobResult: onAiJobResult,
@@ -93,13 +106,39 @@ export const handlers = {
   artifactUpload: onArtifactUpload,
   artifactDownloadUrl: onArtifactDownloadUrl,
   artifactContent: onArtifactContent,
-  artifactDelete: onArtifactDelete
+  artifactDelete: onArtifactDelete,
+  workspaceProjects: onWorkspaceProjects,
+  workspaceProject: onWorkspaceProject,
+  workspaceProjectArchive: onWorkspaceProjectArchive,
+  workspaceProjectActivate: onWorkspaceProjectActivate,
+  workspaceProjectDatasets: onWorkspaceProjectDatasets,
+  workspaceProjectRuns: onWorkspaceProjectRuns,
+  workspaceWorkflows: onWorkspaceWorkflows,
+  workspaceRun: onWorkspaceRun,
+  workspaceRunProvenance: onWorkspaceRunProvenance,
+  workspaceRunReport: onWorkspaceRunReport,
+  workspaceDemo: onWorkspaceDemo
 };
 
 // Order is explicit. Static and dynamic patterns do not overlap, but the more
 // specific dynamic routes are listed first so future additions stay unambiguous.
 // `names` maps capture groups to the `params` object the handlers expect.
 const ROUTES = [
+  // M7.4 batch-1 workspace routes. Specific sub-paths precede the dynamic
+  // /:id routes so "archive", "datasets", "runs" and "report" can never be
+  // captured as an id. These are listed before the legacy catch-all below.
+  { key: "workspaceProjectArchive", re: /^\/api\/workspace\/projects\/([^/]+)\/archive\/?$/, names: ["id"] },
+  { key: "workspaceProjectActivate", re: /^\/api\/workspace\/projects\/([^/]+)\/activate\/?$/, names: ["id"] },
+  { key: "workspaceProjectDatasets", re: /^\/api\/workspace\/projects\/([^/]+)\/datasets\/?$/, names: ["id"] },
+  { key: "workspaceProjectRuns", re: /^\/api\/workspace\/projects\/([^/]+)\/runs\/?$/, names: ["id"] },
+  { key: "workspaceProject", re: /^\/api\/workspace\/projects\/([^/]+)\/?$/, names: ["id"] },
+  { key: "workspaceProjects", re: /^\/api\/workspace\/projects\/?$/, names: [] },
+  { key: "workspaceRunProvenance", re: /^\/api\/workspace\/runs\/([^/]+)\/provenance\/?$/, names: ["id"] },
+  { key: "workspaceRunReport", re: /^\/api\/workspace\/runs\/([^/]+)\/report\/?$/, names: ["id"] },
+  { key: "workspaceRun", re: /^\/api\/workspace\/runs\/([^/]+)\/?$/, names: ["id"] },
+  { key: "workspaceWorkflows", re: /^\/api\/workspace\/workflows\/?$/, names: [] },
+  { key: "workspaceDemo", re: /^\/api\/workspace\/demo\/?$/, names: [] },
+  { key: "workspace", re: /^\/api\/workspace(?:\/.*)?$/, names: [] },
   // Galaxy artifact routes. These static/specific paths MUST precede the
   // dynamic /api/providers/:id routes so "galaxy" is never captured as a
   // provider id and the dataset sub-paths stay unambiguous.
@@ -254,6 +293,7 @@ export function createFetch(handlerMap = handlers) {
 export const fetch = createFetch();
 
 export default { fetch };
+
 
 
 

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Research workspace — Smart Bioinformatics Toolkit</title>
+  <link rel="stylesheet" href="css/main.css"><link rel="stylesheet" href="css/components.css">
+</head>
+<body>
+  <a class="skip-link" href="#ws-main">Skip to main content</a>
+  <header class="topbar">
+    <a class="brand" href="index.html"><span class="brand-mark">S<span>Bio</span></span><span class="brand-name">Smart Bioinformatics <span>Toolkit</span></span></a>
+    <nav class="top-nav" aria-label="Main navigation">
+      <a href="index.html">Tools</a><a href="ai.html">AI workspace</a>
+      <a class="active" href="workspace.html" aria-current="location">Research workspace</a>
+      <a href="phylo.html">Phylogenetics</a>
+    </nav>
+  </header>
+  <main id="ws-main" class="section-block">
+    <h1>Research workspace</h1>
+    <p class="section-kicker">Projects, datasets, workflows and runs — one place.</p>
+    <div class="research-strip" role="note"><span class="privacy-icon">i</span><p>Project APIs use the existing agent-token identity. No visitor account system is invented. D1 stores metadata only; no file bytes or R2 are used. <strong>Sample data is precomputed, never a new analysis.</strong></p></div>
+
+    <section aria-labelledby="ws-projects-title">
+      <h2 id="ws-projects-title">Projects</h2>
+      <label for="ws-agent">Agent token (existing X-Agent-Token identity)</label>
+      <input id="ws-agent" type="password" autocomplete="off" placeholder="Stored only in this browser session">
+      <button id="ws-load" type="button">Load my projects</button>
+      <label for="ws-name">New project name</label><input id="ws-name" type="text">
+      <label for="ws-objective">Scientific objective</label><textarea id="ws-objective" rows="2"></textarea>
+      <button id="ws-create" type="button">Create project</button>
+      <ul id="ws-project-list"></ul>
+      <p id="ws-status" role="status" aria-live="polite"></p>
+    </section>
+
+    <section id="ws-detail" hidden aria-live="polite">
+      <h2 id="ws-detail-title"></h2>
+      <p id="ws-detail-meta"></p>
+      <h3>Datasets (metadata only)</h3><ul id="ws-datasets"></ul>
+      <h3>Available workflows</h3><ul id="ws-catalog"></ul>
+      <h3>Run history</h3><ul id="ws-runs"></ul>
+      <div id="ws-run-detail" hidden><h3>Run detail</h3><pre id="ws-run-json"></pre></div>
+    </section>
+
+    <section id="ws-demo" aria-labelledby="ws-demo-title">
+      <h2 id="ws-demo-title">Sample project (precomputed — not executed)</h2>
+      <button id="ws-demo-load" type="button">Open sample project</button>
+      <div id="ws-demo-view" hidden><pre id="ws-demo-json"></pre></div>
+    </section>
+  </main>
+  <script type="module" src="js/workspace.js"></script>
+</body>
+</html>
