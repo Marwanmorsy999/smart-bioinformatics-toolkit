@@ -38,7 +38,7 @@ function terminal(state) {
   return ["ok", "success", "succeeded", "failed", "error", "cancelled", "canceled"].includes(String(state ?? "").toLowerCase());
 }
 
-async function poll(adapter, jobId, ctx, { attempts = 30, intervalMs = 1500 } = {}) {
+async function poll(adapter, jobId, ctx, { attempts = 60, intervalMs = 2000 } = {}) {
   for (let i = 0; i < attempts; i += 1) {
     const status = await adapter.getJobStatus({ job_id: jobId }, ctx);
     const state = String(status.status ?? "").toLowerCase();
@@ -214,6 +214,7 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
     tree_newick: treeText, alignment_text: alignmentText
   }, failed ? 502 : 200, request);
 }
+
 
 
 

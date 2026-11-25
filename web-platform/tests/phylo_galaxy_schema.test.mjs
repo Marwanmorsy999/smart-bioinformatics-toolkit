@@ -1,4 +1,4 @@
-import test from "node:test";
+﻿import test from "node:test";
 import assert from "node:assert/strict";
 import { buildSchemaPayload, describeSchema } from "../providers/galaxy/galaxy_schema.js";
 
@@ -22,7 +22,7 @@ test("M7.3 MAFFT schema payload uses real conditional/repeat field names", () =>
   const result = buildSchemaPayload(MAFFT, "abc123");
   assert.equal(result.valid, true, JSON.stringify(result));
   assert.equal(result.inputs["input|mapping"], "implicit");
-  assert.deepEqual(result.inputs["batches_0|inputs"], { src: "hda", id: "abc123" });
+  assert.deepEqual(result.inputs["input|batches_0|inputs"], { src: "hda", id: "abc123" });
   assert.equal(result.inputs["datatype_selection|datatype"], "");
 });
 test("M7.3 IQ-TREE schema payload maps section data input", () => {
@@ -41,3 +41,4 @@ test("M7.3 schema description lists verified input names only", () => {
   assert.deepEqual(describeSchema(IQTREE).map((i) => i.name),
     ["general_options", "general_options|s", "general_options|seqtype"]);
 });
+
