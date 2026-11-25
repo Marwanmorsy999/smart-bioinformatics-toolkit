@@ -140,9 +140,7 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
       await sleep(1500);
     }
     // Step 2 â€” MAFFT multiple sequence alignment.
-    const mafftInput = readyId
-      ? { input: { src: "hda", id: readyId } }
-      : { input: { src: "pasted", paste_content: fasta, name: filename, ext: "fasta" } };
+    const mafftInput = { input: { src: "pasted", paste_content: fasta, name: filename, ext: "fasta" } };
     const mafft = await adapter.submitJob({ operation: "submit_job", tool_id: tools.mafft.id, inputs: mafftInput }, ctx);
     if (mafft.error) throw new Error(`MAFFT submission failed: ${mafft.error.message ?? mafft.error.code}`);
     const mafftState = await poll(adapter, mafft.provider_job_id, ctx);
@@ -155,9 +153,7 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
     // Step 3 â€” IQ-TREE phylogenetic inference from the alignment dataset.
     const alignmentArtifacts = await adapter.getArtifacts({ history_id: historyId }, ctx);
     const alignmentDataset = (alignmentArtifacts.artifacts ?? []).find((a) => /fasta|aln|msa/i.test(`${a.name}.${a.type}`)) ?? null;
-    const treeInput = alignmentDataset
-      ? { input: { src: "hda", id: alignmentDataset.id } }
-      : { input: { src: "pasted", paste_content: fasta, name: filename, ext: "fasta" } };
+    const treeInput = { input: { src: "pasted", paste_content: alignmentText ?? fasta, name: "alignment.fasta", ext: "fasta" } };
     const iqtree = await adapter.submitJob({ operation: "submit_job", tool_id: tools.iqtree.id, inputs: treeInput }, ctx);
     if (iqtree.error) throw new Error(`IQ-TREE submission failed: ${iqtree.error.message ?? iqtree.error.code}`);
     const iqState = await poll(adapter, iqtree.provider_job_id, ctx);
@@ -210,6 +206,7 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
     tree_newick: treeText, alignment_text: alignmentText
   }, failed ? 502 : 200, request);
 }
+
 
 
 
