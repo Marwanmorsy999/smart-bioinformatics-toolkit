@@ -202,23 +202,40 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
       const dot = name.lastIndexOf(".");
       return dot > 0 ? name.slice(dot + 1).trim().toLowerCase() : "";
     };
-    const candidates = (jobOutputs.outputs ?? []).filter((item) => {
+    const isUsableAssociation = (item) => {
       const name = String(item.name ?? "");
       const okState = ["ok", "success"].includes(String(item.state ?? "").toLowerCase());
       const notInput = !inputIds.has(String(item.id)) && !inputNames.has(name);
       return item.valid !== false && okState && fastaExts.has(fastaExtensionOf(item)) && notInput;
-    });
+    };
+    const candidates = (jobOutputs.outputs ?? []).filter(isUsableAssociation);
     const inHistory = candidates.filter((item) => !item.history_id || String(item.history_id) === String(resumeHistoryId));
     // Name matching is only a tie-breaker among extension-valid candidates.
     const alignmentName = (item) => /alignment|aligned|\bmsa\b|mafft/i.test(String(item.name ?? ""));
     const selected = inHistory.find(alignmentName) ?? inHistory[0] ?? null;
     if (!selected) {
       const mismatch = candidates.length > 0;
+      // Honest, sanitized diagnostic for a genuinely unresolvable job: only
+      // association identifiers/metadata and a verified-history count. Never
+      // include credentials, URLs, FASTA content or raw provider error objects.
+      const diagnostic = mismatch ? {} : {
+        output_associations: (jobOutputs.outputs ?? []).map((item) => ({
+          id: safeString(item.id, 200) || null,
+          uuid: safeString(item.uuid, 200) || null,
+          dataset_id: safeString(item.dataset_id, 200) || null,
+          name: safeString(item.name, 300) || null,
+          extension: safeString(item.extension, 100) || null,
+          state: safeString(item.state, 80) || null,
+          history_id: safeString(item.history_id, 200) || null,
+          usable: isUsableAssociation(item)
+        })),
+        history_contents_count: historyContents?.ok === true ? (historyContents.artifacts ?? []).length : null
+      };
       return resumeError(
         mismatch
           ? `No succeeded FASTA alignment output from provider job ${resumeProviderJobId} belongs to history ${resumeHistoryId}.`
           : `Provider job ${resumeProviderJobId} has no succeeded FASTA alignment output that is not the uploaded input.`,
-        mismatch ? "resume_history_membership_mismatch" : "no_usable_alignment_output", 409);
+        mismatch ? "resume_history_membership_mismatch" : "no_usable_alignment_output", 409, diagnostic);
     }
     // Resolve to the REAL HDA id; the existing fixed resume path then uses it
     // for IQ-TREE and for display, with no second MAFFT submission.

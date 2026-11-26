@@ -343,6 +343,47 @@ test("FIXTURE resume by provider job id: uploaded input dataset is rejected as a
   assert.equal(body.resumed_from_provider_job, false);
 });
 
+test("FIXTURE resume by provider job id: no_usable_alignment_output returns a sanitized association diagnostic", async (t) => {
+  // FIXTURE: all three associations are unusable for different reasons, so
+  // the 409 must expose exactly why without leaking secrets or FASTA content.
+  const outputs = {
+    input: { id: FIX.inputHda, uuid: FIX.inputUuid, dataset_id: "101", name: "phylo.fasta",
+      state: "ok", extension: "fasta", history_id: FIX.historyId },
+    mafft_log: { id: FIX.logHda, dataset_id: "103", name: "MAFFT log on data 1",
+      state: "ok", extension: "log", history_id: FIX.historyId },
+    queued: { id: FIX.mafftHda, uuid: FIX.mafftUuid, dataset_id: "102", name: "MAFFT on data 1",
+      state: "queued", extension: "fasta", history_id: FIX.historyId }
+  };
+  const { response, body, stub } = await runWorkflow(t, {
+    payload: { resume_provider_job_id: FIX.providerJobId, history_id: FIX.historyId },
+    stubOptions: { outputs }
+  });
+  assert.equal(response.status, 409);
+  assert.equal(body.error_code, "no_usable_alignment_output");
+  assert.equal(body.provider_job_id, FIX.providerJobId);
+  assert.equal(body.provider_job_state, "ok");
+  assert.equal(Array.isArray(body.output_associations), true);
+  assert.equal(body.output_associations.length, 3);
+  const expectedKeys = ["dataset_id", "extension", "history_id", "id", "name", "state", "usable", "uuid"];
+  for (const entry of body.output_associations) {
+    assert.deepEqual(Object.keys(entry).sort(), expectedKeys, JSON.stringify(entry));
+    assert.equal(typeof entry.usable, "boolean");
+  }
+  const byId = new Map(body.output_associations.map((entry) => [entry.id, entry]));
+  assert.equal(byId.get(FIX.inputHda).usable, false, "uploaded input is never usable");
+  assert.equal(byId.get(FIX.inputHda).extension, "fasta");
+  assert.equal(byId.get(FIX.logHda).usable, false, "non-FASTA log is not usable");
+  assert.equal(byId.get(FIX.logHda).extension, "log");
+  assert.equal(byId.get(FIX.mafftHda).usable, false, "queued FASTA is not usable");
+  assert.equal(byId.get(FIX.mafftHda).state, "queued");
+  assert.equal(body.history_contents_count, 5, "verified history contents count is reported");
+  const serialized = JSON.stringify(body) + JSON.stringify(stub.calls);
+  assert.doesNotMatch(serialized, /stub-secret|X-API-Key/i);
+  assert.doesNotMatch(serialized, /ACGTACGTACG|CMD=Put|rid=/i);
+  assert.doesNotMatch(JSON.stringify(body), /"error":\{/, "no raw error object is exposed");
+  assert.equal(stub.calls.filter((call) => call.method === "POST").length, 0, "no submission");
+});
+
 test("FIXTURE resume by provider job id: an output from a different history is rejected", async (t) => {
   const outputs = {
     mafft: { id: FIX.mafftHda, uuid: FIX.mafftUuid, name: "MAFFT on data 1",
