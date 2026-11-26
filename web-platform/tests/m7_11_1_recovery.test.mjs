@@ -55,7 +55,7 @@ function json(body, status = 200) {
 // history contents and dataset text. A MAFFT POST is deliberately NOT routed:
 // if any test triggers one, the assertion on toolPosts below fails loudly.
 function makeRecoveryStub({ jobState = "ok", outputs = DEFAULT_OUTPUTS, jobOutputs = null,
-  alignmentContent = ALIGNMENT, treeContent = TREE } = {}) {
+  alignmentContent = ALIGNMENT, treeContent = TREE, providerHistory = null } = {}) {
   const calls = [];
   const schemaFor = (id) => ({
     inputs: [{ model_class: "Section", name: "general_options", inputs: [
@@ -77,7 +77,8 @@ function makeRecoveryStub({ jobState = "ok", outputs = DEFAULT_OUTPUTS, jobOutpu
   ];
   const textById = new Map([
     [FIX.inputHda, INPUT_FASTA], [FIX.mafftHda, alignmentContent], [FIX.treeHda, treeContent],
-    [FIX.reportHda, "IQ-TREE summary\n"], [FIX.logHda, "IQ-TREE log\n"]
+    [FIX.reportHda, "IQ-TREE summary\n"], [FIX.logHda, "IQ-TREE log\n"],
+    ...(providerHistory?.artifacts?.[0]?.id ? [[providerHistory.artifacts[0].id, alignmentContent]] : [])
   ]);
   const fetchImpl = async (input, init = {}) => {
     const url = String(input);
@@ -103,7 +104,7 @@ function makeRecoveryStub({ jobState = "ok", outputs = DEFAULT_OUTPUTS, jobOutpu
     if (url.includes(`/api/jobs/${FIX.providerJobId}/outputs`)) return json(outputs);
     if (url.includes("/api/jobs/")) {
       const id = url.slice(url.lastIndexOf("/") + 1);
-      return json({ id, state: jobState, history_id: FIX.historyId,
+      return json({ id, state: jobState, history_id: providerHistory?.id ?? FIX.historyId,
         ...(jobOutputs ? { outputs: jobOutputs } : {}) });
     }
     if (url.includes("io_details=true")) {
@@ -123,7 +124,13 @@ function makeRecoveryStub({ jobState = "ok", outputs = DEFAULT_OUTPUTS, jobOutpu
       }
       return json({ error: "unexpected_tool", toolId }, 404);
     }
-    if (url.includes("/api/histories/") && url.includes("/contents")) return json(contents());
+    if (url.includes("/api/histories/") && url.includes("/contents")) {
+      if (providerHistory) {
+        const requested = decodeURIComponent((url.match(/\/api\/histories\/([^/]+)\/contents/) ?? [])[1] ?? "");
+        if (requested === providerHistory.id) return json(providerHistory.artifacts);
+      }
+      return json(contents());
+    }
     if (url.includes("/get_content_as_text")) {
       const id = decodeURIComponent(url.slice(url.lastIndexOf("/datasets/") + 10).split("/")[0]);
       const content = textById.get(id);
@@ -475,6 +482,73 @@ test("FIXTURE resume by provider job id: job-detail outputAlignment recovers the
   assert.match(toolPosts[0].body.tool_id, /iqtree/i);
   assert.doesNotMatch(JSON.stringify(toolPosts), /mafft/i, "no MAFFT POST");
   assert.equal(stub.calls.some((call) => call.url.includes(`/api/jobs/${FIX.providerJobId}/outputs`)), true);
+});
+
+test("FIXTURE resume by provider job id: output in a DIFFERENT history resolves via provider history", async (t) => {
+  // FIXTURE: the caller supplied the upload history, but the job's
+  // outputAlignment belongs to another history and has no name/state/extension.
+  // Those fields must come from the verified artifact in the provider history.
+  const providerHistoryId = "11ac94870d0bb33acbeba775a07e014e";
+  const providerHda = "40160950115d555e093d6ae41f98aca6";
+  const providerUuid = "3da98fac-0ae1-4c13-b784-b8a7b003a2a4";
+  const providerHistory = { id: providerHistoryId, artifacts: [
+    { id: providerHda, uuid: providerUuid, name: "MAFFT on data 1", extension: "fasta",
+      state: "ok", history_id: providerHistoryId, deleted: false },
+    { id: FIX.treeHda, name: "IQ-TREE treefile on data 2", extension: "nwk",
+      state: "ok", history_id: providerHistoryId, deleted: false },
+    { id: FIX.reportHda, name: "IQ-TREE on data 2", extension: "iqtree",
+      state: "ok", history_id: providerHistoryId, deleted: false },
+    { id: FIX.logHda, name: "IQ-TREE log on data 2", extension: "log",
+      state: "ok", history_id: providerHistoryId, deleted: false }
+  ] };
+  const outputs = { outputAlignment: { id: providerHda, uuid: providerUuid, history_id: providerHistoryId } };
+  const jobOutputs = { outputAlignment: { id: providerHda, uuid: providerUuid,
+    dataset_id: "102", history_id: providerHistoryId } };
+  const { response, body, stub } = await runWorkflow(t, {
+    payload: { resume_provider_job_id: FIX.providerJobId, history_id: FIX.historyId },
+    stubOptions: { outputs, jobOutputs, providerHistory }
+  });
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(body.workflow_completed, true);
+  assert.equal(body.resume.alignment_hda_id, providerHda, "resolved HDA from provider history");
+  assert.equal(body.resume.output_uuid, providerUuid, "original UUID preserved");
+  assert.equal(body.resume.caller_history_id, FIX.historyId);
+  assert.equal(body.resume.provider_history_id, providerHistoryId);
+  assert.equal(body.resume.history_id, providerHistoryId);
+  const mafftStep = body.provenance.find((step) => step.step_id === "galaxy_mafft");
+  assert.equal(mafftStep.provider_job_id, FIX.providerJobId);
+  assert.equal(mafftStep.dataset_id, providerHda);
+  assert.equal(mafftStep.caller_history_id, FIX.historyId);
+  assert.equal(mafftStep.provider_history_id, providerHistoryId);
+  const iqtreeStep = body.provenance.find((step) => step.step_id === "galaxy_iqtree");
+  assert.equal(iqtreeStep.input_dataset_id, providerHda, "IQ-TREE uses the resolved HDA");
+  // The resolution phase inspects each distinct history exactly once (the
+  // later workflow phases re-read the resolved provider history).
+  const contentsCalls = stub.calls.filter((call) => call.url.includes("/api/histories/") && call.url.includes("/contents"));
+  assert.equal(new Set(contentsCalls.map((call) => call.url)).size, 2, JSON.stringify(contentsCalls.map((call) => call.url)));
+  assert.match(contentsCalls[0].url, new RegExp(FIX.historyId));
+  assert.match(contentsCalls[1].url, new RegExp(providerHistoryId));
+  const toolPosts = stub.calls.filter((call) => call.method === "POST"
+    && call.url.includes("/api/tools") && !call.url.includes("/fetch"));
+  assert.equal(toolPosts.length, 1, JSON.stringify(toolPosts));
+  assert.match(toolPosts[0].body.tool_id, /iqtree/i);
+  assert.doesNotMatch(JSON.stringify(toolPosts), /mafft/i, "no MAFFT POST");
+});
+
+test("FIXTURE 409 diagnostic lists the distinct history ids inspected", async (t) => {
+  const providerHistoryId = "11ac94870d0bb33acbeba775a07e014e";
+  const outputs = { orphan: { id: "99999999111122223333444455556666", uuid: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+    state: "queued", extension: "fasta", history_id: providerHistoryId } };
+  const jobOutputs = { outputAlignment: { id: "88888888111122223333444455556666", uuid: "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff",
+    state: "queued", extension: "fasta", history_id: providerHistoryId } };
+  const { response, body } = await runWorkflow(t, {
+    payload: { resume_provider_job_id: FIX.providerJobId, history_id: FIX.historyId },
+    stubOptions: { outputs, jobOutputs, providerHistory: { id: providerHistoryId, artifacts: [] } }
+  });
+  assert.equal(response.status, 409);
+  assert.equal(body.error_code, "no_usable_alignment_output");
+  assert.deepEqual(body.inspected_history_ids, [FIX.historyId, providerHistoryId]);
+  assert.equal(body.recovery_version, "m7111-uuid-resolution");
 });
 
 test("FIXTURE no_usable_alignment_output diagnostic exposes bounded output-name keys", async (t) => {
