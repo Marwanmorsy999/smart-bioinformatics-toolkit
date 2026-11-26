@@ -25,6 +25,25 @@ const IQ_REPORT = "Model of substitution: GTR+F+R3\nLog-likelihood: -1234.5678\n
 // FIXTURE: full FASTA headers vs accession-only Newick tips from the real run.
 const FULL_HEADER_FASTA = ">NR_115348.1 Francisella tularensis subsp. holarctica OSU18\nACGTACGTACGT\n>NR_074666.1 Francisella tularensis subsp. tularensis SCHU S4\nACGTACGTTCGT\n>NR_074665.1 Francisella novicida U112\nACGTTCGTACGT\n>NR_043278.1 Francisella philomiragia noatunensis\nACGTTCGTTCGA\n>NR_029362.1 Francisella tularensis subsp. holarctica LVS\nACGTAAGTACGT\n";
 const ACCESSION_TREE = "((NR_115348.1:-0.0070265625,NR_074666.1:0.0070275627):0.016762465,(NR_074665.1:0.0093274489,NR_043278.1:0.057175286):0.0095989406,NR_029362.1:0.13487706);\n";
+// FIXTURE: real-format .iqtree report. The final ML tree differs from the
+// downloaded BIONJ starting tree; the citation line mentions "Model" too.
+const FINAL_ML_TREE = "((NR_115348.1:0.0000010000,((NR_074665.1:0.0000010000,NR_043278.1:0.0027516787):0.0006632395,NR_029362.1:0.0059322341):0.0006735191,NR_074666.1:0.0000010000));";
+const BIONJ_START_TREE = "((NR_115348.1:0.0000010000,NR_074666.1:0.0000010000),(NR_074665.1:0.0000010000,NR_043278.1:0.0000010000),NR_029362.1:0.0000010000);\n";
+const BIONJ_NHX = "(NR_115348.1:0.0000010000,NR_074666.1:0.0000010000,NR_074665.1:0.0000010000,NR_043278.1:0.0000010000,NR_029362.1:0.0000010000);\n";
+const REAL_IQTREE_REPORT = [
+  "Model selection done by AIC.",
+  "Best-fit model according to AIC: TPM3u+F+I",
+  "",
+  "Model             LogL         AIC          BIC",
+  "TPM3u+F+I      -2197.612     4411.224     4430.118",
+  "GTR+F+I        -2201.004     4418.008     4437.002",
+  "",
+  `Tree in newick format: ${FINAL_ML_TREE}`,
+  "NOTE: Tree is UNROOTED although outgroup taxon 'NR_115348.1' is drawn at root",
+  "UFboot: 1000 replicates; SH-aLRT: 1000 replicates",
+  "Guindon S, Dufayard JF, Lefort V et al. (2010) Model-based phylogenetic inference under maximum likelihood."
+].join("\n");
+const NHX_HDA = "eeeeeeee5555ffff4444aaaa3333bbbb";
 
 const FIX = Object.freeze({
   historyId: "11ac94870d0bb33adfdcc31d5164dd84",
@@ -62,7 +81,8 @@ function json(body, status = 200) {
 function makeRecoveryStub({ jobState = "ok", outputs = DEFAULT_OUTPUTS, jobOutputs = null,
   alignmentContent = ALIGNMENT, treeContent = TREE, providerHistory = null,
   iqtreeJobId = null, iqtreeJobState = "ok", iqtreeJobOutputs = null, iqtreeOutputs = null,
-  iqtreeHistory = null, reportContent = "IQ-TREE summary\n" } = {}) {
+  iqtreeHistory = null, reportContent = "IQ-TREE summary\n",
+  extraDatasetText = {} } = {}) {
   const calls = [];
   const schemaFor = (id) => ({
     inputs: [{ model_class: "Section", name: "general_options", inputs: [
@@ -85,7 +105,8 @@ function makeRecoveryStub({ jobState = "ok", outputs = DEFAULT_OUTPUTS, jobOutpu
   const textById = new Map([
     [FIX.inputHda, INPUT_FASTA], [FIX.mafftHda, alignmentContent], [FIX.treeHda, treeContent],
     [FIX.reportHda, reportContent], [FIX.logHda, "IQ-TREE log\n"],
-    ...(providerHistory?.artifacts?.[0]?.id ? [[providerHistory.artifacts[0].id, alignmentContent]] : [])
+    ...(providerHistory?.artifacts?.[0]?.id ? [[providerHistory.artifacts[0].id, alignmentContent]] : []),
+    ...Object.entries(extraDatasetText)
   ]);
   const fetchImpl = async (input, init = {}) => {
     const url = String(input);
@@ -732,6 +753,7 @@ test("FIXTURE: completed IQ-TREE job is recovered read-only with zero tool submi
     output_ids: [FIX.treeHda, FIX.reportHda, FIX.logHda],
     history_ids: [FIX.historyId], model: "GTR+F+R3", log_likelihood: -1234.5678,
     support: iqStep.support, support_settings: iqStep.support_settings,
+    final_tree_present: false, rooting_note: null, tree_source: "downloaded_treefile",
     iqtree_report_excerpt: body.resume_iqtree.iqtree_report_excerpt,
     resumed_from_provider_job: true
   });
@@ -789,6 +811,50 @@ test("FIXTURE: genuine accession tree with negative ML length validates with war
   assert.match(body.resume_iqtree.iqtree_report_excerpt, /Log-likelihood: -1234\.5678/);
   assert.equal(stub.calls.filter((call) => call.method === "POST"
     && call.url.includes("/api/tools") && !call.url.includes("/fetch")).length, 0, "zero submissions");
+});
+
+test("FIXTURE: genuine report final ML tree wins over the BIONJ starting tree", async (t) => {
+  const iqOutputs = {
+    starting_tree: { id: NHX_HDA, name: "IQ-TREE starting tree.nhx", state: "ok",
+      extension: "nhx", history_id: FIX.otherHistoryId },
+    treefile: { id: FIX.treeHda, name: "IQ-TREE treefile", state: "ok",
+      extension: "nwk", history_id: FIX.otherHistoryId },
+    report: { id: FIX.reportHda, name: "IQ-TREE on data", state: "ok",
+      extension: "iqtree", history_id: FIX.otherHistoryId },
+    log: { id: FIX.logHda, name: "IQ-TREE log", state: "ok",
+      extension: "log", history_id: FIX.otherHistoryId }
+  };
+  const iqtreeHistory = { id: FIX.otherHistoryId, artifacts: Object.values(iqOutputs).map((item) => ({
+    id: item.id, name: item.name, extension: item.extension, state: "ok",
+    history_id: FIX.otherHistoryId, deleted: false
+  })) };
+  const { response, body, stub } = await runWorkflow(t, {
+    payload: { resume_provider_job_id: FIX.providerJobId, history_id: FIX.historyId,
+      resume_iqtree_provider_job_id: IQ_JOB_ID },
+    stubOptions: { alignmentContent: FULL_HEADER_FASTA, treeContent: BIONJ_START_TREE,
+      reportContent: REAL_IQTREE_REPORT, iqtreeJobId: IQ_JOB_ID,
+      iqtreeJobOutputs: iqOutputs, iqtreeOutputs: iqOutputs, iqtreeHistory,
+      extraDatasetText: { [NHX_HDA]: BIONJ_NHX, [FIX.treeHda]: BIONJ_START_TREE } }
+  });
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(body.workflow_completed, true);
+  assert.equal(body.validation.tree.valid, true);
+  assert.equal(body.tree_newick, FINAL_ML_TREE, "the report's final ML tree is displayed");
+  assert.equal(body.tree_source, "iqtree_report_final_tree");
+  assert.equal(body.resume_iqtree.model, "TPM3u+F+I", "citation author line is not used as model");
+  assert.equal(body.resume_iqtree.log_likelihood, -2197.612, "model-table LogL is used");
+  assert.equal(body.resume_iqtree.final_tree_present, true);
+  assert.match(body.resume_iqtree.rooting_note, /UNROOTED/);
+  assert.ok(body.resume_iqtree.support_settings.some((line) => /UFboot/.test(line)));
+  const nhx = body.tree_artifacts.find((artifact) => artifact.dataset_id === NHX_HDA);
+  assert.ok(nhx, JSON.stringify(body.tree_artifacts));
+  assert.match(nhx.name, /\.nhx$/);
+  assert.match(nhx.checksum, /^[0-9a-f]{64}$/);
+  assert.equal(nhx.source_role, "starting_tree_not_displayed");
+  assert.equal(body.retrieval.files.find((file) => file.dataset_id === NHX_HDA).source_role,
+    "starting_tree_not_displayed");
+  assert.equal(stub.calls.filter((call) => call.method === "POST"
+    && call.url.includes("/api/tools") && !call.url.includes("/fetch")).length, 0, "zero tool submissions");
 });
 
 test("FIXTURE: absent real report keeps model/likelihood/excerpt null (no invention)", async (t) => {
