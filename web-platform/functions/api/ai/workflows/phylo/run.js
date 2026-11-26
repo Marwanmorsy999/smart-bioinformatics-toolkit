@@ -99,12 +99,23 @@ export function parseIqtreeReport(text) {
   // can be the BIONJ starting tree and must not silently replace it.
   // IQ-TREE sometimes prints the newick on the SAME line as the label and
   // sometimes on the following line. Both come from the FULL report text.
+  // Locate the LABEL, then scan forward to the first non-empty line beginning
+  // with '(' (skipping blank lines). Real reports put the newick on its own
+  // line after a blank line; a same-line newick is handled by the same scan.
+  const label = "tree in newick format:";
+  const labelIndex = source.toLowerCase().indexOf(label);
+  let scannedTree = null;
+  if (labelIndex >= 0) {
+    const afterLabel = source.slice(labelIndex + label.length);
+    for (const line of afterLabel.split("\n")) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("(")) { scannedTree = trimmed; break; }
+    }
+  }
   const sameLineTree = capture(/(?:^|\n)[ \t]*Tree in newick format[ \t]*:[ \t]*([^\r\n]+)/i);
   const nextLineTree = capture(/(?:^|\n)[ \t]*Tree in newick format[ \t]*:[ \t]*(?:\r?\n)[ \t]*([^\r\n]+)/i);
-  // Unanchored fallback: unusual indentation or a leading marker must not hide
-  // a genuine final-tree line. Only text AFTER the real label is captured.
   const unanchoredTree = capture(/Tree in newick format[ \t]*:[ \t]*([^\r\n]+)/i);
-  const finalTree = sameLineTree || nextLineTree || unanchoredTree;
+  const finalTree = scannedTree || sameLineTree || nextLineTree || unanchoredTree;
   const rootingNote = capture(/((?:^|\n)[^\n]*?NOTE:[^\r\n]*UNROOTED[^\r\n]*)/i);
   return {
     model: model ? model.slice(0, 200) : null,
@@ -698,6 +709,19 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
       outputArtifacts = [...merged.values()];
     }
     const selected = selectPhyloArtifacts(outputArtifacts, [...mafftOutputs, ...iqtreeOutputs]);
+    // Among GENUINE tree artifacts, prefer the final ML tree (MaxLikelihood /
+    // treefile) over a BIONJ starting tree; never invent or rename content.
+    const treeCandidates = outputArtifacts.filter((item) => classifyPhyloArtifact(item).kind === "tree");
+    if (treeCandidates.length > 1) {
+      const rank = (item) => {
+        const name = String(item.name ?? "");
+        if (/maxlikelihood|maximum likelihood|final tree/i.test(name)) return 3;
+        if (/\.treefile\b|treefile|newick/i.test(name)) return 2;
+        if (/bionj|starting tree|initial tree/i.test(name)) return -1;
+        return 1;
+      };
+      selected.tree = [...treeCandidates].sort((left, right) => rank(right) - rank(left))[0];
+    }
     if (resumeId) {
       // Keep the reported alignment identical to the HDA used for IQ-TREE.
       const verified = outputArtifacts.find((item) => item.id === readyId);
@@ -709,8 +733,10 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
     const selectedIds = new Set([selected.alignment?.id, selected.tree?.id, selected.report?.id,
       ...selected.logs.map((item) => item.id)].filter(Boolean));
     if (recoveredIqtree) {
-      // A separately stored .nhx (e.g. the BIONJ starting tree) is evidence in
-      // its own right; keep and label it even when the report holds the final tree.
+      // Every genuine tree artifact (e.g. the BIONJ starting tree / .nhx) is
+      // evidence in its own right: keep and label it even when another tree or
+      // the report's final tree is the one actually displayed.
+      for (const item of treeCandidates) selectedIds.add(item.id);
       for (const item of outputArtifacts) {
         if (/\.nhx\b/i.test(String(item.name ?? "")) || /^nhx$/i.test(String(item.type ?? ""))) {
           selectedIds.add(item.id);
@@ -803,13 +829,17 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
     } else if (treeText) {
       displayedTreeSource = "downloaded_treefile";
     }
-    // Label starting-tree artifacts OUTSIDE the try: the fallback path must be
+    // Label retained tree artifacts OUTSIDE the try: the fallback path must be
     // labelled too, so no tree is ever displayed without an explicit source.
     if (displayedTreeSource) {
+      const displayedHda = displayedTreeSource === "iqtree_report_final_tree"
+        ? null : String(selected.tree?.id ?? "");
       for (const file of retrievedFiles) {
-        if (file.kind === "tree" || file.source_role === "starting_tree_not_displayed") {
-          file.source_role = "starting_tree_not_displayed";
-        }
+        if (file.kind !== "tree" && file.source_role !== "starting_tree_not_displayed") continue;
+        const name = String(file.name ?? "");
+        const isStarting = /bionj|starting tree|initial tree|\.nhx\b/i.test(name)
+          || !displayedHda || String(file.dataset_id) !== displayedHda;
+        file.source_role = isStarting ? "starting_tree_not_displayed" : "displayed_tree";
       }
     }
     if (!alignmentText) retrievalErrors.push({ reason: "no_valid_alignment_retrieved" });
