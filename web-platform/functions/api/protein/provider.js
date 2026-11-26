@@ -387,8 +387,10 @@ export async function submitIprscan6({ email, sequence, stype = "p", goterms = t
   form.set("email", address);
   form.set("sequence", check.sequence);
   form.set("stype", stype === "p" ? "p" : "p");
-  form.set("goterms", goterms ? "on" : "off");
-  form.set("pathways", pathways ? "on" : "off");
+  // EBI's official InterProScanClient.submit posts literal "true"/"false" for
+  // these flags; HTML checkbox values "on"/"off" do not match that contract.
+  form.set("goterms", goterms ? "true" : "false");
+  form.set("pathways", pathways ? "true" : "false");
   if (typeof appl === "string" && /^[A-Za-z0-9,_-]{1,120}$/.test(appl)) form.set("appl", appl);
   const response = await providerRequest(`${ENDPOINTS.iprscanBase}/run`, {
     ctx, method: "POST",
