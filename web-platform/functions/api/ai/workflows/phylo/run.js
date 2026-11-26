@@ -208,7 +208,54 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
       const notInput = !inputIds.has(String(item.id)) && !inputNames.has(name);
       return item.valid !== false && okState && fastaExts.has(fastaExtensionOf(item)) && notInput;
     };
-    const candidates = (jobOutputs.outputs ?? []).filter(isUsableAssociation);
+    const okState = (value) => ["ok", "success"].includes(String(value ?? "").toLowerCase());
+    const notUploadedInput = (id, name) => !inputIds.has(String(id ?? "")) && !inputNames.has(String(name ?? ""));
+    const verifiedArtifacts = historyContents?.ok === true ? (historyContents.artifacts ?? []) : [];
+
+    // Direct, already-valid HDA associations keep the existing selection rules.
+    const directCandidates = (jobOutputs.outputs ?? []).filter(isUsableAssociation).map((item) => ({
+      id: item.id,
+      uuid: item.uuid ?? null,
+      dataset_id: item.dataset_id ?? null,
+      name: item.name ?? null,
+      extension: item.extension ?? null,
+      state: item.state ?? null,
+      history_id: item.history_id ?? null,
+      resolved_from_history: false
+    }));
+
+    // Galaxy job outputs often carry ONLY a persistent UUID / dataset id (no
+    // HDA id), so normalizeOutputAssociation marks them invalid. Resolve that
+    // identity against VERIFIED history contents and apply the same safety
+    // gates; never fabricate an HDA id from an unresolved association.
+    const resolvedCandidates = [];
+    for (const item of jobOutputs.outputs ?? []) {
+      if (isUsableAssociation(item)) continue;
+      const uuid = String(item.galaxyDatasetUuid ?? item.uuid ?? "").trim();
+      const datasetId = String(item.galaxyDatasetId ?? item.dataset_id ?? "").trim();
+      if (!uuid && !datasetId) continue;
+      const match = verifiedArtifacts.find((artifact) => (
+        (uuid && String(artifact.uuid ?? "") === uuid)
+        || (datasetId && String(artifact.dataset_id ?? "") === datasetId)
+      ));
+      if (!match || !match.id || match.deleted === true) continue;
+      if (match.history_id && String(match.history_id) !== String(resumeHistoryId)) continue;
+      if (!okState(match.state) || !fastaExts.has(fastaExtensionOf(match))) continue;
+      if (!notUploadedInput(match.id, match.name)) continue;
+      resolvedCandidates.push({
+        id: match.id,
+        // Preserve the ORIGINAL job-output UUID for provenance, not the
+        // history artifact's UUID when they differ.
+        uuid: uuid || match.uuid || null,
+        dataset_id: datasetId || match.dataset_id || null,
+        name: match.name ?? null,
+        extension: match.type ?? match.extension ?? null,
+        state: match.state ?? null,
+        history_id: match.history_id ?? resumeHistoryId,
+        resolved_from_history: true
+      });
+    }
+    const candidates = [...directCandidates, ...resolvedCandidates];
     const inHistory = candidates.filter((item) => !item.history_id || String(item.history_id) === String(resumeHistoryId));
     // Name matching is only a tie-breaker among extension-valid candidates.
     const alignmentName = (item) => /alignment|aligned|\bmsa\b|mafft/i.test(String(item.name ?? ""));
@@ -241,7 +288,15 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
             galaxy_dataset_uuid: uuid
           };
         }),
-        history_contents_count: historyContents?.ok === true ? (historyContents.artifacts ?? []).length : null
+        history_contents_count: verifiedArtifacts.length,
+        history_artifacts: verifiedArtifacts.map((artifact) => ({
+          id: safeString(artifact.id, 200) || null,
+          name: safeString(artifact.name, 300) || null,
+          state: safeString(artifact.state, 80) || null,
+          extension: safeString(artifact.type ?? artifact.extension, 100) || null,
+          uuid: safeString(artifact.uuid, 200) || null
+        })),
+        recovery_version: "m7111-uuid-resolution"
       };
       return resumeError(
         mismatch
