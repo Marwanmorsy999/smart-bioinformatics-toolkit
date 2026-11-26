@@ -6,6 +6,7 @@
   "use strict";
 
   const MAX_CHARS = 4000;
+  const MAX_HISTORY = 8;
   const BANNER_TEXT = "AI chat is unavailable: no authorized model provider is configured for this deployment.";
   const PUBLIC_ID = /^(proj|ds)_[0-9a-f]{16}$/;
 
@@ -13,6 +14,7 @@
   const ui = {
     shell: document.querySelector(".assistant-shell"),
     badge: byId("assistant-backend-badge"),
+    banner: byId("assistant-banner"),
     bannerDetail: byId("assistant-banner-detail"),
     activity: byId("activity-list"),
     sidebarToggle: byId("sidebar-toggle"),
@@ -52,6 +54,8 @@
   const state = {
     available: false,
     reason: "no_enabled_llm_provider",
+    provider: null,
+    model: null,
     conversations: [],
     activeId: null,
     inFlight: false,
@@ -68,6 +72,14 @@
     if (className) node.className = className;
     if (text !== undefined && text !== null) node.textContent = String(text);
     return node;
+  }
+
+  // Keep the decorative status dot in the badge while replacing only its text.
+  function setBadgeText(text) {
+    const dot = ui.badge.querySelector(".status-dot");
+    ui.badge.replaceChildren();
+    if (dot) ui.badge.append(dot);
+    ui.badge.append(document.createTextNode(` ${String(text)}`));
   }
 
   function activeConversation() {
@@ -696,21 +708,45 @@
     ui.count.classList.toggle("over", over);
     ui.input.classList.toggle("is-over-limit", over);
     ui.clearDraft.disabled = length === 0;
+    ui.send.disabled = !state.available || state.inFlight || over || length === 0;
     return !over;
   }
 
   function setUnavailable(reason) {
     state.available = false;
+    state.provider = null;
+    state.model = null;
     state.reason = typeof reason === "string" && reason.length < 120 ? reason : "no_enabled_llm_provider";
+    ui.banner.hidden = false;
     ui.bannerDetail.textContent = `Status: ${state.reason}. No input is accepted; no demo reply is offered. Nothing is generated, sent to a model, or simulated.`;
-    ui.badge.textContent = "AI chat unavailable";
+    setBadgeText("AI chat unavailable");
     ui.badge.classList.add("unavailable");
     setPanelState("Unavailable — no authorized model provider");
     ui.input.disabled = true;
-    ui.send.disabled = true;
     ui.stop.disabled = true;
     ui.input.setAttribute("aria-disabled", "true");
     ui.help.textContent = `Enter sends · Shift+Enter adds a new line. Maximum ${MAX_CHARS} characters. Chat is disabled until a provider is authorized.`;
+    markStage(null);
+    updateCount();
+  }
+
+  // Only a real gateway status response can enable the composer. The model
+  // name shown here is the one the Worker actually selected, never a guess.
+  function setAvailable(data) {
+    state.available = true;
+    state.reason = null;
+    state.provider = typeof data.provider === "string" ? data.provider : "ninerouter";
+    state.model = typeof data.selected_model === "string" ? data.selected_model : null;
+    ui.banner.hidden = true;
+    setBadgeText(state.model
+      ? `${state.provider} · ${state.model}`
+      : `${state.provider} · model not reported`);
+    ui.badge.classList.remove("unavailable");
+    setPanelState(`Connected to ${state.provider}${state.model ? ` · model ${state.model}` : ""} — phrasing unverified.`);
+    ui.bannerDetail.textContent = "";
+    ui.input.disabled = false;
+    ui.input.removeAttribute("aria-disabled");
+    ui.help.textContent = `Enter sends · Shift+Enter adds a new line. Maximum ${MAX_CHARS} characters. Replies are AI-generated phrasing; scientific values come only from executed tools.`;
     markStage(null);
     updateCount();
   }
@@ -725,6 +761,10 @@
       });
       if (response.ok) {
         const data = await response.json().catch(() => ({}));
+        if (data.available === true && data.provider === "ninerouter") {
+          setAvailable(data);
+          return;
+        }
         reason = typeof data.reason === "string" ? data.reason : "no_enabled_llm_provider";
       }
     } catch {
@@ -733,6 +773,87 @@
     // Fail closed for every status outcome, including an unreachable status
     // endpoint or an unexpected "available" claim from a proxy.
     setUnavailable(reason);
+  }
+
+  function buildHistory() {
+    const conversation = activeConversation();
+    if (!conversation) return [];
+    return conversation.messages
+      .filter((item) => (item.role === "user" || item.role === "assistant") && typeof item.text === "string")
+      .slice(-MAX_HISTORY)
+      .map((item) => ({ role: item.role, content: item.text.slice(0, MAX_CHARS) }));
+  }
+
+  function removeMessage(message) {
+    const conversation = activeConversation();
+    if (!conversation || !message) return;
+    conversation.messages = conversation.messages.filter((item) => item !== message);
+    renderTimeline();
+  }
+
+  // Raw SSE reader. Every text fragment comes from a real upstream data frame;
+  // malformed frames are ignored rather than turned into invented text.
+  async function consumeAssistantStream(response, contentNode, toolEvents) {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let text = "";
+    let errorText = "";
+    let meta = null;
+    let done = false;
+
+    const handleFrame = (block) => {
+      let eventName = "message";
+      const dataLines = [];
+      for (const line of block.split(/\r?\n/)) {
+        if (line.startsWith("event:")) eventName = line.slice(6).trim();
+        else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+      }
+      if (dataLines.length === 0) return;
+      const payload = dataLines.join("\n");
+      if (payload === "[DONE]") { done = true; return; }
+      let data;
+      try { data = JSON.parse(payload); } catch { return; }
+      if (eventName === "tool") {
+        toolEvents.push(data);
+        markStage(data.status === "ok" ? "validating" : "reviewing_evidence");
+        return;
+      }
+      if (eventName === "meta") { meta = data; return; }
+      if (eventName === "error") {
+        errorText = String(data.error ?? "The provider returned an error.").slice(0, 500);
+        return;
+      }
+      const delta = data?.choices?.[0]?.delta;
+      if (typeof delta?.content === "string" && delta.content) {
+        text += delta.content;
+        if (contentNode) {
+          contentNode.replaceChildren();
+          renderMarkdown(text, contentNode);
+        }
+        ui.timeline.scrollTop = ui.timeline.scrollHeight;
+      }
+    };
+
+    try {
+      for (;;) {
+        const { value, done: readDone } = await reader.read();
+        if (readDone) break;
+        buffer = (buffer + decoder.decode(value, { stream: true })).replace(/\r\n/g, "\n");
+        let index;
+        while ((index = buffer.indexOf("\n\n")) !== -1) {
+          const block = buffer.slice(0, index);
+          buffer = buffer.slice(index + 2);
+          handleFrame(block);
+          if (done) break;
+        }
+        if (done) break;
+      }
+      if (!done && buffer.trim()) handleFrame(buffer);
+    } finally {
+      try { await reader.cancel(); } catch { /* stream already closed */ }
+    }
+    return { text, errorText, meta };
   }
 
   async function sendMessage(text) {
@@ -751,7 +872,7 @@
     }
     if (state.inFlight) return;
 
-    const conversation = activeConversation() ?? newConversation();
+    const history = buildHistory();
     state.lastRequest = { message, projectContext: state.projectContext };
     state.inFlight = true;
     state.controller = new AbortController();
@@ -759,40 +880,88 @@
     ui.stop.disabled = false;
     setError("");
     addMessage("user", message);
-    setPanelState("Request sent — no model response has been generated yet.");
+    setPanelState("Request sent — waiting for the first real response token.");
 
-    const body = { message };
+    const body = { message, history, stream: true };
     if (/^(proj|ds)_[0-9a-f]{16}$/.test(state.projectContext)) body.project_context = state.projectContext;
+    let placeholder = null;
 
     try {
       const response = await fetch("api/assistant/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
         credentials: "same-origin",
         body: JSON.stringify(body),
         signal: state.controller.signal
       });
-      const data = await response.json().catch(() => ({}));
       if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
         const typed = data.type || "assistant_provider_unavailable";
         setError(`${data.error || BANNER_TEXT} (${typed}; ${data.reason || "unavailable"}). No response was generated.`);
         addMessage("system", "No response was generated. No model provider was contacted.");
         setPanelState("Unavailable — no model response was completed.");
         return;
       }
-      const reply = typeof data.reply === "string" ? data.reply.trim() : "";
-      if (!reply) {
-        setError("The gateway returned no response text. Nothing was generated or simulated.");
-        addMessage("system", "No response text was returned. Nothing was generated.");
-        return;
+
+      const contentType = String(response.headers.get("Content-Type") ?? "");
+      if (contentType.includes("text/event-stream") && response.body && typeof response.body.getReader === "function") {
+        addMessage("assistant", "");
+        placeholder = activeConversation().messages.at(-1);
+        const contentNode = ui.timeline.lastElementChild?.querySelector(".message-content") ?? null;
+        const toolEvents = [];
+        markStage("understanding");
+        const result = await consumeAssistantStream(response, contentNode, toolEvents);
+        for (const event of toolEvents) {
+          const id = typeof event.tool_id === "string" ? event.tool_id.slice(0, 120) : "tool";
+          addMessage("system", `Tool activity: ${id} — ${event.status === "ok" ? "completed" : "failed"} (${event.execution_location ?? "location unreported"}).`);
+        }
+        if (result.meta && typeof result.meta.model === "string") {
+          state.model = result.meta.model;
+          setBadgeText(`${state.provider ?? "ninerouter"} · ${result.meta.model}`);
+        }
+        if (result.errorText) {
+          removeMessage(placeholder);
+          placeholder = null;
+          setError(`${result.errorText} No response was generated.`);
+          addMessage("system", "No response was generated. Nothing was simulated.");
+          setPanelState("Unavailable — no model response was completed.");
+          return;
+        }
+        if (!result.text) {
+          removeMessage(placeholder);
+          placeholder = null;
+          setError("The gateway returned no response text. Nothing was generated or simulated.");
+          addMessage("system", "No response text was returned. Nothing was generated.");
+          return;
+        }
+        placeholder.text = result.text;
+        placeholder.card = result.meta?.result_card && typeof result.meta.result_card === "object" ? result.meta.result_card : null;
+        placeholder.evidenceStatus = result.meta?.evidence_status ?? null;
+        placeholder.validated = result.meta?.validated ?? null;
+        renderTimeline();
+        setPanelState(`Response received from ${state.provider ?? "ninerouter"}${state.model ? ` · ${state.model}` : ""} — phrasing unverified.`);
+      } else {
+        // Legacy JSON fallback when the gateway cannot stream.
+        const data = await response.json().catch(() => ({}));
+        const reply = typeof data.reply === "string" ? data.reply.trim() : "";
+        if (!reply) {
+          setError("The gateway returned no response text. Nothing was generated or simulated.");
+          addMessage("system", "No response text was returned. Nothing was generated.");
+          return;
+        }
+        if (typeof data.model === "string") {
+          state.model = data.model;
+          setBadgeText(`${state.provider ?? "ninerouter"} · ${data.model}`);
+        }
+        addMessage("assistant", reply, {
+          card: data.result_card && typeof data.result_card === "object" ? data.result_card : null,
+          evidenceStatus: data.evidence_status ?? null,
+          validated: data.validated ?? null
+        });
+        setPanelState("Response received — phrasing is unverified.");
       }
-      addMessage("assistant", reply, {
-        card: data.result_card && typeof data.result_card === "object" ? data.result_card : null,
-        evidenceStatus: data.evidence_status ?? null,
-        validated: data.validated ?? null
-      });
-      setPanelState("Response received — phrasing is unverified.");
     } catch (error) {
+      if (placeholder && !placeholder.text) { removeMessage(placeholder); placeholder = null; }
       if (error && error.name === "AbortError") {
         setError("Stopped — no model response was completed. The server job, if any, is unchanged.");
         addMessage("system", "Stopped — no model response was completed.");
@@ -805,7 +974,6 @@
       state.inFlight = false;
       state.controller = null;
       ui.stop.disabled = true;
-      ui.send.disabled = true;
       ui.input.value = "";
       updateCount();
       ui.input.focus();

@@ -15,6 +15,7 @@ const ENV = {
   NINEROUTER_ENABLED: "true",
   NINEROUTER_BASE_URL: "https://secret-router.example.test/v1",
   NINEROUTER_API_KEY: "sk-super-secret-key-0123456789",
+  NINEROUTER_MODEL: "auto",
   AI_AGENT_TOKEN: "operator-token-must-never-leak",
   FETCH_IMPL: () => { throw new Error("provider fetch must never be called"); }
 };
@@ -31,14 +32,16 @@ function post(body, init = {}) {
   });
 }
 
-test("status reports unavailable with the honest typed reason", async () => {
+test("status reports unavailable with the honest typed reason when the provider cannot be reached", async () => {
   const response = await onStatus(context("/api/assistant/status"));
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("X-Content-Type-Options"), "nosniff");
   const body = await response.json();
   assert.equal(body.available, false);
-  assert.equal(body.reason, UNAVAILABLE_REASON);
+  assert.equal(body.reason, "connection_failed");
   assert.equal(body.type, UNAVAILABLE_TYPE);
+  assert.equal(body.provider, "ninerouter");
+  assert.equal(body.reachable, false);
   assert.equal(body.notice, UNAVAILABLE_NOTICE);
   assert.equal(body.execution_mode, "real");
   assert.ok(Array.isArray(body.stages) && body.stages.length === 8);
@@ -51,22 +54,35 @@ test("status refuses non-GET methods with an Allow header", async () => {
   assert.equal(response.headers.get("Allow"), "GET");
 });
 
-test("chat fails closed with a typed 503 and no generated text", async () => {
+test("chat fails closed with a typed provider error and no generated text", async () => {
   const response = await onChat(post(JSON.stringify({ message: "What is FASTA?" })));
-  assert.equal(response.status, 503);
+  assert.equal(response.status, 502);
   assert.equal(response.headers.get("X-Assistant-Error"), UNAVAILABLE_TYPE);
   const body = await response.json();
   assert.equal(body.type, UNAVAILABLE_TYPE);
-  assert.equal(body.reason, UNAVAILABLE_REASON);
+  assert.equal(body.reason, "connection_failed");
   assert.equal(body.available, false);
+  assert.equal(body.generated, false);
   assert.equal(body.notice, UNAVAILABLE_NOTICE);
-  assert.match(body.error, /no authorized model provider/i);
+  assert.match(body.error, /could not be reached/i);
   assert.equal(Object.hasOwn(body, "reply"), false);
   assert.equal(Object.hasOwn(body, "message"), false);
   assert.equal(Object.hasOwn(body, "choices"), false);
   assert.equal(Object.hasOwn(body, "generated_text"), false);
   assert.equal(Object.hasOwn(body, "usage"), false);
   assert.doesNotMatch(JSON.stringify(body), /I cannot|Here is|Based on|FASTA is|You can/i);
+});
+
+test("status keeps the legacy unavailable reason when the provider flag is disabled", async () => {
+  const response = await onStatus({
+    ...context("/api/assistant/status"),
+    env: { ...ENV, NINEROUTER_ENABLED: "false" }
+  });
+  const body = await response.json();
+  assert.equal(body.available, false);
+  assert.equal(body.reason, UNAVAILABLE_REASON);
+  assert.equal(body.type, UNAVAILABLE_TYPE);
+  assert.equal(body.enabled, false);
 });
 
 test("chat refuses non-POST methods", async () => {
@@ -106,8 +122,8 @@ test("valid optional public project context is accepted but still fails closed",
     conversation_id: "local-1",
     project_context: "ds_0123456789abcdef"
   })));
-  assert.equal(response.status, 503);
-  assert.equal((await response.json()).reason, UNAVAILABLE_REASON);
+  assert.equal(response.status, 502);
+  assert.equal((await response.json()).reason, "connection_failed");
 });
 
 test("no provider credentials, URLs or config values appear in responses", async () => {
