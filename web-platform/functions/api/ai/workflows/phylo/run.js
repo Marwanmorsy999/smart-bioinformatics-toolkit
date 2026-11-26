@@ -784,16 +784,21 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
         parseNewick(recoveredIqtreeReport.final_tree);
         treeText = recoveredIqtreeReport.final_tree;
         displayedTreeSource = "iqtree_report_final_tree";
-        for (const file of retrievedFiles) {
-          if (file.kind === "tree" || file.source_role === "starting_tree_not_displayed") {
-            file.source_role = "starting_tree_not_displayed";
-          }
-        }
       } catch (e) {
-        retrievalErrors.push({ reason: `iqtree_report_final_tree_unparseable: ${e?.message ?? e}` });
+        retrievalErrors.push({ reason: `iqtree_report_final_tree_unparseable: ${e?.message ?? e}; displayed tree falls back to the downloaded treefile` });
+        displayedTreeSource = treeText ? "downloaded_treefile" : null;
       }
     } else if (treeText) {
       displayedTreeSource = "downloaded_treefile";
+    }
+    // Label starting-tree artifacts OUTSIDE the try: the fallback path must be
+    // labelled too, so no tree is ever displayed without an explicit source.
+    if (displayedTreeSource) {
+      for (const file of retrievedFiles) {
+        if (file.kind === "tree" || file.source_role === "starting_tree_not_displayed") {
+          file.source_role = "starting_tree_not_displayed";
+        }
+      }
     }
     if (!alignmentText) retrievalErrors.push({ reason: "no_valid_alignment_retrieved" });
     if (!treeText) retrievalErrors.push({ reason: "no_valid_newick_tree_retrieved" });

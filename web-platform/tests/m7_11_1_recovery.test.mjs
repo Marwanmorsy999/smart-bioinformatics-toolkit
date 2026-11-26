@@ -44,6 +44,10 @@ const REAL_IQTREE_REPORT = [
   "Guindon S, Dufayard JF, Lefort V et al. (2010) Model-based phylogenetic inference under maximum likelihood."
 ].join("\n");
 const NHX_HDA = "eeeeeeee5555ffff4444aaaa3333bbbb";
+// FIXTURE: same report, but the printed final tree is syntactically broken.
+// The Worker must fall back to the downloaded treefile and LABEL that fallback.
+const UNPARSEABLE_REPORT = REAL_IQTREE_REPORT.replace(/Tree in newick format: [^\n]*/,
+  "Tree in newick format: ((NR_115348.1:0.1,NR_074666.1:0.2);");
 
 const FIX = Object.freeze({
   historyId: "11ac94870d0bb33adfdcc31d5164dd84",
@@ -853,6 +857,29 @@ test("FIXTURE: genuine report final ML tree wins over the BIONJ starting tree", 
   assert.equal(nhx.source_role, "starting_tree_not_displayed");
   assert.equal(body.retrieval.files.find((file) => file.dataset_id === NHX_HDA).source_role,
     "starting_tree_not_displayed");
+  assert.equal(stub.calls.filter((call) => call.method === "POST"
+    && call.url.includes("/api/tools") && !call.url.includes("/fetch")).length, 0, "zero tool submissions");
+});
+
+test("FIXTURE: unparseable report tree falls back to labelled downloaded treefile", async (t) => {
+  const { response, body, stub } = await runWorkflow(t, {
+    payload: { resume_provider_job_id: FIX.providerJobId, history_id: FIX.historyId,
+      resume_iqtree_provider_job_id: IQ_JOB_ID },
+    stubOptions: { alignmentContent: FULL_HEADER_FASTA, treeContent: BIONJ_START_TREE,
+      reportContent: UNPARSEABLE_REPORT, iqtreeJobId: IQ_JOB_ID,
+      iqtreeJobOutputs: IQ_OUTPUTS, iqtreeOutputs: IQ_OUTPUTS }
+  });
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(body.workflow_completed, true);
+  assert.equal(body.tree_newick, BIONJ_START_TREE, "downloaded treefile is the displayed tree");
+  assert.equal(body.tree_source, "downloaded_treefile", "fallback is explicitly labelled");
+  assert.ok((body.validation.retrieval_errors ?? []).some((error) => String(error.reason ?? "")
+    .startsWith("iqtree_report_final_tree_unparseable")));
+  assert.equal(body.resume_iqtree.final_tree_present, true);
+  assert.equal(body.resume_iqtree.model, "TPM3u+F+I", "no model value is invented on fallback");
+  assert.equal(body.resume_iqtree.log_likelihood, -2197.612);
+  assert.ok(body.tree_artifacts.length >= 1);
+  assert.ok(body.tree_artifacts.every((artifact) => artifact.source_role === "starting_tree_not_displayed"));
   assert.equal(stub.calls.filter((call) => call.method === "POST"
     && call.url.includes("/api/tools") && !call.url.includes("/fetch")).length, 0, "zero tool submissions");
 });
