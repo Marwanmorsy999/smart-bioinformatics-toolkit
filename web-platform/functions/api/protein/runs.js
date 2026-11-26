@@ -3,7 +3,7 @@
 // placeholder file is written and no checksum is invented.
 
 import {
-  SQL, audit, envExecutionMode, hashInput, htmlEscape, insertRow, makeId, nowIso,
+  SQL, audit, envExecutionMode, getRow, hashInput, htmlEscape, insertRow, makeId, nowIso,
   parseJson, runStatement
 } from "../ai/_lib.js";
 import { summarizeAnnotation } from "./parser.js";
@@ -193,11 +193,9 @@ export function buildArtifacts(result) {
   }, null, 2);
   // The original input text is the genuine FASTA/sequence the Worker received;
   // it is stored verbatim, never rebuilt from identifiers.
-  const fasta = typeof result?.input?.fasta_text === "string" && result.input.fasta_text.trim()
-    ? result.input.fasta_text.trim()
-    : "";
+  const fasta = typeof result?.input?.fasta_text === "string" ? result.input.fasta_text : "";
   return [
-    { name: "input.fasta", kind: "protein_input_fasta", mime: "text/plain;charset=utf-8", content: `${fasta}\n` },
+    { name: "input.fasta", kind: "protein_input_fasta", mime: "text/plain;charset=utf-8", content: fasta },
     { name: "annotation.json", kind: "protein_annotation_json", mime: "application/json;charset=utf-8", content: annotationJson },
     { name: "provider.json", kind: "protein_provider_json", mime: "application/json;charset=utf-8", content: providerJson },
     { name: "annotations.tsv", kind: "protein_annotations_tsv", mime: "text/tab-separated-values;charset=utf-8", content: buildTsv(result) },
@@ -264,10 +262,22 @@ export async function persistProteinRun(db, {
 export async function finalizeProteinRun(db, { runId, providerJobId, result, now = Date.now(), idFactory }) {
   const finishedAt = nowIso(now);
   const stored = JSON.stringify(result);
+  // Derive the persisted state from the ACTUAL result, never from the fact
+  // that the dispatcher reached a terminal state. An ERROR/FAILURE job or a
+  // failed result stays failed in the AI job row and in the protein run row.
+  const finalState = result?.status === "failed" ? "failed" : "succeeded";
   // Conditional update: only the still-running job row is finalised.
-  await runStatement(db, SQL.saveJobResult, ["succeeded", finishedAt, stored, JSON.stringify(result?.validation ?? {}),
+  await runStatement(db, SQL.saveJobResult, [finalState, finishedAt, stored, JSON.stringify(result?.validation ?? {}),
     null, JSON.stringify(result?.provenance ?? []), null, envExecutionMode(result), runId, "running"]);
-  await runStatement(db, SQL.updateProteinRun, ["succeeded", providerJobId, stored, finishedAt, runId]);
+  await runStatement(db, SQL.updateProteinRun, [finalState, providerJobId, stored, finishedAt, runId]);
+  const runJob = await getRow(db, SQL.getJob, [runId]);
+  if (runJob?.plan_id) {
+    await runStatement(db, SQL.updateJobByPlanStep, [finalState, finishedAt, runJob.plan_id, "protein_annotate"]);
+    await runStatement(db, SQL.updateJobByPlanStep, [
+      finalState === "failed" ? "skipped_due_to_failure" : "succeeded",
+      finishedAt, runJob.plan_id, "protein_report"
+    ]);
+  }
   // A failed job has no genuine result: record its honest state only. No
   // empty FASTA/annotation artifact or success report is fabricated.
   const artifacts = result?.status === "failed" ? [] : buildArtifacts(result);

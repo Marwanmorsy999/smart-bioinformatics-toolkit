@@ -100,7 +100,7 @@ export const WORKER_TOOLS = Object.freeze([
   Object.freeze({
     "id": "protein.annotate",
     "name": "Protein functional annotation (InterPro evidence)",
-    "description": "Annotate a validated protein from genuine UniProt/InterPro evidence. Route A reads precomputed InterPro Matches; Route B submits an executed InterProScan 6 job only when a server-side contact email is configured. Route labels are never conflated.",
+    "description": "Annotate a validated protein from genuine UniProt/InterPro evidence. Route A reads precomputed InterPro Matches and PERSISTS a run record in AI D1 (a write side-effect); Route B submits an executed InterProScan 6 job only when a server-side contact email is configured, and is never auto-submitted from chat. Route labels are never conflated.",
     "version": "1.0.0-m7.13",
     "backend": "worker",
     "domain": "protein-annotation",

@@ -161,7 +161,8 @@ export async function executeProteinTool(name, args, deps = {}) {
         basis: "precomputed_matches_api", route_label: body?.route_label ?? null,
         status: response.ok ? "ok" : "error",
         summary: response.ok
-          ? `Stored protein run ${body?.run_id ?? "unknown"} with ${(body?.proteins ?? []).length} protein(s).`
+          ? `Persisted a protein run record (write side-effect in AI D1): ${body?.run_id ?? "unknown"} ` +
+            `with ${(body?.proteins ?? []).length} protein(s). No executed job was submitted.`
           : `Annotation unavailable: ${body?.error ?? `HTTP ${response.status}`}`
       });
     }

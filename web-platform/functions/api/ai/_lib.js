@@ -33,6 +33,9 @@ export const SQL = {
   insertApproval: "INSERT INTO approvals (public_id, plan_id, step_id, approved_by, consents_json, approved_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
   insertJob: "INSERT INTO jobs (public_id, plan_id, step_id, status, tool_id, params_json, inputs_json, consent_json, backend, agent_id, attempts, timeout_s, execution_mode, created_at, started_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   getJob: "SELECT * FROM jobs WHERE public_id = ?",
+  // M7.13: finalise the two step rows whose state was pending while an
+  // executed protein job was running.
+  updateJobByPlanStep: "UPDATE jobs SET status = ?, finished_at = ? WHERE plan_id = ? AND step_id = ?",
   listQueuedJobs: "SELECT * FROM jobs WHERE status = ? ORDER BY created_at ASC LIMIT ?",
   claimJob: "UPDATE jobs SET status = ?, agent_id = ?, started_at = ?, attempts = attempts + 1 WHERE public_id = ? AND status = ?",
   finishJob: "UPDATE jobs SET status = ?, finished_at = ? WHERE public_id = ?",
@@ -77,6 +80,10 @@ export const SQL = {
   // source of truth for /api/ai/runs/:id and /recovery.
   insertProteinRun: "INSERT INTO protein_runs (public_id, md5, route, provider_job_id, state, result_json, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
   getProteinRunByMd5: "SELECT * FROM protein_runs WHERE md5 = ? ORDER BY created_at ASC",
+  // M7.13 fix: the dedupe key is (sequence MD5, route), never MD5 alone. A
+  // precomputed reference run and an executed job are distinct workflows;
+  // one must never be returned in place of the other.
+  getProteinRunsByMd5AndRoute: "SELECT * FROM protein_runs WHERE md5 = ? AND route = ? ORDER BY created_at ASC",
   getProteinRunByPublicId: "SELECT * FROM protein_runs WHERE public_id = ?",
   getProteinRunByJobId: "SELECT * FROM protein_runs WHERE provider_job_id = ?",
   updateProteinRun: "UPDATE protein_runs SET state = ?, provider_job_id = ?, result_json = ?, completed_at = ? WHERE public_id = ?"
@@ -91,6 +98,7 @@ export const SQL_META = {
   [SQL.insertApproval]: { op: "insert", table: "approvals", columns: ["public_id", "plan_id", "step_id", "approved_by", "consents_json", "approved_at", "expires_at"] },
   [SQL.insertJob]: { op: "insert", table: "jobs", columns: ["public_id", "plan_id", "step_id", "status", "tool_id", "params_json", "inputs_json", "consent_json", "backend", "agent_id", "attempts", "timeout_s", "execution_mode", "created_at", "started_at", "finished_at"] },
   [SQL.getJob]: { op: "select", table: "jobs", where: ["public_id"] },
+  [SQL.updateJobByPlanStep]: { op: "update", table: "jobs", where: ["plan_id", "step_id"], assignments: { status: 0, finished_at: 1 } },
   [SQL.listQueuedJobs]: { op: "select", table: "jobs", where: ["status"], orderBy: "created_at", limit: true },
   [SQL.claimJob]: { op: "claim", table: "jobs", where: ["public_id", "status"], assignments: { status: 0, agent_id: 1, started_at: 2 }, increment: "attempts" },
   [SQL.finishJob]: { op: "update", table: "jobs", where: ["public_id"], assignments: { status: 0, finished_at: 1 } },
@@ -124,6 +132,7 @@ export const SQL_META = {
   [SQL.getProvenanceRecord]: { op: "select", table: "provenance_records", where: ["run_id", "owner"] },
   [SQL.insertProteinRun]: { op: "insert", table: "protein_runs", columns: ["public_id", "md5", "route", "provider_job_id", "state", "result_json", "created_at", "completed_at"] },
   [SQL.getProteinRunByMd5]: { op: "select", table: "protein_runs", where: ["md5"], orderBy: "created_at" },
+  [SQL.getProteinRunsByMd5AndRoute]: { op: "select", table: "protein_runs", where: ["md5", "route"], orderBy: "created_at" },
   [SQL.getProteinRunByPublicId]: { op: "select", table: "protein_runs", where: ["public_id"] },
   [SQL.getProteinRunByJobId]: { op: "select", table: "protein_runs", where: ["provider_job_id"] },
   [SQL.updateProteinRun]: { op: "update", table: "protein_runs", where: ["public_id"], assignments: { state: 0, provider_job_id: 1, result_json: 2, completed_at: 3 } },

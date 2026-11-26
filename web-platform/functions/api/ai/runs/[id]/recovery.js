@@ -246,7 +246,7 @@ function buildPhyloEvidence(artifacts, reasons) {
 // M7.13 protein evidence: every field comes from stored artifacts and job
 // metadata. Missing optional values stay null with an explicit reason; no
 // annotation is recomputed, re-fetched or invented on reopen.
-function buildProteinEvidence(artifacts, jobs, plan, reasons) {
+function buildProteinEvidence(artifacts, jobs, plan, reasons, storedResult = null) {
   const byKind = (kind) => artifacts.find((item) => item.derived_kind === kind) ?? null;
   const inputArtifact = byKind("protein_input_fasta");
   const annotationArtifact = byKind("protein_annotation_json");
@@ -288,11 +288,15 @@ function buildProteinEvidence(artifacts, jobs, plan, reasons) {
     route_label: routeLabel,
     route_requested: annotation?.requested_route ?? provider?.requested_route ?? null,
     original_execution_state: {
-      run_status: jobs.find((job) => job.step_id === "protein_run")?.status ?? jobs[0]?.status ?? null,
+      // The stored RESULT is authoritative for terminal state; job rows are
+      // the fallback for a run that never reached a result.
+      run_status: annotation?.status ?? storedResult?.status
+        ?? jobs.find((job) => job.step_id === "protein_run")?.status ?? jobs[0]?.status ?? null,
       provider_job_id: providerJobId,
-      provider_job_state: providerJobId
-        ? (jobs.find((job) => job.provider_job_id)?.status ?? null) : null,
-      state_basis: "stored_job_rows",
+      provider_job_state: annotation?.provider_state ?? storedResult?.provider_state
+        ?? (providerJobId ? (jobs.find((job) => job.provider_job_id)?.status ?? null) : null),
+      state_basis: (annotation || storedResult) ? "stored_protein_run_result_and_job_rows" : "stored_job_rows",
+      error_code: annotation?.error_code ?? storedResult?.error_code ?? null,
       note: providerJobId ? null : "No executed provider job is recorded for this route; none was invented."
     },
     proteins: proteins.map((protein) => ({
@@ -341,6 +345,8 @@ export async function handleGetRecovery(request, env, runId) {
     const planRow = await getRow(db, SQL.getPlan, [jobRow.plan_id]);
     const jobRows = await listRows(db, SQL.listJobsForPlan, [jobRow.plan_id]);
     const artifactRows = await listRows(db, SQL.listArtifactsForRun, [runId]);
+    const proteinRunRow = await getRow(db, SQL.getProteinRunByPublicId, [runId]);
+    const storedProteinResult = parseJson(proteinRunRow?.result_json);
     const reasons = [];
 
     const jobs = jobRows.map((row) => ({
@@ -393,7 +399,7 @@ export async function handleGetRecovery(request, env, runId) {
         reason: "This stored run is not a phylogenetics run; no phylo fields are reconstructed."
       };
     const protein = workflowType === "protein"
-      ? buildProteinEvidence(artifacts, jobs, plan, reasons)
+      ? buildProteinEvidence(artifacts, jobs, plan, reasons, storedProteinResult)
       : {
         input_fasta: null, route_label: null, proteins: [], releases: null, report: null,
         original_execution_state: null,

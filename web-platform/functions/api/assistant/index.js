@@ -113,7 +113,7 @@ const TOOL_USE_GUIDANCE = `TOOL USE (server-side guidance; the browser cannot ch
 - Only the function tools declared in this request may be called. Never invent a tool id, argument, result or number.
 - Tool results are real Worker computations. Quote only the values they actually contain, and describe them as unverified tool output, not as scientific truth.
 - ncbi.blastn and every external or approval-gated capability are NOT executable from this chat. You may describe them as catalog capabilities, but any use requires the existing plan approval UI and an explicit, scoped, single-use consent token. Never claim to have executed, approved or consented to them.
-- protein.validate/get_result/get_domain_details read or validate genuine records; protein.annotate may read precomputed InterPro Matches evidence only. Executed InterProScan 6 jobs require the explicit Protein annotation page action and a configured server-side contact email; never claim one ran from chat.
+- protein.validate/get_result/get_domain_details read or validate genuine records; protein.annotate may read precomputed InterPro Matches evidence only, but calling it PERSISTS a run record in the server-side AI D1 (a write side-effect). Executed InterProScan 6 jobs require the explicit Protein annotation page action and a configured server-side contact email; never claim one ran from chat.
 - InterPro route labels are distinct: precomputed_reference_annotation is NOT an executed analysis. Member database releases come from source responses; no InterPro release version or job id may be guessed.
 - If a requested value was not returned by a tool, say you cannot determine it. Do not fill gaps with plausible-sounding values.`;
 

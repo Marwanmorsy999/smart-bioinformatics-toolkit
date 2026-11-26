@@ -93,7 +93,7 @@ test("protein.annotate is a real executor for Route A and refuses auto-submitted
   assert.equal(result.ok, true);
   assert.equal(result.provenance.route_label, "precomputed_reference_annotation");
   assert.equal(result.output.result.body.proteins[0].annotation.features.length, 32);
-  assert.match(result.result_card.summary, /Stored protein run/);
+  assert.match(result.result_card.summary, /write side-effect in AI D1/);
   const refused = await executeProteinTool("protein.annotate", { route: "iprscan6", mode: "fasta", fasta_text: fasta },
     { env, fetch: stub(genuineFetch) });
   assert.equal(refused.execution_state, "refused");

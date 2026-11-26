@@ -26,6 +26,43 @@ function routeLabel(route) {
   return route === "iprscan6" ? ROUTE_LABELS.iprscan6 : ROUTE_LABELS.precomputed;
 }
 
+// The dedupe key is always (sequence MD5, route); a running executed job is
+// additionally keyed by its real provider job id. A precomputed reference run
+// can therefore never satisfy a Route B request, or vice versa.
+function proteinDedupeKey(md5Key, route, providerJobId = null) {
+  return `${String(md5Key ?? "").toUpperCase()}|${route}${providerJobId ? `|${providerJobId}` : ""}`;
+}
+
+function storedRouteMatches(stored, route) {
+  if (!stored) return true;
+  return stored.requested_route === route && stored.route_label === routeLabel(route);
+}
+
+function finalStateOf(stored) {
+  return stored?.status === "failed" ? "failed" : "succeeded";
+}
+
+function observedStateOf(stored) {
+  return stored?.provider_state ?? (finalStateOf(stored) === "failed" ? "FAILED" : "FINISHED");
+}
+
+// Rebuild the exact original input from the plan written at submission time.
+// No sequence bytes are ever reconstructed from memory or from a screenshot.
+function inputFromPlan(plan, md5, protein = null) {
+  const stored = plan?.input && typeof plan.input === "object" ? plan.input : null;
+  return {
+    mode: stored?.mode ?? plan?.mode ?? "fasta",
+    accession: stored?.accession ?? plan?.accession ?? null,
+    filename: stored?.filename ?? plan?.filename ?? "protein.fasta",
+    objective: stored?.objective ?? plan?.goal ?? null,
+    fasta_text: typeof stored?.fasta_text === "string" ? stored.fasta_text : "",
+    input_sha256: stored?.input_sha256 ?? null,
+    md5: stored?.md5 ?? md5,
+    sequences: Array.isArray(stored?.sequences) ? stored.sequences
+      : [{ id: "protein_1", length: protein?.protein_length ?? null, md5, ambiguous: [] }]
+  };
+}
+
 function errorBody(error, request, fallbackStatus = 502) {
   const code = error?.code ?? "protein_provider_error";
   return jsonResponse({
@@ -59,7 +96,9 @@ async function prepareInput(payload, { ctx, cache }) {
       error.status = 400;
       throw error;
     }
-    fastaText = String(text).trim();
+    // Preserve the exact submitted bytes (including any trailing newline) so
+    // the stored "original FASTA" artifact is byte-for-byte identical.
+    fastaText = typeof text === "string" ? text : String(text ?? "");
     records = parsed.records;
   }
   const md5Key = records.map((record) => String(record.md5).toUpperCase()).join(",").slice(0, 2000);
@@ -319,21 +358,26 @@ export async function handleAnnotate(request, env, options = {}) {
     return errorBody(caught, request);
   }
 
-  // Refresh-safe dedupe: the SAME sequence MD5 key returns the stored run.
-  // No provider call and no new job is made on a repeated request.
+  // Refresh-safe dedupe on (MD5, route), never MD5 alone. A stored Route A
+  // run must not satisfy a Route B request: that request falls through to the
+  // Route B branch, which fails closed when no contact email is configured.
   // Pick the newest matching run deterministically (the SQL orders ascending).
-  const matchingRuns = await listRows(db, SQL.getProteinRunByMd5, [input.md5_key]);
+  const matchingRuns = await listRows(db, SQL.getProteinRunsByMd5AndRoute, [input.md5_key, route]);
   const existing = matchingRuns.at(-1) ?? null;
-  if (existing) {
+  if (existing && existing.route === route) {
     const stored = readStoredResult(existing);
-    if (stored) {
-      return jsonResponse({ ...stored, deduped: true, dedupe_basis: "stored_protein_run_by_md5" }, 200, request);
+    if (stored && storedRouteMatches(stored, route)) {
+      return jsonResponse({ ...stored, deduped: true, dedupe_basis: "stored_protein_run_by_md5",
+        dedupe_key: proteinDedupeKey(input.md5_key, route), dedupe_route: route }, 200, request);
     }
-    if (existing.provider_job_id) {
+    // A running executed job is only reusable with its real provider job id;
+    // no id means there is no genuine job to return.
+    if (!stored && existing.provider_job_id && /^iprscan\d?-\S+$/.test(existing.provider_job_id)) {
       return jsonResponse({
         workflow_type: "protein", status: "running", deduped: true,
         dedupe_basis: "stored_protein_run_by_md5", run_id: existing.public_id,
-        provider_job_id: existing.provider_job_id,
+        dedupe_key: proteinDedupeKey(input.md5_key, route, existing.provider_job_id),
+        dedupe_route: route, provider_job_id: existing.provider_job_id,
         route_label: routeLabel(existing.route),
         status_url: `/api/ai/workflows/protein/status?run_id=${encodeURIComponent(existing.public_id)}`,
         result_url: `/api/ai/workflows/protein/result?run_id=${encodeURIComponent(existing.public_id)}`,
@@ -349,7 +393,15 @@ export async function handleAnnotate(request, env, options = {}) {
   try {
     await insertRow(db, SQL.insertPlan, [planId, `req:${runId}`, 1,
       JSON.stringify({ goal: input.objective || "Protein functional annotation", workflow_type: "protein",
-        route, md5: input.md5_key, steps: [{ id: "protein_validate" }, { id: "protein_resolve" },
+        route, md5: input.md5_key,
+        // The exact submitted bytes are persisted up front so an asynchronous
+        // FINISHED callback can rebuild the original input verbatim.
+        input: { mode: input.mode, accession: input.accession, filename: input.filename,
+          objective: input.objective, fasta_text: input.fasta_text, md5: input.md5_key,
+          input_sha256: input.input_sha256,
+          sequences: input.records.map((record) => ({ id: record.id, length: record.length,
+            md5: record.md5, ambiguous: record.ambiguous ?? [] })) },
+        steps: [{ id: "protein_validate" }, { id: "protein_resolve" },
           { id: "protein_annotate" }, { id: "protein_report" }] }), nowIso(now)]);
   } catch (caught) {
     return errorResponse(`Could not persist the protein plan: ${caught?.message ?? caught}`, 500, request);
@@ -410,9 +462,17 @@ export async function handleStatus(request, env, options = {}) {
   if (error) return errorResponse(error, 400, request);
   if (!row) return errorResponse("No stored protein run matches this reference.", 404, request);
   const stored = readStoredResult(row);
+  // The run's own job row is the link to the plan that holds the exact input.
+  const storedJobRow = await getRow(db, SQL.getJob, [row.public_id]);
+  const statusPlanRow = storedJobRow?.plan_id ? await getRow(db, SQL.getPlan, [storedJobRow.plan_id]) : null;
+  const statusPlan = statusPlanRow ? parseJson(statusPlanRow.plan_json) : null;
   if (stored) {
-    return jsonResponse({ workflow_type: "protein", run_id: row.public_id, status: "succeeded",
-      state: "FINISHED", route_label: stored.route_label, result_url: `/api/ai/workflows/protein/result?run_id=${row.public_id}`,
+    const finalState = finalStateOf(stored);
+    return jsonResponse({ workflow_type: "protein", run_id: row.public_id, status: finalState,
+      state: observedStateOf(stored), result_state: finalState,
+      route_label: stored.route_label, provider_job_id: stored.provider_job_id ?? row.provider_job_id ?? null,
+      error: stored.error ?? null,
+      result_url: `/api/ai/workflows/protein/result?run_id=${row.public_id}`,
       deduped: true, execution_mode: "real" }, 200, request);
   }
   if (!row.provider_job_id || row.state !== "running") {
@@ -436,11 +496,19 @@ export async function handleStatus(request, env, options = {}) {
   if (status.state_class === "failed") {
     const result = { ...(stored ?? {}), run_id: row.public_id, workflow_type: "protein", status: "failed",
       requested_route: row.route, route_label: routeLabel(row.route), provider_job_id: row.provider_job_id,
+      provider_state: status.state, provider_state_class: "failed",
+      input: inputFromPlan(statusPlan, row.md5),
+      input_sha256: statusPlan?.input?.input_sha256 ?? stored?.input_sha256 ?? null,
       proteins: [], error: status.reason ?? `InterProScan 6 job ended in state ${status.state}.`,
       error_code: "iprscan6_job_failed", execution_mode: "real" };
+    result.report = null;
     await finalizeProteinRun(db, { runId: row.public_id, providerJobId: row.provider_job_id, result,
       now: options.now ?? Date.now(), idFactory: options.idFactory });
-    return errorResponse(result.error, 502, request, { "X-Protein-Error": "iprscan6_job_failed" });
+    return jsonResponse({ error: result.error, error_code: result.error_code,
+      workflow_type: "protein", run_id: row.public_id, status: "failed", state: status.state,
+      result_state: "failed", provider_job_id: row.provider_job_id,
+      result_url: `/api/ai/workflows/protein/result?run_id=${row.public_id}`,
+      execution_mode: "real" }, 502, request, { "X-Protein-Error": "iprscan6_job_failed" });
   }
   // FINISHED: retrieve and parse the genuine result exactly once.
   let body;
@@ -451,14 +519,10 @@ export async function handleStatus(request, env, options = {}) {
   }
   const parsed = parseIprscan6Result(body);
   const protein = parsed.proteins[0] ?? null;
-  const jobRow = await getRow(db, SQL.getJob, [row.public_id]);
-  const planRow = jobRow?.plan_id ? await getRow(db, SQL.getPlan, [jobRow.plan_id]) : null;
-  const plan = planRow ? parseJson(planRow.plan_json) : null;
-  const input = {
-    mode: plan?.mode ?? "fasta", accession: plan?.accession ?? null, filename: plan?.filename ?? "protein.fasta",
-    objective: plan?.goal ?? null, md5: row.md5,
-    sequences: [{ id: "protein_1", length: protein?.protein_length ?? null, md5: row.md5, ambiguous: [] }]
-  };
+  const plan = statusPlan;
+  // Byte-for-byte from the plan written at submission; the run never loses
+  // its original FASTA when the asynchronous result arrives.
+  const input = inputFromPlan(plan, row.md5, protein);
   const result = makeResult({ input, route: "iprscan6", routeLabelValue: ROUTE_LABELS.iprscan6,
     proteins: parsed.proteins.map((annotation, index) => ({
       id: `protein_${index + 1}`, md5: annotation.md5 ?? row.md5,
@@ -467,11 +531,13 @@ export async function handleStatus(request, env, options = {}) {
     })),
     releases: protein?.releases ?? collectReleases([]), notes: parsed.missing_field_reasons,
     status: "succeeded", providerJobId: row.provider_job_id,
-    runId: row.public_id, planId: plan?.public_id ?? `plan:${row.public_id}` });
+    runId: row.public_id, planId: statusPlanRow?.public_id ?? plan?.public_id ?? `plan:${row.public_id}` });
+  result.provider_state = status.state;
+  result.state = "FINISHED";
   result.report = buildProteinReport(result);
   await finalizeProteinRun(db, { runId: row.public_id, providerJobId: row.provider_job_id, result,
     now: options.now ?? Date.now(), idFactory: options.idFactory });
-  return jsonResponse({ ...result, status: "succeeded", state: "FINISHED",
+  return jsonResponse({ ...result, status: "succeeded", state: "FINISHED", result_state: "succeeded",
     result_url: `/api/ai/workflows/protein/result?run_id=${row.public_id}` }, 200, request);
 }
 
@@ -490,10 +556,13 @@ export async function handleResult(request, env) {
       reason: "No result has been stored for this run yet. No result was reconstructed.",
       status_url: `/api/ai/workflows/protein/status?run_id=${row.public_id}` }, 409, request);
   }
+  const finalState = finalStateOf(stored);
   return jsonResponse({ ...stored,
+    status: stored.status ?? finalState, state: stored.state ?? observedStateOf(stored),
+    result_state: finalState,
     status_url: `/api/ai/workflows/protein/status?run_id=${row.public_id}`,
     recovery_url: `/api/ai/runs/${row.public_id}/recovery`,
-    report_url: `/api/ai/runs/${row.public_id}/report` }, 200, request);
+    report_url: finalState === "failed" ? null : `/api/ai/runs/${row.public_id}/report` }, 200, request);
 }
 
 export async function handleDomains(request, env) {

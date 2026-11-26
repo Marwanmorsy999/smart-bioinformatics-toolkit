@@ -147,7 +147,9 @@ export function validateProteinSequence(sequence, { header = "", minLength = LIM
   const looksNucleotide = clean.length >= 40
     && nucleotideCount / clean.length >= 0.95
     && /^[ACGTRYN]+$/.test(clean);
-  const headerHint = /dna|rna|nucleotide|\bcds\b|16s|18s| ITS/i.test(String(header ?? ""));
+  // Word boundaries avoid rejecting a legitimate protein whose description
+  // merely contains letters such as "its" inside another word.
+  const headerHint = /\b(?:dna|rna|nucleotide|cds|16s|18s|its[1-4]?)\b/i.test(String(header ?? ""));
   if (looksNucleotide || headerHint) {
     errors.push("This looks like a nucleotide sequence, not a protein. Protein input uses the 20 standard amino acids plus B/J/Z/X/U/O.");
   }

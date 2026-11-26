@@ -507,7 +507,6 @@ export function initResearchHistory() {
 
   function renderProteinRecovery(recovery, entry) {
     const protein = recovery?.protein;
-    text(ui.proteinStatus, protein?.status_basis ?? null);
     if (!protein || protein.reason || !protein.proteins?.length) {
       text(ui.proteinStatus, protein?.reason ?? "No protein evidence was returned by the stored run; nothing was reconstructed.");
       return;

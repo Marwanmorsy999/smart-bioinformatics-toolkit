@@ -45,7 +45,7 @@ function validateSequence(sequence, header = "") {
   if (cleaned.length >= 40 && nucleic / cleaned.length >= 0.95 && /^[ACGTRYN]+$/.test(cleaned)) {
     errors.push("This looks like a nucleotide sequence, not a protein. No translation is performed.");
   }
-  if (/dna|rna|nucleotide|\bcds\b|16s|18s| ITS/i.test(header)) {
+  if (/\b(?:dna|rna|nucleotide|cds|16s|18s|its[1-4]?)\b/i.test(header)) {
     errors.push("The header describes a nucleotide sequence; protein input is required.");
   }
   return { sequence: cleaned, length: cleaned.length, ambiguous, errors };

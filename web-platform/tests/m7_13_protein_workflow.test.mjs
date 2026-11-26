@@ -4,6 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 
 import {
   handleAnnotate, handleDomains, handlePlan, handleResult, handleStatus
@@ -261,4 +262,133 @@ test("WORKER: all five protein routes are registered before the generic AI run p
   return fetch(new Request("https://worker.example.test/api/ai/workflows/protein/annotate", {
     method: "POST"
   }), {}, null).then((response) => assert.equal(response.status, 200));
+});
+
+// --------------------------------------------------------------- M7.13 fixes
+test("DEDUPED ROUTES: a Route A run never satisfies a Route B request (and vice versa)", async () => {
+  const ctx = setup(genuineFetch);
+  const options = { fetchImpl: ctx.fetchImpl, idFactory: ctx.idFactory };
+  const precomputed = await (await handleAnnotate(post({ mode: "fasta", fasta_text: fasta }), ctx.env, options)).json();
+  const callsBeforeRouteB = ctx.calls.length;
+  const routeB = await handleAnnotate(post({ mode: "fasta", fasta_text: fasta, route: "iprscan6" }),
+    ctx.env, options);
+  assert.equal(routeB.status, 503, "Route B fails closed with no contact email even though MD5 has a Route A run");
+  const routeBody = await routeB.json();
+  assert.equal(routeBody.error_code, "route_b_unavailable_no_contact_email");
+  assert.equal(routeBody.provider_job_id ?? null, null);
+  assert.equal(ctx.calls.length, callsBeforeRouteB, "zero submissions");
+  const precomputedAgain = await (await handleAnnotate(post({ mode: "fasta", fasta_text: fasta }), ctx.env, options)).json();
+  assert.equal(precomputedAgain.run_id, precomputed.run_id);
+  assert.equal(precomputedAgain.deduped, true);
+  assert.equal(precomputedAgain.dedupe_route, "precomputed");
+
+  // The reverse direction is also separated: an existing running Route B job
+  // must not be returned for a Route A annotation of the same sequence.
+  const executed = setup((url, init) => {
+    if (String(url).endsWith("/iprscan6/run")) return new Response(JOB_ID, { status: 200 });
+    if (String(url).includes("/matches/api/matches/")) return new Response(JSON.stringify(matches));
+    if (String(url).includes("/entry/interpro/IPR")) {
+      return new Response(JSON.stringify({ metadata: { go_terms: [] } }));
+    }
+    return new Response("{}", { status: 404 });
+  }, { email: "researcher@example.org" });
+  const executedOptions = { fetchImpl: executed.fetchImpl, idFactory: executed.idFactory };
+  const running = await (await handleAnnotate(post({ mode: "fasta", fasta_text: fasta, route: "iprscan6" }),
+    executed.env, executedOptions)).json();
+  assert.equal(running.status, "running");
+  const precomputedAfter = await (await handleAnnotate(post({ mode: "fasta", fasta_text: fasta }),
+    executed.env, executedOptions)).json();
+  assert.equal(precomputedAfter.deduped ?? false, false, "Route A cannot reuse the Route B job");
+  assert.notEqual(precomputedAfter.run_id, running.run_id);
+  assert.equal(precomputedAfter.route_label, "precomputed_reference_annotation");
+  assert.equal(precomputedAfter.provider_job_id, null);
+});
+
+test("DEDUPED ROUTES: repeated running Route B request returns the SAME job id with a route+job dedupe key", async () => {
+  const ctx = setup((url, init) => {
+    if (String(url).endsWith("/iprscan6/run")) return new Response(JOB_ID, { status: 200 });
+    if (String(url).includes("/iprscan6/status/")) return new Response("RUNNING", { status: 200 });
+    return new Response("{}", { status: 404 });
+  }, { email: "researcher@example.org" });
+  const options = { fetchImpl: ctx.fetchImpl, idFactory: ctx.idFactory };
+  const first = await (await handleAnnotate(post({ mode: "fasta", fasta_text: fasta, route: "iprscan6" }), ctx.env, options)).json();
+  const submitted = ctx.calls.filter((call) => call.url.endsWith("/iprscan6/run")).length;
+  const second = await (await handleAnnotate(post({ mode: "fasta", fasta_text: fasta, route: "iprscan6" }), ctx.env, options)).json();
+  assert.equal(second.deduped, true);
+  assert.equal(second.provider_job_id, first.provider_job_id);
+  assert.equal(second.run_id, first.run_id);
+  assert.equal(second.dedupe_route, "iprscan6");
+  assert.match(second.dedupe_key, new RegExp(JOB_ID.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.equal(ctx.calls.filter((call) => call.url.endsWith("/iprscan6/run")).length, submitted, "no resubmission");
+  const status = await (await handleStatus(get(`/api/ai/workflows/protein/status?run_id=${first.run_id}`), ctx.env, options)).json();
+  assert.equal(status.status, "running");
+  assert.equal(status.state, "RUNNING");
+});
+
+test("FAILED EXECUTED JOB: ERROR is reported failed on first and repeated status checks", async () => {
+  const ctx = setup((url) => {
+    if (String(url).endsWith("/iprscan6/run")) return new Response(JOB_ID, { status: 200 });
+    if (String(url).includes("/iprscan6/status/")) return new Response("ERROR", { status: 200 });
+    if (String(url).includes("/iprscan6/result/")) throw new Error("no result may be fetched for a failed job");
+    return new Response("{}", { status: 404 });
+  }, { email: "researcher@example.org" });
+  const options = { fetchImpl: ctx.fetchImpl, idFactory: ctx.idFactory };
+  const running = await (await handleAnnotate(post({ mode: "fasta", fasta_text: fasta, route: "iprscan6" }), ctx.env, options)).json();
+  const firstResponse = await handleStatus(get(`/api/ai/workflows/protein/status?run_id=${running.run_id}`), ctx.env, options);
+  const first = await firstResponse.json();
+  assert.equal(first.status, "failed");
+  assert.equal(first.state, "ERROR");
+  assert.equal(first.result_state, "failed");
+  const secondResponse = await handleStatus(get(`/api/ai/workflows/protein/status?run_id=${running.run_id}`), ctx.env, options);
+  const second = await secondResponse.json();
+  assert.equal(second.status, "failed");
+  assert.equal(second.state, "ERROR");
+  assert.equal(second.result_state, "failed");
+  const stored = await (await handleResult(get(`/api/ai/workflows/protein/result?run_id=${running.run_id}`), ctx.env)).json();
+  assert.equal(stored.status, "failed");
+  assert.equal(stored.result_state, "failed");
+  assert.deepEqual(stored.proteins, []);
+  assert.equal(stored.route_label, "executed_interproscan6_analysis");
+  const recovery = await (await handleGetRecovery(get(`/api/ai/runs/${running.run_id}/recovery`), ctx.env, running.run_id)).json();
+  assert.equal(recovery.protein.original_execution_state.run_status, "failed");
+  assert.equal(recovery.protein.original_execution_state.provider_job_state, "ERROR");
+  assert.equal(recovery.protein.proteins.length, 0);
+  const runDetail = await (await createFetch()(new Request(`https://worker.example.test/api/ai/runs/${running.run_id}`),
+    { AI_DB: ctx.db, BLAST_DB: ctx.db }, null)).json();
+  assert.equal(runDetail.artifacts.length, 0, "no fabricated evidence artifacts for a failed job");
+  const stepStatuses = Object.fromEntries((runDetail.jobs ?? []).map((job) => [job.step_id, job.status]));
+  assert.equal(stepStatuses.protein_run, "failed");
+  assert.equal(stepStatuses.protein_annotate, "failed");
+  assert.equal(stepStatuses.protein_report, "skipped_due_to_failure");
+});
+
+test("ROUTE B FASTA: FINISHED run stores the submitted bytes verbatim with a matching checksum", async () => {
+  let state = "QUEUED";
+  const ctx = setup((url, init) => {
+    if (String(url).endsWith("/iprscan6/run")) return new Response(JOB_ID, { status: 200 });
+    if (String(url).includes("/iprscan6/status/")) return new Response(state, { status: 200 });
+    if (String(url).includes("/iprscan6/result/")) {
+      return new Response(JSON.stringify([{ md5: MD5.toUpperCase(), matches: matches.matches,
+        sequence: fasta.replace(/^>[^\n]*\n/, "").replace(/\s+/g, "") }]), { status: 200 });
+    }
+    if (String(url).includes("/entry/interpro/IPR")) return new Response(JSON.stringify({ metadata: { go_terms: [] } }));
+    return new Response("{}", { status: 404 });
+  }, { email: "researcher@example.org" });
+  const options = { fetchImpl: ctx.fetchImpl, idFactory: ctx.idFactory };
+  const running = await (await handleAnnotate(post({ mode: "fasta", fasta_text: fasta, route: "iprscan6" }), ctx.env, options)).json();
+  state = "FINISHED";
+  const finished = await (await handleStatus(get(`/api/ai/workflows/protein/status?run_id=${running.run_id}`), ctx.env, options)).json();
+  assert.equal(finished.status, "succeeded");
+  assert.equal(finished.state, "FINISHED");
+  const stored = await (await handleResult(get(`/api/ai/workflows/protein/result?run_id=${running.run_id}`), ctx.env)).json();
+  assert.equal(stored.input.fasta_text, fasta, "the exact submitted FASTA survives the asynchronous result");
+  const runDetail = await (await createFetch()(new Request(`https://worker.example.test/api/ai/runs/${running.run_id}`),
+    { AI_DB: ctx.db, BLAST_DB: ctx.db }, null)).json();
+  const fastaArtifact = runDetail.artifacts.find((artifact) => artifact.name === "input.fasta");
+  assert.ok(fastaArtifact);
+  assert.equal(fastaArtifact.content, fasta);
+  assert.equal(fastaArtifact.sha256, createHash("sha256").update(fasta, "utf8").digest("hex"));
+  assert.equal(fastaArtifact.bytes, Buffer.byteLength(fasta, "utf8"));
+  const recovery = await (await handleGetRecovery(get(`/api/ai/runs/${running.run_id}/recovery`), ctx.env, running.run_id)).json();
+  assert.equal(recovery.protein.input_fasta, fasta);
 });
