@@ -1,6 +1,6 @@
 // M7.4.2 full browser validation — real Chromium (Playwright), offline only.
 //
-// Scope: the nine public pages, the five-item shell/nav contract, brand assets,
+// Scope: the ten public pages, the six-item shell/nav contract, brand assets,
 // the Level-A/B disclaimer hierarchy, phylo copy honesty, the assistant's
 // fail-closed UI, 5-viewport overflow, keyboard access, reduced motion and
 // text-contrast arithmetic on the design tokens.
@@ -31,7 +31,8 @@ const PAGES = [
   { key: "taxonomy", file: "taxonomy.html" },
   { key: "benchmark", file: "benchmark.html" },
   { key: "research-use", file: "research-use.html" },
-  { key: "assistant", file: "assistant.html" }
+  { key: "assistant", file: "assistant.html" },
+  { key: "sixteen", file: "16s.html" }
 ];
 const VIEWPORTS = [
   { width: 1440, height: 900 },
@@ -42,7 +43,7 @@ const VIEWPORTS = [
 ];
 const DESKTOP = VIEWPORTS[0];
 const MOBILE = VIEWPORTS[3];
-const EXPECTED_NAV = ["Tools", "Research workspace", "Phylogenetics", "Assistant", "About"];
+const EXPECTED_NAV = ["Tools", "Research workspace", "Phylogenetics", "16S", "Assistant", "About"];
 const SHORT_NOTICE = "Research and educational use only. Results require independent scientific interpretation.";
 // Source of truth for the Level-A statement is the M7.4.2 mission brief, which
 // supplies this exact sentence (also present verbatim at research-use.html:43).
@@ -130,7 +131,7 @@ async function open(key, viewport = DESKTOP) {
 }
 
 // ---------------------------------------------------------------- (1) shell
-test("(1) nine pages load with five-item nav, wordmark, favicon, title and short footer notice", async () => {
+test("(1) ten pages load with six-item nav, wordmark, favicon, title and short footer notice", async () => {
   const problems = [];
   for (const def of PAGES) {
     const page = await open(def.key);
@@ -153,7 +154,7 @@ test("(1) nine pages load with five-item nav, wordmark, favicon, title and short
     });
     if (!info.title.includes("Smart Bioinformatics AI")) problems.push(`${def.key}: title lacks product name (${info.title})`);
     if (JSON.stringify(info.navLinks) !== JSON.stringify(EXPECTED_NAV)) problems.push(`${def.key}: nav = ${JSON.stringify(info.navLinks)}`);
-    if (info.navLinks.length !== 5 || info.navHrefs.length !== 5) problems.push(`${def.key}: nav is not exactly five items`);
+    if (info.navLinks.length !== 6 || info.navHrefs.length !== 6) problems.push(`${def.key}: nav is not exactly six items`);
     if (info.logoAlt !== "Smart Bioinformatics AI" || info.logoWidth === 0) problems.push(`${def.key}: header wordmark missing/broken (alt=${info.logoAlt}, w=${info.logoWidth})`);
     if (!/favicon\.svg$/.test(info.iconHref)) problems.push(`${def.key}: favicon link missing (${info.iconHref})`);
     if (!info.notice.includes(SHORT_NOTICE)) problems.push(`${def.key}: short footer notice missing (${info.notice})`);
