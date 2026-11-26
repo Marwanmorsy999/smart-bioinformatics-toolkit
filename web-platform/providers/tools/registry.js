@@ -23,7 +23,7 @@ export const AVAILABILITY_STATES = Object.freeze([
 
 // Links into pages that already ship in public/. No new UI surface is implied.
 const WORKFLOW_ENTRY_POINTS = Object.freeze({
-  "16s-rrna-identification": Object.freeze({ label: "Open BLAST analyzer", href: "blast.html" }),
+  "16s-rrna-identification": Object.freeze({ label: "Run 16S identification workflow", href: "16s.html" }),
   "msa-phylogenetics": Object.freeze({ label: "Open phylogenetics workflow", href: "phylo.html" })
 });
 

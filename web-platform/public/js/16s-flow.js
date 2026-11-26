@@ -417,19 +417,14 @@ ui.resumeButton.addEventListener("click", () => {
     return;
   }
   clearPollTimer();
+  resetResults();
   state.rid = value;
   state.status = "queued";
   state.lastStatusAt = 0;
   state.submittedAt = null;
   state.fetchedAt = null;
-  state.tsv = null;
-  state.parsed = null;
-  state.analysis = null;
-  state.taxonomy = null;
   state.mockRid = /mock/i.test(value);
   ui.rid.hidden = false;
-  ui.results.hidden = true;
-  ui.banner.hidden = true;
   ui.resultsEmpty.textContent = "Resumed by RID. Results appear only after NCBI reports completion; no new submission was made.";
   renderRid(state.rid, state.status);
   ui.submit.disabled = true;
