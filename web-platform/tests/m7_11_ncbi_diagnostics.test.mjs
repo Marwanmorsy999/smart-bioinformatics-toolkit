@@ -98,6 +98,40 @@ test("safePutResponseHeaders uses only the allowlist and sanitizes values", () =
   assert.equal(JSON.stringify(safe).includes("FAKE_TOKEN"), false);
 });
 
+test("a fake secret tail longer than 120 chars is still fully redacted", () => {
+  const excerpt = sanitizeDiagnosticText(F.LONG_SECRET_BODY);
+  assert.ok(excerpt.length <= PUT_DIAGNOSTIC_EXCERPT_CHARS);
+  assert.equal(excerpt.includes(F.LONG_SECRET_MARKER), false);
+  assert.equal(excerpt.includes("Z".repeat(40)), false);
+  assert.match(excerpt, /api_key=\[redacted\]/);
+});
+
+test("diagnostic_kind is neutral for non-ambiguous failures and ambiguous only when warranted", async () => {
+  const cases = [
+    [{ body: F.RATE_LIMIT_BODY, status: 429 }, "cmd_put_rate_limited"],
+    [{ body: F.PROXY_CDN_ERROR_BODY, status: 502 }, "cmd_put_proxy_error_page"],
+    [{ body: F.EMPTY_BODY, status: 200 }, "cmd_put_empty_body"],
+    [{ body: F.MALFORMED_RID_BODY, status: 200 }, "cmd_put_ambiguous"]
+  ];
+  for (const [{ body, status }, expected] of cases) {
+    const transport = await fetchPutUpstream(`${PUT_ORIGIN_PATH}?CMD=Put&QUERY=HIDDEN_FASTA`, {
+      fetchImpl: async () => new Response(body, { status })
+    });
+    const parsed = classifyPutResponse(body, { httpStatus: status });
+    const detail = await buildPutDiagnosticDetail({
+      transport, parsed, attemptId: "aud_kind", at: new Date(T0).toISOString()
+    });
+    assert.equal(detail.diagnostic_kind, expected, `${status}: ${parsed.classification}`);
+  }
+  const transportDetail = await buildPutDiagnosticDetail({
+    transport: { httpStatus: null, contentType: null, headers: {}, urlOriginPath: PUT_ORIGIN_PATH, body: "" },
+    parsed: classifyPutResponse("", { errorCode: "network_error" }),
+    attemptId: "aud_kind",
+    at: new Date(T0).toISOString()
+  });
+  assert.equal(transportDetail.diagnostic_kind, "cmd_put_transport_error");
+});
+
 test("buildPutDiagnosticDetail records every required bounded field", async () => {
   const transport = await fetchPutUpstream(`${PUT_ORIGIN_PATH}?CMD=Put&QUERY=HIDDEN_FASTA`, {
     fetchImpl: async () => new Response(F.SECRET_LADEN_BODY, {
@@ -112,7 +146,7 @@ test("buildPutDiagnosticDetail records every required bounded field", async () =
     attemptId: "aud_fixture_attempt_1",
     at: new Date(T0).toISOString()
   });
-  assert.equal(detail.diagnostic_kind, "cmd_put_ambiguous");
+  assert.equal(detail.diagnostic_kind, "cmd_put_unexpected_html");
   assert.equal(detail.submission_attempt_id, "aud_fixture_attempt_1");
   assert.equal(detail.requested_at, new Date(T0).toISOString());
   assert.equal(detail.provider_http_status, 200);
@@ -211,6 +245,8 @@ test("rate-limit and proxy responses are failed egress (not mislabelled ambiguou
     const bodyJson = await response.json();
     assert.equal(bodyJson.code, "ncbi_error");
     assert.notEqual(bodyJson.code, SUBMISSION_UNKNOWN_CODE);
+    assert.equal(bodyJson.transmitted, true, "a 429/5xx still reached NCBI");
+    assert.equal(bodyJson.diagnostics_available, true, "matching the ambiguous branch semantics");
     assert.equal(calls.length, 1, "no retry on 429/5xx");
     assert.equal(state.rows.length, 0);
     const detail = JSON.parse(state.auditEvents[0].detail_json);

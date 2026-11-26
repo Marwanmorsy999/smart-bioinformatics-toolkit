@@ -143,6 +143,17 @@ test("malformed RID is never promoted to a valid RID", () => {
   assert.ok(r.rid_candidate_count > 0);
 });
 
+test("a 1-character RID candidate is rejected as malformed/ambiguous", () => {
+  const r = classified(F.SHORT_RID_CANDIDATE, { httpStatus: 200 });
+  assert.equal(r.classification, PUT_PARSE_CLASSIFICATIONS.MALFORMED_RID);
+  assert.equal(r.reason, PUT_PARSE_REASONS.RID_PRESENT_MALFORMED);
+  assert.equal(r.rid, null, "a <6-character candidate is never a job id");
+  assert.equal(r.accepted, false);
+  assert.equal(r.ambiguous, true);
+  assert.ok(r.rid_candidate_count > 0);
+  assert.equal(parsePutResponse(F.SHORT_RID_CANDIDATE), null);
+});
+
 test("RID present with malformed optional RTOE stays accepted but is flagged", () => {
   const r = classified(F.MALFORMED_RTOE_BODY, { httpStatus: 200 });
   assert.equal(r.classification, PUT_PARSE_CLASSIFICATIONS.ACCEPTED);

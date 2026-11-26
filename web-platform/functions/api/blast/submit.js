@@ -240,9 +240,11 @@ export async function handleSubmit(request, env, { now = Date.now() } = {}) {
     // The pending audit row already holds the hash, target and byte counts.
   }
   if (failure) {
+    // Only claim diagnostics were recorded when the detail really exists.
+    const diagnosticsNote = diagnosticDetail ? " Diagnostic details were recorded for support." : "";
     if (failure === SUBMISSION_UNKNOWN_CODE) {
       return jsonResponse({
-        error: "NCBI did not return a request ID. The platform cannot confirm whether a job was created, so no job can be tracked and no result was invented. The single-use consent was consumed and no automatic retry was made. Diagnostic details were recorded for support.",
+        error: "NCBI did not return a request ID. The platform cannot confirm whether a job was created, so no job can be tracked and no result was invented. The single-use consent was consumed and no automatic retry was made." + diagnosticsNote,
         code: SUBMISSION_UNKNOWN_CODE,
         transmitted: true,
         rid: null,
@@ -252,8 +254,10 @@ export async function handleSubmit(request, env, { now = Date.now() } = {}) {
     return jsonResponse({
       error: "Could not submit the search to NCBI.",
       code: "ncbi_error",
-      transmitted: transport ? transport.ok : false,
-      rid: null
+      // A 429/5xx still reached NCBI; only a local pre-egress failure did not.
+      transmitted: Boolean(transport) || !mock,
+      rid: null,
+      diagnostics_available: Boolean(diagnosticDetail)
     }, 502, request);
   }
 

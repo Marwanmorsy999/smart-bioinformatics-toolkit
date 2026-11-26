@@ -87,6 +87,10 @@ export const UNEXPECTED_JSON_BODY = '{"error":"unknown command","status":200}';
 
 export const MALFORMED_RID_BODY = "RID = !!!BAD-RID!!!\nRTOE = 21";
 
+// A single-character RID-looking candidate: syntactically token-like but far
+// below the legacy 6-character minimum, so it must stay ambiguous/unaccepted.
+export const SHORT_RID_CANDIDATE = "RID = X\nRTOE = 21";
+
 export const MALFORMED_RTOE_BODY = "QBlastInfoBegin\n\tRID = FIXTURE02\n\tRTOE = soon\nQBlastInfoEnd";
 
 // A syntactically valid RID alongside provider error text: accepted but
@@ -107,6 +111,11 @@ export const QBLAST_STATUS_ONLY_BODY = [
   "QBlastInfoEnd",
   "-->"
 ].join("\n");
+
+// A fake secret whose tail is far longer than the old 120-char redaction cap.
+// It leads the body so the tail would land inside the 200-char excerpt.
+export const LONG_SECRET_MARKER = "SECRET_FAKE_LONG_TAIL_";
+export const LONG_SECRET_BODY = `api_key=${LONG_SECRET_MARKER}${"Z".repeat(180)}\nnext line is harmless`;
 
 // Hostile body used only to prove diagnostic redaction. All values are fake.
 export const SECRET_LADEN_BODY = [

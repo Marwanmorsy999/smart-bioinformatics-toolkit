@@ -474,6 +474,10 @@ export const PUT_SAFE_RESPONSE_HEADERS = Object.freeze([
 export const PUT_DIAGNOSTIC_EXCERPT_CHARS = 200;
 export const SUBMISSION_UNKNOWN_CODE = "submission_unknown";
 const MAX_PUT_BODY_CHARS = 256 * 1024;
+// The legacy CMD=Put parse patterns only accepted RID-like tokens of 6+ chars.
+// Keep that bar here (without changing isValidRid / RID_PATTERN used elsewhere)
+// so a stray 1-character candidate can never be reported as a real job id.
+const MIN_PUT_RID_CHARS = 6;
 const NCBI_PUT_ERROR_PATTERN = /No alias or index file found|Error:\s*[^\r\n<]{1,200}|There was a problem with|could not be (?:processed|created)|invalid (?:database|program)|BLAST\s+(?:Error|Failed)/i;
 const PUT_RATE_LIMIT_PATTERN = /too many requests|rate limit(?:ed|ing)?|request limit exceeded|throttl(?:e|ed)|retry after/i;
 const PUT_PROXY_PATTERN = /bad gateway|service unavailable|gateway timeout|cloudflare|nginx|upstream (?:connect|timed out)|cf-error|error code:\s*1\d{3}/i;
@@ -596,7 +600,7 @@ export function classifyPutResponse(text, options = {}) {
     ...putRequestIdCandidates(view),
     ...putBareCandidates(view, "RID")
   ];
-  const rid = ridCandidates.find((candidate) => isValidRid(candidate)) ?? null;
+  const rid = ridCandidates.find((candidate) => isValidRid(candidate) && candidate.length >= MIN_PUT_RID_CHARS) ?? null;
   const ridMalformed = rid === null && ridCandidates.length > 0;
 
   const rtoeCandidates = [
@@ -723,7 +727,9 @@ export function sanitizeDiagnosticText(value, { maxChars = PUT_DIAGNOSTIC_EXCERP
   const decoded = decodePutEntities(String(value ?? ""));
   const redacted = decoded
     .replace(/\bconsent_[0-9a-f]+\b/gi, "[redacted]")
-    .replace(/\b(api[_-]?key|access[_-]?key|secret|password|token|authorization|consent_token)\b\s*[:=]\s*[^\r\n,;&"<>]{1,120}/gi, "$1=[redacted]")
+    // Line-bounded but otherwise unbounded: a long secret tail must never
+    // survive inside the bounded excerpt just because it exceeded 120 chars.
+    .replace(/\b(api[_-]?key|access[_-]?key|secret|password|token|authorization|consent_token)\b\s*[:=]\s*[^\r\n,;&"<>]*/gi, "$1=[redacted]")
     .replace(/\bBearer\s+[^\s,;&"'<>]+/gi, "Bearer [redacted]")
     .replace(/\bQUERY\s*=\s*[^\s&<>]+/gi, "QUERY=[redacted]")
     .replace(/[?&][A-Za-z0-9_%.-]{16,}(?:=[^\s&<>]*)?/g, "[redacted-param]")
@@ -823,8 +829,14 @@ export async function buildPutDiagnosticDetail({
 } = {}) {
   const body = String(transport.body ?? "");
   const status = Number(transport.httpStatus);
+  const classification = typeof parsed.classification === "string" && parsed.classification
+    ? parsed.classification
+    : "unknown";
+  // Only a genuinely ambiguous 2xx-no-RID response is labelled ambiguous.
+  // Rate-limit, proxy/CDN and transport failures get a neutral, typed kind.
+  const diagnosticKind = parsed.ambiguous === true ? "cmd_put_ambiguous" : `cmd_put_${classification}`;
   return Object.freeze({
-    diagnostic_kind: "cmd_put_ambiguous",
+    diagnostic_kind: diagnosticKind,
     submission_attempt_id: attemptId,
     requested_at: normalizeTimestamp(at),
     provider_http_status: Number.isInteger(status) && status >= 100 && status <= 599 ? status : null,

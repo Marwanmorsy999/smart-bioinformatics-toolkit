@@ -11,7 +11,10 @@ test("the UI handles the typed submission_unknown state explicitly", () => {
   assert.match(js, /data\?\.code === "submission_unknown"/);
   assert.match(js, /SUBMISSION_UNKNOWN_COPY/);
   assert.match(js, /SUBMISSION_UNKNOWN_NOTE/);
-  assert.match(js, /setError\(SUBMISSION_UNKNOWN_COPY\)/);
+  assert.match(js, /setError\(copy\)/);
+  assert.match(js, /data\?\.diagnostics_available === true/);
+  assert.match(js, /SUBMISSION_UNKNOWN_DIAGNOSTICS_COPY/);
+  assert.match(js, /SUBMISSION_UNKNOWN_DIAGNOSTICS_NOTE/);
 });
 
 test("the ambiguous message is honest, has no raw provider error and offers no blind retry", () => {
@@ -20,7 +23,12 @@ test("the ambiguous message is honest, has no raw provider error and offers no b
   const end = js.indexOf("const retry =", start);
   assert.ok(end > start, "the ambiguous branch must stop before the generic error path");
   const branch = js.slice(start, end);
-  assert.match(branch, /setError\(SUBMISSION_UNKNOWN_COPY\)/);
+  assert.match(branch, /setError\(copy\)/);
+  assert.match(branch, /SUBMISSION_UNKNOWN_DIAGNOSTICS_COPY/);
+  assert.match(branch, /SUBMISSION_UNKNOWN_DIAGNOSTICS_NOTE/);
+  // The base copy never claims diagnostics unconditionally.
+  assert.doesNotMatch(js, /SUBMISSION_UNKNOWN_COPY = "[^"]*Diagnostic details/);
+  assert.doesNotMatch(js, /SUBMISSION_UNKNOWN_NOTE = "[^"]*diagnostics were recorded/i);
   assert.match(branch, /return;/);
   assert.doesNotMatch(branch, /data\.error/);
   assert.doesNotMatch(branch, /error\.message/);
