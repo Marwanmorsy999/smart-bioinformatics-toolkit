@@ -3,9 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Ask for a sequence analysis, review the exact plan, approve it, and inspect validated results. Research use only.">
+  <meta name="description" content="Ask for a sequence analysis, review the exact plan, approve it, and inspect validation findings when a run completes. Research use only.">
   <meta name="theme-color" content="#eef2f4">
-  <title>AI Research Workspace · Smart Bioinformatics Toolkit</title>
+  <title>AI Research Workspace · Smart Bioinformatics AI</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="stylesheet" href="css/tokens.css">
   <link rel="stylesheet" href="css/main.css">
   <link rel="stylesheet" href="css/components.css">
@@ -15,9 +16,8 @@
   <a class="skip-link" href="#main-content">Skip to main content</a>
 
   <header class="topbar">
-    <a class="brand" href="index.html" aria-label="Smart Bioinformatics Toolkit home">
-      <span class="brand-mark" aria-hidden="true">S<span>Bio</span></span>
-      <span class="brand-name">Smart Bioinformatics <span>Toolkit</span></span>
+    <a class="brand" href="index.html" aria-label="Smart Bioinformatics AI home">
+      <img class="brand-logo" src="brand/sbio-logo-primary.svg" alt="Smart Bioinformatics AI" width="245" height="28">
     </a>
     <button class="nav-toggle" type="button" aria-label="Open navigation" aria-controls="primary-nav" aria-expanded="false">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
@@ -26,6 +26,7 @@
       <a href="index.html#tools">Tools</a>
       <a href="workspace.html">Research workspace</a>
       <a href="phylo.html">Phylogenetics</a>
+      <a href="assistant.html">Assistant</a>
       <a href="index.html#about">About</a>
     </nav>
     <span id="backend-badge" class="local-badge">Backend status: checking…</span>
@@ -42,7 +43,7 @@
 
       <div class="research-strip" role="note">
         <span class="privacy-icon" aria-hidden="true">i</span>
-        <p><strong>Research-use workflow.</strong> Outputs are screening evidence, not proof of identity and not a clinical diagnosis. Heavy tools require plan approval; browser-local statistics need no approval because nothing leaves this page.</p>
+        <p><strong>Research use only.</strong> Outputs are screening evidence; heavy tools require plan approval. <a href="research-use.html">Full statement</a>.</p>
       </div>
     </header>
 
@@ -212,11 +213,11 @@
 
         <div class="empty-state panel ai-output-empty">
           <span class="empty-state-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM4 10h16M9 10v9"/></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM4 10h16M9 10v9"/></svg>
           </span>
           <div>
             <h3>Awaiting a request</h3>
-            <p>Submit a question and FASTA on the left. The exact plan, approval controls and validated evidence appear here — input and output stay separate.</p>
+            <p>Submit a question and FASTA on the left. The exact plan, approval controls and validation findings appear here — input and output stay separate.</p>
           </div>
         </div>
       </div>
@@ -263,8 +264,7 @@
     <div class="footer-grid">
       <div>
         <div class="footer-brand">
-          <span class="brand-mark" aria-hidden="true">S<span>Bio</span></span>
-          <span class="brand-name">Smart Bioinformatics <span>Toolkit</span></span>
+          <img class="footer-logo" src="brand/sbio-logo-dark.svg" alt="Smart Bioinformatics AI" width="245" height="28">
         </div>
         <p>A modular, browser-first research workspace for sequence checks. Inspect the inputs, keep the outputs, and read the caveats.</p>
       </div>
@@ -283,18 +283,20 @@
           <li><a href="ai.html">AI workspace</a></li>
           <li><a href="workspace.html">Research workspace</a></li>
           <li><a href="phylo.html">Phylogenetics</a></li>
+          <li><a href="assistant.html">Assistant</a></li>
         </ul>
       </div>
       <div>
-        <h2 class="footer-heading">About</h2>
+        <h2 class="footer-heading">Documentation</h2>
         <ul class="footer-links">
-          <li><a href="index.html#about">About the project</a></li>
+          <li><a href="index.html#about">About</a></li>
           <li><a href="benchmark.html#bench-limits-title">Known limitations</a></li>
+          <li><a href="research-use.html">Research-use policy</a></li>
         </ul>
       </div>
     </div>
-    <p class="footer-disclaimer"><strong>Research-use disclaimer.</strong> This toolkit produces screening evidence for research and teaching. It is not a diagnostic device, does not establish organism identity or pathogenicity, and is not validated for clinical, forensic or regulatory decisions. All outputs require independent interpretation by a qualified user.</p>
-    <div class="footer-bottom"><span>Smart Bioinformatics Toolkit · Milestone 0.5.0</span><span>No external fonts, images or CDNs · Static, framework-free pages</span></div>
+    <p class="footer-disclaimer">Research and educational use only. Results require independent scientific interpretation. <a href="research-use.html">Full research-use statement</a>.</p>
+    <div class="footer-bottom"><span>Smart Bioinformatics AI</span></div>
   </footer>
   <script src="js/nav.js"></script>
   <script type="module" src="js/project-context.js"></script>

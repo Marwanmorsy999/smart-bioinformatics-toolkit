@@ -183,3 +183,22 @@ The landing page used to show a tilted "DNA card" inside rotating orbit rings, r
 - The nav contract fixed the item set to Tools / Research workspace / Phylogenetics / About. Direct top-level links to AI workspace, BLAST, taxonomy and benchmarks were removed from the header; those routes remain reachable from the capability cards, tool sidebar and footer. This is a navigation trade-off, not a broken route.
 - Legacy token aliases are kept intentionally: removing them would require editing scientific page scripts and `benchmark.css`, which is outside this task's scope. They are documented above so the alias surface stays visible.
 - Other pages were given the shell and tokens only; their body copy and scripts are unchanged, so some older glyph-based check marks remain outside the landing page.
+
+---
+
+## 8. Brand rollout (M7.4.2)
+
+Authoritative identity rules live in `docs/BRAND_IDENTITY.md`. This section records how they are applied in the shell; it does not replace that document.
+
+| Decision | Implementation |
+| --- | --- |
+| Product name | **Smart Bioinformatics AI** in every page title, header, footer, aria-label and visible brand text. "Smart Bioinformatics Toolkit" is retained only in repository/historical docs, never in the public UI. |
+| Header wordmark | `<img class="brand-logo" src="brand/sbio-logo-primary.svg" alt="Smart Bioinformatics AI" width="245" height="28">`. The local SVG replaces the text-only `.brand-mark`/`.brand-name` lockup on all seven pages and on `research-use.html`. Height drives scale (28 px desktop, 24 px ≤640 px); width follows the SVG ratio. No external font or image request. |
+| Compact mark | `brand/sbio-symbol.svg` is available for future use as the small-mark option in app tiles and badges; it is not referenced by the shipped pages. The assistant avatar `brand/sbio-assistant.svg` is used on the assistant page. The mono lockup `brand/sbio-logo-mono.svg` is available for future one-colour and print use; the dark lockup `brand/sbio-logo-dark.svg` is used in the footer. |
+| Favicon | `<link rel="icon" type="image/svg+xml" href="favicon.svg">` on every page. The opaque keylined plate works on light and dark browser chrome. |
+| Assistant identity | **S Bio Assistant** is an interface role, not a separate mascot. Its avatar reuses the symbol's spine and clade; its accessible name is always "S Bio Assistant". It plans and explains; deterministic tools produce every scientific value. |
+| Navigation | Five items in one order on every page: Tools, Research workspace, Phylogenetics, Assistant, About. This supersedes the four-item contract noted in §3; `#primary-nav`, `.nav-toggle` and the `aria-current="location"` convention are unchanged. |
+| Footer | One `.site-footer` structure everywhere: dark `sbio-logo-dark.svg` lockup, Tools / Research / Documentation link columns (including Assistant), and a single short notice: "Research and educational use only. Results require independent scientific interpretation." with a link to `research-use.html`. Milestone labels, implementation notes and the long full disclaimer no longer appear in the footer. |
+| Disclaimer hierarchy | **Level A** `research-use.html` holds the complete verbatim policy statement and verified contextual sections; **Level B** the uniform footer notice on every page; **Level C** only method-specific limitations next to the claim they constrain (taxonomy evidence and reference coverage, phylogenetic status and tree hypotheses, external execution consent, report evidence quality). No scientific limitation was removed. |
+
+Version and implementation notes ("Milestone 0.5.0", "framework-free", "no external fonts/images/CDNs") were removed from public UI; they remain documented here and in the repository docs. Scientific limitations and consent wording were preserved verbatim while the two contradicted phylogenetics claims and the absent benchmark results-file references were replaced with verified copy from `docs/PRODUCT_COPY_AUDIT.md`.

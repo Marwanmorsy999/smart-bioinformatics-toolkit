@@ -18,7 +18,7 @@ const SHOTS = resolve(HERE, "../test-results/uiux/after");
 mkdirSync(SHOTS, { recursive: true });
 
 const PAGES = [
-  { key: "landing", file: "index.html", title: /Smart Bioinformatics Toolkit/ },
+  { key: "landing", file: "index.html", title: /Smart Bioinformatics AI/ },
   { key: "ai", file: "ai.html", title: /AI Research Workspace/ },
   { key: "benchmark", file: "benchmark.html", title: /Risk-coverage analysis/ },
   { key: "blast", file: "blast.html", title: /BLAST Results Analyzer/ },

@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#eef2f4">
-<title>Risk-coverage analysis - Smart Bioinformatics Toolkit</title>
+<title>Risk-coverage analysis - Smart Bioinformatics AI</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="stylesheet" href="css/tokens.css">
 <link rel="stylesheet" href="css/main.css">
 <link rel="stylesheet" href="css/tool-views.css">
@@ -13,9 +14,8 @@
 <body>
 <a class="skip-link" href="#main-content">Skip to main content</a>
 <header class="topbar">
-  <a class="brand" href="index.html" aria-label="Smart Bioinformatics Toolkit home">
-    <span class="brand-mark" aria-hidden="true">S<span>Bio</span></span>
-    <span class="brand-name">Smart Bioinformatics <span>Toolkit</span></span>
+  <a class="brand" href="index.html" aria-label="Smart Bioinformatics AI home">
+    <img class="brand-logo" src="brand/sbio-logo-primary.svg" alt="Smart Bioinformatics AI" width="245" height="28">
   </a>
   <button class="nav-toggle" type="button" aria-label="Open navigation" aria-controls="primary-nav" aria-expanded="false">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
@@ -24,6 +24,7 @@
     <a href="index.html#tools">Tools</a>
     <a href="workspace.html">Research workspace</a>
     <a href="phylo.html">Phylogenetics</a>
+    <a href="assistant.html">Assistant</a>
     <a href="index.html#about">About</a>
   </nav>
 </header>
@@ -31,7 +32,7 @@
   <section class="section-block bench-intro" aria-labelledby="about">
     <p class="eyebrow">Demonstration / not a benchmark result</p>
     <h1 id="about">Risk-coverage analysis</h1>
-    <p class="bench-lede">A walkthrough of the risk-coverage sweep calculation using synthetic demonstration data from <code>shared/test-cases/risk_coverage_cases.json</code>. Real held-out numbers are in <code>benchmark_data/RESULTS.md</code>.</p>
+    <p class="bench-lede">A walkthrough of the risk-coverage sweep calculation using synthetic demonstration data from <code>shared/test-cases/risk_coverage_cases.json</code>. No held-out results file is present in this repository; every value shown here is illustrative.</p>
   </section>
 
   <div class="bench-note" role="note" aria-labelledby="bench-note-title">
@@ -99,15 +100,14 @@
 
   <section class="section-block bench-limits" aria-labelledby="bench-limits-title">
     <h2 id="bench-limits-title">Limitations of this demonstration</h2>
-    <p class="bench-lede">The five threshold points are chosen to illustrate how the rates move, not to establish a rule: differences between adjacent points are properties of this small fixture. Treat every value on this page as an illustration of the calculation, never as an accuracy estimate. For measured results, consult <code>benchmark_data/RESULTS.md</code>.</p>
+    <p class="bench-lede">The five threshold points are chosen to illustrate how the rates move, not to establish a rule: differences between adjacent points are properties of this small fixture. Treat every value on this page as an illustration of the calculation, never as an accuracy estimate. For measured results, no results file is available in this repository; do not treat these values as an accuracy estimate.</p>
   </section>
 </main>
 <footer class="site-footer">
   <div class="footer-grid">
     <div>
       <div class="footer-brand">
-        <span class="brand-mark" aria-hidden="true">S<span>Bio</span></span>
-        <span class="brand-name">Smart Bioinformatics <span>Toolkit</span></span>
+        <img class="footer-logo" src="brand/sbio-logo-dark.svg" alt="Smart Bioinformatics AI" width="245" height="28">
       </div>
       <p>A modular, browser-first research workspace for sequence checks. Inspect the inputs, keep the outputs, and read the caveats.</p>
     </div>
@@ -126,18 +126,20 @@
         <li><a href="ai.html">AI workspace</a></li>
         <li><a href="workspace.html">Research workspace</a></li>
         <li><a href="phylo.html">Phylogenetics</a></li>
+        <li><a href="assistant.html">Assistant</a></li>
       </ul>
     </div>
     <div>
-      <h2 class="footer-heading">About</h2>
+      <h2 class="footer-heading">Documentation</h2>
       <ul class="footer-links">
-        <li><a href="index.html#about">About the project</a></li>
+        <li><a href="index.html#about">About</a></li>
         <li><a href="benchmark.html#bench-limits-title">Known limitations</a></li>
+        <li><a href="research-use.html">Research-use policy</a></li>
       </ul>
     </div>
   </div>
-  <p class="footer-disclaimer"><strong>Research-use disclaimer.</strong> This toolkit produces screening evidence for research and teaching. It is not a diagnostic device, does not establish organism identity or pathogenicity, and is not validated for clinical, forensic or regulatory decisions. All outputs require independent interpretation by a qualified user.</p>
-  <div class="footer-bottom"><span>Smart Bioinformatics Toolkit · Milestone 0.5.0</span><span>No external fonts, images or CDNs · Static, framework-free pages</span></div>
+  <p class="footer-disclaimer">Research and educational use only. Results require independent scientific interpretation. <a href="research-use.html">Full research-use statement</a>.</p>
+  <div class="footer-bottom"><span>Smart Bioinformatics AI</span></div>
 </footer>
 <script src="js/nav.js"></script>
 <script type="module" src="js/benchmark-app.js"></script>
