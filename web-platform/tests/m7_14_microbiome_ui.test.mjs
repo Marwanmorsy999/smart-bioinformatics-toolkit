@@ -51,6 +51,9 @@ test("CONTROLLER: server-only analysis, bounded polling and honest assistant con
   assert.match(js, /searchParams\.get\("run_id"\)/);
   assert.doesNotMatch(js, /Math\.random|synthetic|placeholder result/i);
   assert.match(js, /observed:/);
+  assert.match(js, /pcoa_variance_fraction/);
+  assert.match(js, /fraction_of_total_variance/);
+  assert.match(js, /body\.params\?\.trunc_rationale/);
   assert.match(js, /no significance claim/i);
 });
 

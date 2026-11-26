@@ -130,7 +130,49 @@ test("FIXTURE: feature table, rep-seqs and taxonomy parse deterministically", ()
   assert.equal(taxonomy.by_feature.asv3.unclassified, true);
   const biom = parseFeatureTable(JSON.stringify({ sample_ids: ["s1"], observation_ids: ["f1"], data: [[4]] }));
   assert.equal(biom.format, "biom-json");
+  assert.equal(biom.matrix_type, "dense");
   assert.equal(biom.totals.s1, 4);
+});
+
+test("FIXTURE: sparse BIOM v1 triplets accumulate correct sums, composition and integrity", () => {
+  const sparse = parseFeatureTable(fixture("feature-table-sparse.biom.json"));
+  assert.equal(sparse.available, true);
+  assert.equal(sparse.format, "biom-json");
+  assert.equal(sparse.matrix_type, "sparse");
+  assert.deepEqual(sparse.sample_ids, ["sampleA", "sampleB", "sampleC"]);
+  assert.deepEqual(sparse.feature_ids, ["asv1", "asv2", "asv3"]);
+  // Triplets must be accumulated per [row, col], never read as dense rows.
+  assert.equal(sparse.counts.asv1.sampleA, 10);
+  assert.equal(sparse.counts.asv2.sampleB, 7);
+  assert.equal(sparse.totals.sampleA, 12);
+  assert.equal(sparse.totals.sampleB, 13);
+  assert.equal(sparse.totals.sampleC, 9);
+  const { repSeqs, taxonomy, metadata } = parsed();
+  const composition = aggregateByRank(sparse, taxonomy, { rank: "phylum" });
+  assert.equal(composition.available, true);
+  const sampleA = composition.samples.find((entry) => entry.sample_id === "sampleA");
+  assert.equal(sampleA.total, 12);
+  const firmicutes = sampleA.taxa.find((entry) => entry.taxon === "Firmicutes");
+  assert.equal(firmicutes.count, 10);
+  assert.equal(firmicutes.fraction, Math.round((10 / 12) * 1e6) / 1e6);
+  const sampleB = composition.samples.find((entry) => entry.sample_id === "sampleB");
+  assert.equal(sampleB.taxa.find((entry) => entry.taxon === "Unclassified").count, 1);
+  const bray = computeBrayCurtis(sparse);
+  assert.equal(bray.matrix[0][0], 0);
+  assert.notEqual(bray.matrix[0][1], 0);
+  const alpha = computeAlphaFromTable(sparse);
+  assert.equal(alpha.samples[0].observed_features, 2);
+  const integrity = validateFeatureTableIntegrity({ table: sparse, repSeqs, taxonomy, metadata });
+  assert.equal(integrity.valid, true);
+  assert.equal(integrity.coverage.features, 3);
+  assert.equal(integrity.coverage.features_with_rep_seq, 3);
+  assert.equal(integrity.coverage.features_with_taxonomy, 3);
+  assert.equal(integrity.coverage.total_assignable_reads, 34);
+  // Dense support is preserved (a 3-sample dense row of small counts).
+  const dense = parseFeatureTable(JSON.stringify({ sample_ids: ["s1", "s2", "s3"],
+    observation_ids: ["f1"], matrix_type: "dense", data: [[1, 2, 0]] }));
+  assert.equal(dense.matrix_type, "dense");
+  assert.deepEqual(Object.values(dense.counts.f1), [1, 2, 0]);
 });
 
 test("RELATIVE ABUNDANCE: computed from real counts and keeps unclassified", () => {
@@ -197,10 +239,17 @@ test("FIXTURE: Bray–Curtis and PCoA are parsed or computed from actual data", 
   assert.equal(pcoa.available, true);
   assert.deepEqual(pcoa.axes, ["PC1", "PC2"]);
   assert.equal(pcoa.coordinates[0].values.PC1, -0.42);
-  assert.equal(pcoa.variance_explained.PC1, 62);
+  // Footer says 62.0% / 25.0%; both parsers now expose fractions (0-1).
+  assert.equal(pcoa.variance_explained.PC1, 0.62);
+  assert.equal(pcoa.variance_explained.PC2, 0.25);
+  assert.equal(pcoa.variance_units, "fraction_of_total_variance");
+  assert.ok(Object.values(pcoa.variance_explained).every((value) => value <= 1));
+  assert.match(PCoA, /PC1 explains 62\.0% of variance/);
   const computed = computePcoa(distance, { dimensions: 2 });
   assert.equal(computed.available, true);
   assert.equal(computed.coordinates.length, 3);
+  assert.equal(computed.variance_units, "fraction_of_total_variance");
+  assert.ok(Object.values(computed.variance_explained ?? {}).every((value) => value <= 1));
   assert.equal(computed.basis, "worker_computed_from_real_distance_matrix");
   assert.equal(computePcoa(null).available, false);
 });

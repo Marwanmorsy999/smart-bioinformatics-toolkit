@@ -129,6 +129,14 @@ export function renderPcoa(container, pcoa, metadata = [], { colorBy = "" } = {}
   const categoryOf = (sample) => (colorBy ? metaById.get(sample)?.[colorBy] : null) ?? "Unlabelled";
   const categories = [...new Set(values.map((entry) => categoryOf(entry.sample)))].sort();
   const colorOf = (category) => PALETTE[categories.indexOf(category) % PALETTE.length];
+  // variance_explained is a fraction (0-1) from both the parsed QIIME 2 footer
+  // and the worker-computed path; convert exactly once and label the unit.
+  const axisLabel = (axis) => {
+    const fraction = pcoa.variance_explained?.[axis];
+    return Number.isFinite(fraction)
+      ? `${axis} (${Math.round(fraction * 1000) / 10}% of variance)`
+      : `${axis} (variance not reported)`;
+  };
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   svg.setAttribute("role", "img");
@@ -145,11 +153,11 @@ export function renderPcoa(container, pcoa, metadata = [], { colorBy = "" } = {}
   addLine(pad, pad, pad, height - pad);
   const axisLabelX = document.createElementNS(ns, "text");
   axisLabelX.setAttribute("x", width / 2); axisLabelX.setAttribute("y", height - 12);
-  axisLabelX.setAttribute("text-anchor", "middle"); axisLabelX.textContent = axes[0];
+  axisLabelX.setAttribute("text-anchor", "middle"); axisLabelX.textContent = axisLabel(axes[0]);
   const axisLabelY = document.createElementNS(ns, "text");
   axisLabelY.setAttribute("x", 12); axisLabelY.setAttribute("y", height / 2);
   axisLabelY.setAttribute("text-anchor", "middle"); axisLabelY.setAttribute("transform", `rotate(-90 12 ${height / 2})`);
-  axisLabelY.textContent = axes[1];
+  axisLabelY.textContent = axisLabel(axes[1]);
   svg.append(axisLabelX, axisLabelY);
   for (const entry of values) {
     const circle = document.createElementNS(ns, "circle");

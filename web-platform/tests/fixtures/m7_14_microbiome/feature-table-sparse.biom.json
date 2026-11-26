@@ -1,0 +1,10 @@
+{
+  "id": "labelled-sparse-biom-fixture",
+  "format": "Biological Observation Matrix 1.0.0",
+  "generated_by": "M7.14 test fixture (SHAPE of a real QIIME 2 BIOM v1 export; NOT tutorial data)",
+  "matrix_type": "sparse",
+  "shape": [3, 3],
+  "sample_ids": ["sampleA", "sampleB", "sampleC"],
+  "observation_ids": ["asv1", "asv2", "asv3"],
+  "data": [[0, 0, 10], [0, 1, 5], [1, 0, 2], [1, 1, 7], [1, 2, 9], [2, 1, 1]]
+}

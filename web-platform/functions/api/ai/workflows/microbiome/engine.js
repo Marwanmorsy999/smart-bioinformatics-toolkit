@@ -278,6 +278,20 @@ function bestParsed(artifacts, kind, options) {
   };
 }
 
+// When no tool QC artifact was retrieved, still surface the genuine per-read
+// statistics observed from the uploaded FASTQ (never presented as tool output).
+function observedQc(state) {
+  const raw = state.qc?.raw;
+  if (!raw?.reads) {
+    return { available: false, samples: [],
+      reason: "No tool QC artifact and no valid uploaded FASTQ were available; no QC is claimed." };
+  }
+  return {
+    ...raw, available: true, samples: [], basis: "worker_computed_from_uploaded_fastq",
+    reason: "No tool QC artifact was retrieved; only raw uploaded-read QC is reported."
+  };
+}
+
 // --------------------------------------------------------------- D1 state
 
 async function getRunByReference(db, request) {
@@ -605,11 +619,10 @@ async function finalizeStage(adapter, env, db, row, state, stepId, jobId, ctx) {
     const fastq = downloaded.artifacts.find((artifact) => ["reads", "rep_seqs", "feature_table"].includes(artifact.kind));
     state.frontier.demuxReadsId = fastq?.id ?? null;
     const stats = bestParsed(downloaded.artifacts, "qc");
-    state.results.qc = stats.parsed.available ? stats.parsed : { available: false,
-      reason: "No per-sample QC table was retrieved; raw uploaded-read QC is still reported." };
+    state.results.qc = stats.parsed.available ? stats.parsed : observedQc(state);
   } else if (stepId === "qc_summary") {
     const stats = bestParsed(downloaded.artifacts, "qc");
-    if (stats.parsed.available) state.results.qc = stats.parsed;
+    state.results.qc = stats.parsed.available ? stats.parsed : observedQc(state);
   } else if (stepId === "dada2_denoise") {
     await collectDenoise(state, collected, downloaded);
   } else if (stepId === "taxonomy") {
@@ -683,7 +696,7 @@ function localStage(state, stepId) {
 // Deterministic text exports rebuilt ONLY from parsed real values. These are
 // labelled as derived-from-artifact exports; the untouched original downloads
 // remain in /api/ai/runs/:id/recovery.
-async function buildExports(state, report) {
+export async function buildExports(state, report) {
   const items = [];
   const add = (name, content, source, toolVersion = null) => {
     if (typeof content !== "string" || !content.trim()) return;
@@ -725,7 +738,12 @@ async function buildExports(state, report) {
     const lines = [`#SampleID\t${pcoa.axes.join("\t")}`, ...pcoa.coordinates.map((entry) =>
       [entry.sample_id, ...pcoa.axes.map((axis) => entry.values?.[axis] ?? "")].join("\t"))];
     if (pcoa.variance_explained) {
-      for (const [axis, value] of Object.entries(pcoa.variance_explained)) lines.push(`# ${axis} explains ${value * 100}% of variance`);
+      // variance_explained is a fraction (0-1) for both parsed and computed
+      // PCoA; convert exactly once to a labelled percentage here.
+      for (const [axis, value] of Object.entries(pcoa.variance_explained)) {
+        const percent = Math.round(value * 10_000) / 100;
+        lines.push(`# ${axis} explains ${percent}% of variance`);
+      }
     }
     add("pcoa-coordinates.tsv", lines.join("\n"), pcoa.basis ?? "derived_from_pcoa_artifact",
       state.steps.pcoa?.tool_version ?? null);
@@ -751,17 +769,20 @@ async function buildResult(state) {
     table: state._parsed?.table, repSeqs: state._parsed?.repSeqs,
     taxonomy: state._parsed?.taxonomy, metadata: { sample_ids: state.input.sample_ids }
   });
+  const qc = state.results.qc?.available ? state.results.qc : observedQc(state);
   const unavailable = [];
   const optional = ["qc", "asv", "taxonomy", "composition", "alpha", "beta", "pcoa", "ordination"];
   for (const key of optional) {
-    if (!state.results[key]?.available) unavailable.push(`${key}: ${state.results[key]?.reason ?? "no reason recorded"}`);
+    const value = key === "qc" ? qc : state.results[key];
+    if (!value?.available) unavailable.push(`${key}: ${value?.reason ?? "no reason recorded"}`);
   }
   const result = {
     workflow_type: "microbiome", run_id: state.run_id, plan_id: state.plan_id,
     status: state.status, input: state.input, input_sha256: state.input_sha256,
     metadata_sha256: state.metadata_sha256,
     params: state.params, tools: state.discovery.tools, classifier: state.discovery.classifier,
-    qc: state.results.qc ?? null, asv: state.results.asv ?? null,
+    qc,
+    asv: state.results.asv ?? null,
     taxonomy: state.results.taxonomy ?? null, composition: state.results.composition ?? null,
     alpha: state.results.alpha ?? null, beta: state.results.beta ?? null,
     pcoa: state.results.pcoa ?? null, ordination: state.results.ordination ?? null,

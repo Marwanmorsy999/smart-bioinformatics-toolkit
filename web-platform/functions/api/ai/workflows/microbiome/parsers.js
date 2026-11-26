@@ -377,19 +377,49 @@ function parseBiomJson(source) {
     const sampleIds = (biom.sample_ids ?? []).map((value) => clean(value, 200));
     const featureIds = (biom.observation_ids ?? biom.otu_ids ?? []).map((value) => clean(value, 300));
     const data = Array.isArray(biom.data) ? biom.data : [];
-    const rows = [];
+    const declaredType = String(biom.matrix_type ?? "").toLowerCase();
+    // Real QIIME 2 BIOM v1 "sparse" stores [row, col, value] triplets. A dense
+    // table stores one row of sample values per observation. Detect the shape
+    // explicitly (and validate triplet indices) so a dense row of small counts
+    // is not misread as a sparse triple.
+    const first = Array.isArray(data[0]) ? data[0] : null;
+    const looksSparse = Boolean(first && first.length === 3
+      && Number.isInteger(first[0]) && first[0] >= 0 && first[0] < featureIds.length
+      && Number.isInteger(first[1]) && first[1] >= 0 && first[1] < sampleIds.length
+      && typeof first[2] === "number");
+    const sparse = declaredType === "sparse"
+      || (declaredType !== "dense" && looksSparse);
+    const errors = [];
     const counts = {};
-    featureIds.forEach((featureId, featureIndex) => {
+    featureIds.forEach((featureId) => {
       const values = {};
-      sampleIds.forEach((sample, sampleIndex) => { values[sample] = 0; });
-      const row = data[featureIndex] ?? [];
-      if (Array.isArray(row)) row.forEach((value, sparseIndex) => {
-        const sample = sampleIds[sparseIndex];
-        if (sample) values[sample] = num(value) ?? 0;
-      });
+      sampleIds.forEach((sample) => { values[sample] = 0; });
       counts[featureId] = values;
-      rows.push({ feature_id: featureId, counts: values, taxonomy: null });
     });
+    if (sparse) {
+      for (const entry of data) {
+        if (!Array.isArray(entry) || entry.length < 3) {
+          errors.push("malformed_sparse_biom_triplet");
+          continue;
+        }
+        const feature = featureIds[entry[0]];
+        const sample = sampleIds[entry[1]];
+        const value = num(entry[2]) ?? 0;
+        if (!feature || !sample) { errors.push("sparse_biom_index_out_of_range"); continue; }
+        counts[feature][sample] += value;
+      }
+    } else {
+      featureIds.forEach((featureId, featureIndex) => {
+        const row = data[featureIndex];
+        if (!Array.isArray(row)) return;
+        row.forEach((value, sampleIndex) => {
+          const sample = sampleIds[sampleIndex];
+          if (sample) counts[featureId][sample] = num(value) ?? 0;
+        });
+      });
+    }
+    const rows = featureIds.map((featureId) => ({ feature_id: featureId,
+      counts: counts[featureId], taxonomy: null }));
     const totals = {};
     sampleIds.forEach((sample) => {
       totals[sample] = rows.reduce((sum, row) => sum + (row.counts[sample] ?? 0), 0);
@@ -397,8 +427,9 @@ function parseBiomJson(source) {
     return {
       available: rows.length > 0 && sampleIds.length > 0,
       reason: rows.length && sampleIds.length ? null : "BIOM JSON has no observations or no samples.",
-      format: "biom-json", feature_ids: featureIds, sample_ids: sampleIds, counts, totals,
-      taxonomy: {}, rows, duplicates: duplicatesOf(featureIds), errors: []
+      format: "biom-json", matrix_type: sparse ? "sparse" : "dense",
+      feature_ids: featureIds, sample_ids: sampleIds, counts, totals,
+      taxonomy: {}, rows, duplicates: duplicatesOf(featureIds), errors
     };
   } catch (error) {
     return { available: false, reason: `BIOM JSON could not be parsed: ${error?.message ?? error}`,
@@ -454,7 +485,7 @@ export function aggregateByRank(table, taxonomy, { rank = "phylum", includeUncla
     return { available: false, reason: "Feature table or taxonomy is unavailable; no composition was computed.",
       rank, samples: [] };
   }
-  const rankKey = RANK_PREFIXES[rank] ? rank : "phylum";
+  const rankKey = Object.values(RANK_PREFIXES).includes(rank) ? rank : "phylum";
   const labelFor = (featureId) => {
     const entry = taxonomy.by_feature[featureId];
     if (!entry?.taxon) return null;
@@ -657,7 +688,10 @@ export function parsePcoa(text) {
     samples: coordinates.map((entry) => entry.sample_id),
     axes: axes.map((axis) => axis.name),
     coordinates,
+    // Fractions (0-1) from here on, matching computePcoa(). The QIIME 2 footer
+    // reports percentages; they are divided by 100 exactly once at this boundary.
     variance_explained: extractVariance(source, axes.map((axis) => axis.name)),
+    variance_units: "fraction_of_total_variance",
     basis: "parsed_from_tool_output"
   };
 }
@@ -666,7 +700,7 @@ function extractVariance(source, axes) {
   const out = {};
   for (const axis of axes) {
     const match = source.match(new RegExp(`${axis.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[^\\n]{0,120}?([0-9]+(?:\\.[0-9]+)?)\\s*%`, "i"));
-    if (match) out[axis] = num(match[1]);
+    if (match) out[axis] = Math.round((num(match[1]) / 100) * 1_000_000) / 1_000_000;
   }
   return Object.keys(out).length ? out : null;
 }
@@ -733,6 +767,7 @@ export function computePcoa(distance, { dimensions = 3 } = {}) {
     variance_explained: totalEigen
       ? Object.fromEntries(coordinates.map((entry) => [entry.axis, Math.round((Math.max(0, entry.eigenvalue) / totalEigen) * 1_000_000) / 1_000_000]))
       : null,
+    variance_units: "fraction_of_total_variance",
     basis: "worker_computed_from_real_distance_matrix"
   };
 }

@@ -14,7 +14,8 @@ const $ = (id) => (HAS_DOM ? document.getElementById(id) : null);
 const state = { payload: null, plan: null, run: null, result: null, polls: 0, timer: null };
 const MAX_POLLS = 120;
 const ui = {
-  status: $("microbiome-status"), public: $("mb-public"), uploadFields: $("mb-upload-fields"),
+  status: $("microbiome-status"), public: $("mb-public"), publicNote: $("mb-public-note"),
+  uploadFields: $("mb-upload-fields"),
   reads: $("mb-reads"), barcodes: $("mb-barcodes"), metadata: $("mb-metadata"),
   objective: $("mb-objective"), planButton: $("mb-plan-button"), planNote: $("mb-plan-note"),
   plan: $("mb-plan"), planSummary: $("mb-plan-summary"), planTools: $("mb-plan-tools"),
@@ -111,6 +112,12 @@ function renderPlan(body) {
   ui.planParams.textContent = `trim-left ${body.params?.trim_left ?? "not reported"}; ` +
     `trunc-len ${body.params?.trunc_len ?? "not reported"}. ${body.params?.trunc_rationale ?? ""} ` +
     `${body.params?.rarefaction_reason ?? ""}`;
+  // Replace the static dataset description with the rationale actually derived
+  // from the observed quality values returned by the plan endpoint.
+  if (ui.publicNote && body.params?.trunc_rationale) {
+    ui.publicNote.textContent = `Observed-data rationale: ${body.params.trunc_rationale} ` +
+      "The Worker verifies the recorded checksums before using public files.";
+  }
   const classifier = body.classifier ?? {};
   ui.planClassifier.textContent = classifier.available
     ? `Tool ${classifier.tool_id ?? "unknown"} version ${classifier.version ?? "unknown"}; ` +
@@ -344,7 +351,10 @@ async function explain() {
       reads: state.result.asv?.total_assignable_reads ?? null,
       rank: state.result.composition?.rank ?? null,
       alpha: (state.result.alpha?.samples ?? []).slice(0, 5),
-      pcoa_variance: state.result.pcoa?.variance_explained ?? null,
+      // variance_explained is a fraction (0-1), never a percentage, from both
+      // the parsed QIIME 2 footer and the worker-computed PCoA path.
+      pcoa_variance_fraction: state.result.pcoa?.variance_explained ?? null,
+      pcoa_variance_units: "fraction_of_total_variance (0-1; percent = fraction * 100)",
       unavailable: state.result.unavailable_reasons ?? []
     },
     note: "Use only these values; no significance claim."
