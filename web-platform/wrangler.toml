@@ -45,6 +45,8 @@ SMARTSBIO_ENABLED = "false"
 # never in source, never browser-accessible). Production stays off.
 NINEROUTER_ENABLED = "true"
 NINEROUTER_MODEL = "auto"
+# M7.10.1: bound server-side provider deadline (seconds). Staging only.
+NINEROUTER_TIMEOUT = "60"
 
 # M7.1: staging now uses its OWN D1 database. Production keeps the original
 # binding below; staging and production must never share a row space.
