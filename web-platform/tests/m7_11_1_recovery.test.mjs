@@ -47,6 +47,23 @@ const NHX_HDA = "eeeeeeee5555ffff4444aaaa3333bbbb";
 // FIXTURE: the same genuine-shaped report with Windows CRLF line endings, as
 // delivered by Galaxy text datasets. The final tree is near the END.
 const CRLF_REPORT = REAL_IQTREE_REPORT.replace(/\n/g, "\r\n");
+// FIXTURE: CRLF report where the label, a BLANK line, then the newick appear
+// far beyond the first 2000 characters (as in the real 34KB report).
+const BLANK_LINE_CRLF_REPORT = [
+  "Best-fit model according to AIC: TPM3u+F+I",
+  "Model             LogL",
+  "TPM3u+F+I      -2197.612",
+  "x".repeat(3000),
+  "Tree in newick format:",
+  "",
+  FINAL_ML_TREE,
+  "NOTE: Tree is UNROOTED although outgroup taxon 'NR_115348.1' is drawn at root",
+  "UFboot: 1000 replicates"
+].join("\n").replace(/\n/g, "\r\n");
+const NO_TREE_REPORT = "Best-fit model according to AIC: TPM3u+F+I\nTPM3u+F+I   -2197.612\nUFboot: 1000 replicates\n";
+const BIONJ_TREE = "(NR_115348.1:-0.0070265625,NR_074666.1:0.0070275627,NR_074665.1:0.0093274489,NR_043278.1:0.057175286,NR_029362.1:0.13487706);\n";
+const BIONJ_HDA = "aaaaaaaa5555bbbb6666cccc7777dddd";
+const MAXLIKELIHOOD_HDA = "bbbbbbbb5555cccc6666dddd7777eeee";
 // FIXTURE: same report, but the printed final tree is syntactically broken.
 // The Worker must fall back to the downloaded treefile and LABEL that fallback.
 const UNPARSEABLE_REPORT = REAL_IQTREE_REPORT.replace(/Tree in newick format: [^\n]*/,
@@ -899,6 +916,72 @@ test("FIXTURE: CRLF report parses final tree, model and log-likelihood", async (
     && call.url.includes("/api/tools") && !call.url.includes("/fetch")).length, 0, "zero tool submissions");
 });
 
+test("FIXTURE: blank-line-separated CRLF report tree is parsed from full content", async (t) => {
+  assert.equal(parseIqtreeReport(BLANK_LINE_CRLF_REPORT).final_tree, FINAL_ML_TREE);
+  const { response, body, stub } = await runWorkflow(t, {
+    payload: { resume_provider_job_id: FIX.providerJobId, history_id: FIX.historyId,
+      resume_iqtree_provider_job_id: IQ_JOB_ID },
+    stubOptions: { alignmentContent: FULL_HEADER_FASTA, treeContent: BIONJ_START_TREE,
+      reportContent: BLANK_LINE_CRLF_REPORT, iqtreeJobId: IQ_JOB_ID,
+      iqtreeJobOutputs: IQ_OUTPUTS, iqtreeOutputs: IQ_OUTPUTS }
+  });
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(body.tree_newick, FINAL_ML_TREE, "the blank-line-separated newick is the displayed tree");
+  assert.equal(body.tree_source, "iqtree_report_final_tree");
+  assert.equal(body.resume_iqtree.final_tree_present, true);
+  assert.equal(body.resume_iqtree.model, "TPM3u+F+I");
+  assert.equal(body.resume_iqtree.log_likelihood, -2197.612);
+  assert.match(body.resume_iqtree.rooting_note, /UNROOTED/);
+  assert.equal(stub.calls.filter((call) => call.method === "POST"
+    && call.url.includes("/api/tools") && !call.url.includes("/fetch")).length, 0, "zero tool submissions");
+});
+
+test("FIXTURE: MaxLikelihood tree beats BIONJ tree when no report tree exists", async (t) => {
+  const providerHistoryId = "11ac94870d0bb33acbeba775a07e014e";
+  const providerHistory = { id: providerHistoryId, artifacts: [
+    { id: FIX.mafftHda, uuid: FIX.mafftUuid, name: "MAFFT on data 1", extension: "fasta",
+      state: "ok", history_id: providerHistoryId, deleted: false },
+    { id: BIONJ_HDA, name: "IQ-TREE on dataset 1: BIONJ Tree", extension: "nwk",
+      state: "ok", history_id: providerHistoryId, deleted: false },
+    { id: MAXLIKELIHOOD_HDA, name: "IQ-TREE on dataset 1: MaxLikelihood Tree", extension: "nwk",
+      state: "ok", history_id: providerHistoryId, deleted: false },
+    { id: FIX.reportHda, name: "IQ-TREE on dataset 1", extension: "iqtree",
+      state: "ok", history_id: providerHistoryId, deleted: false },
+    { id: FIX.logHda, name: "IQ-TREE on dataset 1: log", extension: "log",
+      state: "ok", history_id: providerHistoryId, deleted: false }
+  ] };
+  const iqOutputs = {
+    bionj: { id: BIONJ_HDA, name: "IQ-TREE on dataset 1: BIONJ Tree", state: "ok",
+      extension: "nwk", history_id: providerHistoryId },
+    maxlikelihood: { id: MAXLIKELIHOOD_HDA, name: "IQ-TREE on dataset 1: MaxLikelihood Tree", state: "ok",
+      extension: "nwk", history_id: providerHistoryId },
+    report: { id: FIX.reportHda, name: "IQ-TREE on dataset 1", state: "ok",
+      extension: "iqtree", history_id: providerHistoryId },
+    log: { id: FIX.logHda, name: "IQ-TREE on dataset 1: log", state: "ok",
+      extension: "log", history_id: providerHistoryId }
+  };
+  const { response, body, stub } = await runWorkflow(t, {
+    payload: { resume_provider_job_id: FIX.providerJobId, history_id: FIX.historyId,
+      resume_iqtree_provider_job_id: IQ_JOB_ID },
+    stubOptions: { alignmentContent: FULL_HEADER_FASTA, reportContent: NO_TREE_REPORT,
+      providerHistory, iqtreeJobId: IQ_JOB_ID, iqtreeJobOutputs: iqOutputs, iqtreeOutputs: iqOutputs,
+      extraDatasetText: { [BIONJ_HDA]: BIONJ_TREE, [MAXLIKELIHOOD_HDA]: FINAL_ML_TREE } }
+  });
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(body.workflow_completed, true);
+  assert.equal(body.tree_newick, FINAL_ML_TREE, "MaxLikelihood artifact is displayed");
+  assert.equal(body.tree_source, "downloaded_treefile");
+  assert.equal(body.resume_iqtree.final_tree_present, false);
+  const bionj = body.tree_artifacts.find((artifact) => artifact.dataset_id === BIONJ_HDA);
+  const maxLike = body.tree_artifacts.find((artifact) => artifact.dataset_id === MAXLIKELIHOOD_HDA);
+  assert.ok(bionj && maxLike, JSON.stringify(body.tree_artifacts));
+  assert.equal(bionj.source_role, "starting_tree_not_displayed");
+  assert.equal(maxLike.source_role, "displayed_tree");
+  assert.match(bionj.checksum, /^[0-9a-f]{64}$/);
+  assert.equal(stub.calls.filter((call) => call.method === "POST"
+    && call.url.includes("/api/tools") && !call.url.includes("/fetch")).length, 0, "zero tool submissions");
+});
+
 test("FIXTURE: long genuine report parses its final tree from FULL content", async (t) => {
   const { response, body, stub } = await runWorkflow(t, {
     payload: { resume_provider_job_id: FIX.providerJobId, history_id: FIX.historyId,
@@ -942,7 +1025,8 @@ test("FIXTURE: unparseable report tree falls back to labelled downloaded treefil
   assert.equal(body.resume_iqtree.model, "TPM3u+F+I", "no model value is invented on fallback");
   assert.equal(body.resume_iqtree.log_likelihood, -2197.612);
   assert.ok(body.tree_artifacts.length >= 1);
-  assert.ok(body.tree_artifacts.every((artifact) => artifact.source_role === "starting_tree_not_displayed"));
+  assert.equal(body.tree_artifacts.find((artifact) => artifact.dataset_id === FIX.treeHda)?.source_role,
+    "displayed_tree", "the fallback treefile is explicitly labelled as displayed");
   assert.equal(stub.calls.filter((call) => call.method === "POST"
     && call.url.includes("/api/tools") && !call.url.includes("/fetch")).length, 0, "zero tool submissions");
 });
@@ -968,13 +1052,13 @@ test("FIXTURE: an unavailable recovered tree artifact is never fabricated", asyn
   // downloaded. Nothing may be invented as a Newick tree.
   const missingTreeHda = "dddddddd9999aaaa8888bbbb7777cccc";
   const iqtreeHistory = { id: FIX.otherHistoryId, artifacts: [
-    { id: missingTreeHda, name: "IQ-TREE treefile", extension: "nwk", state: "ok",
+    { id: missingTreeHda, name: "IQ-TREE on dataset 1: MaxLikelihood Tree", extension: "nwk", state: "ok",
       history_id: FIX.otherHistoryId, deleted: false },
     { id: FIX.reportHda, name: "IQ-TREE on data 2", extension: "iqtree", state: "ok",
       history_id: FIX.otherHistoryId, deleted: false }
   ] };
   const iqOutputs = {
-    output_treefile: { id: missingTreeHda, name: "IQ-TREE treefile", state: "ok",
+    output_treefile: { id: missingTreeHda, name: "IQ-TREE on dataset 1: MaxLikelihood Tree", state: "ok",
       extension: "nwk", history_id: FIX.otherHistoryId },
     output_report: { id: FIX.reportHda, name: "IQ-TREE on data 2", state: "ok",
       extension: "iqtree", history_id: FIX.otherHistoryId }
