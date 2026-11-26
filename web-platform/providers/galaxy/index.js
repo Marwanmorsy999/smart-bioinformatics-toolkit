@@ -61,6 +61,7 @@ import {
   asArray, asObject, failure, jobIdFrom, joinUrl, makeId, makeNow, mapState,
   normalizeCallArgs, pick, requestJson, safeId, safeString
 } from "../common/normalize.js";
+import { parseJobOutputs } from "./galaxy_ids.js";
 
 const PROVIDER = "galaxy";
 
@@ -597,6 +598,45 @@ export function createAdapter(env = {}, deps = {}) {
         return result;
       } catch (error) {
         return { ...failure(PROVIDER, error, at), provider_job_id: jobId, status: JOB_STATUS.UNKNOWN };
+      }
+    },
+
+    // READ-ONLY recovery of an existing job's output associations. This never
+    // submits, cancels or mutates a job, and the API key stays in the request
+    // header only. Kept off the advertised operation list (like downloadArtifact)
+    // because it is an internal resolution helper, not a user-facing capability.
+    // GET /api/jobs/{id}/outputs -> output-name keyed objects with
+    // {id, dataset_id, uuid, name, state, extension, history_id}.
+    async getJobOutputs(request = {}, ctx = {}) {
+      const args = normalizeCallArgs(request, ctx);
+      request = args.request;
+      ctx = args.ctx;
+      const jobId = jobIdFrom(request);
+      const at = makeNow(ctx);
+      if (!jobId) {
+        return { ...failure(PROVIDER, Object.assign(new Error("job_id_required"), {
+          code: "validation_error", status: 400, retryable: false
+        }), at), provider: PROVIDER, provider_job_id: null, ok: false, outputs: [], at };
+      }
+      try {
+        const { body } = await call("GET", `/api/jobs/${encodeURIComponent(jobId)}/outputs`, undefined, ctx);
+        const root = asObject(body);
+        const historyId = safeString(root.history_id, 200) || null;
+        const outputs = parseJobOutputs(body, { historyId }).map((item) => ({
+          id: item.galaxyHdaId,
+          hda_id: item.galaxyHdaId,
+          uuid: item.galaxyDatasetUuid,
+          dataset_id: item.galaxyDatasetId,
+          name: item.name ?? null,
+          state: item.state ?? null,
+          extension: item.extension ?? null,
+          history_id: item.historyId || null,
+          valid: item.valid,
+          error: item.error ?? null
+        }));
+        return { provider: PROVIDER, provider_job_id: jobId, ok: true, outputs, at };
+      } catch (error) {
+        return { ...failure(PROVIDER, error, at), provider: PROVIDER, provider_job_id: jobId, ok: false, outputs: [], at };
       }
     },
 

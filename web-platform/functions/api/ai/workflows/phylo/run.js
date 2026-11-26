@@ -25,13 +25,12 @@ import {
   sanitizeFilename,
   safeString
 } from "../../_lib.js";
-import { validateFasta } from "../../../blast/_lib.js";
 import { createAdapter } from "../../../../../providers/galaxy/index.js";
 import { findPhyloTools } from "../../../../../providers/galaxy/galaxy_phylo.js";
 import { fetchToolSchema, buildSchemaPayload } from "../../../../../providers/galaxy/galaxy_schema.js";
 import { classifyJobState } from "../../../../../providers/galaxy/galaxy_ids.js";
 import { deriveOwner } from "../../../workspace/_lib.js";
-import { validateAlignment, validateTree, parseNewick } from "./validators.js";
+import { validateAlignment, validateInputFasta, validateTree, parseNewick } from "./validators.js";
 
 const STEP_IDS = Object.freeze([
   "upload_input", "galaxy_mafft", "galaxy_iqtree", "retrieve_outputs",
@@ -126,26 +125,101 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
   const fasta = String(payload?.fasta_text ?? "");
   const filename = sanitizeFilename(payload?.filename ?? "phylo.fasta");
   const objective = safeString(payload?.objective, 2000);
-  const resumeId = safeString(payload?.resume_alignment_dataset_id, 200);
+  let resumeId = safeString(payload?.resume_alignment_dataset_id, 200);
   const resumeHistoryId = safeString(payload?.history_id, 200);
+  const resumeProviderJobId = safeString(payload?.resume_provider_job_id, 200);
   const outgroup = safeString(payload?.outgroup, 200);
-  const checked = validateFasta(fasta);
-  if (!checked.valid) return errorResponse(`Invalid multi-FASTA: ${checked.error}`, 400, request);
-  const inputCheck = validateAlignment(fasta);
+  // Raw homologous 16S sequences are legitimately unequal-length BEFORE MAFFT.
+  // Equal length is required only for the retrieved MAFFT alignment.
+  const inputCheck = validateInputFasta(fasta);
   if (!inputCheck.valid || inputCheck.records < 3) {
-    return errorResponse("Provide at least three distinct, equal-length homologous sequences.", 400, request);
+    return errorResponse("Provide at least three distinct, non-empty DNA/IUPAC sequences. Unequal lengths are expected before alignment.", 400, request);
   }
   const db = getDb(env);
   if (!db) return errorResponse("AI database binding is unavailable.", 503, request);
+
+  const ctx = fetchImpl ? { fetch: fetchImpl } : {};
+  const adapter = createAdapter(env);
+
+  // OPTIONAL RECOVERY — resume from a real, already-succeeded Galaxy MAFFT job.
+  // Every call here is READ-ONLY: no job is submitted, cancelled or fabricated.
+  const resumeByJobId = Boolean(resumeProviderJobId && !resumeId);
+  let resumedJobState = null;
+  let resumedOutputUuid = null;
+  let resumedAlignmentChecksum = null;
+  let resolvedResumeHistoryId = null;
+  let resumedMafftRecord = null;
+
+  function resumeError(message, errorCode, status = 409, extra = {}) {
+    return jsonResponse({
+      error: message,
+      error_code: errorCode,
+      provider_job_id: resumeProviderJobId,
+      provider_job_state: resumedJobState,
+      provider_job_state_class: extra.state_class ?? null,
+      resumed_from_provider_job: false,
+      workflow_completed: false,
+      execution_mode: envExecutionMode(env),
+      ...extra
+    }, status, request);
+  }
+
+  if (resumeByJobId) {
+    const status = await adapter.getJobStatus({ job_id: resumeProviderJobId }, ctx);
+    resumedJobState = String(status.output?.structured?.state ?? status.status ?? "") || null;
+    const classified = classifyJobState(resumedJobState);
+    if (classified !== "succeeded") {
+      return resumeError(
+        `Provider job ${resumeProviderJobId} is in state '${resumedJobState ?? "unknown"}'; it has not succeeded. No job was submitted and no result was created.`,
+        "provider_job_not_succeeded", 409, { state_class: classified });
+    }
+    if (!resumeHistoryId) {
+      return resumeError("resume by provider job id requires the history_id returned by the original run",
+        "resume_history_required", 400);
+    }
+    const jobOutputs = await adapter.getJobOutputs({ job_id: resumeProviderJobId }, ctx);
+    if (!jobOutputs.ok) {
+      return resumeError(`Provider job outputs could not be read: ${jobOutputs.error?.message ?? jobOutputs.error?.code ?? "unavailable"}`,
+        "provider_job_outputs_unavailable", 502);
+    }
+    // The uploaded input dataset is NEVER an alignment output. Identify it by
+    // the uploaded filename and any history HDA carrying that name, then reject
+    // it from the candidate set by id/name.
+    const historyContents = await adapter.getArtifacts({ history_id: resumeHistoryId }, ctx);
+    const inputNames = new Set([filename, sanitizeFilename(filename)].filter(Boolean));
+    const inputIds = new Set((historyContents.artifacts ?? [])
+      .filter((item) => inputNames.has(String(item.name ?? "")))
+      .map((item) => String(item.id)));
+    const fastaExts = new Set(["fasta", "fa", "fna", "fas", "aln", "msa"]);
+    const candidates = (jobOutputs.outputs ?? []).filter((item) => {
+      const ext = String(item.extension ?? "").trim().replace(/^\./, "").toLowerCase();
+      const name = String(item.name ?? "");
+      const alignmentLike = fastaExts.has(ext) || /alignment|aligned|\bmsa\b|mafft/i.test(name);
+      const okState = ["ok", "success"].includes(String(item.state ?? "").toLowerCase());
+      const notInput = !inputIds.has(String(item.id)) && !inputNames.has(name);
+      return item.valid !== false && okState && alignmentLike && notInput;
+    });
+    const selected = candidates.find((item) => !item.history_id || String(item.history_id) === String(resumeHistoryId));
+    if (!selected) {
+      const mismatch = candidates.length > 0;
+      return resumeError(
+        mismatch
+          ? `No succeeded FASTA alignment output from provider job ${resumeProviderJobId} belongs to history ${resumeHistoryId}.`
+          : `Provider job ${resumeProviderJobId} has no succeeded FASTA alignment output that is not the uploaded input.`,
+        mismatch ? "resume_history_membership_mismatch" : "no_usable_alignment_output", 409);
+    }
+    // Resolve to the REAL HDA id; the existing fixed resume path then uses it
+    // for IQ-TREE and for display, with no second MAFFT submission.
+    resumeId = selected.id;
+    resolvedResumeHistoryId = String(selected.history_id ?? resumeHistoryId);
+    resumedOutputUuid = selected.uuid ?? null;
+  }
 
   const createdAt = nowIso(now);
   const planId = makeId("plan", idFactory);
   const runId = makeId("run", idFactory);
   const datasetId = makeId("ds", idFactory);
   const inputHash = await hashInput(fasta);
-  const ctx = fetchImpl ? { fetch: fetchImpl } : {};
-
-  const adapter = createAdapter(env);
   const capabilities = await adapter.getCapabilities(ctx);
   const tools = findPhyloTools(capabilities.tools ?? []);
   const toolMap = {
@@ -234,9 +308,12 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
       readyId = match.id;
       historyId = String(match.history_id ?? resumeHistoryId);
       await recordStep("upload_input", "upload1", null, "succeeded", createdAt, nowIso(now), { resumed: true });
-      await recordStep("galaxy_mafft", tools.mafft.id, null, "succeeded", createdAt, nowIso(now),
+      await recordStep("galaxy_mafft", tools.mafft.id, resumeByJobId ? resumeProviderJobId : null, "succeeded", createdAt, nowIso(now),
         { resumed: true, dataset_id: readyId, history_id: historyId, tool_version: tools.mafft.version,
-          tool_id: tools.mafft.id, discovery_mode: toolVersions.discovery_mode });
+          tool_id: tools.mafft.id, discovery_mode: toolVersions.discovery_mode,
+          provider_job_state: resumedJobState, output_uuid: resumedOutputUuid,
+          alignment_checksum: resumedAlignmentChecksum, resumed_from_provider_job: resumeByJobId });
+      if (resumeByJobId) resumedMafftRecord = provenance[provenance.length - 1];
     } else {
       const upload = await adapter.submitJob({
         operation: "submit_job", tool_id: "upload1",
@@ -352,6 +429,10 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
           retrievalErrors.push({ dataset_id: item.id, name: item.name, reason: check.error ?? "alignment_has_fewer_than_two_records" });
         } else {
           alignmentText = downloaded.content;
+          if (resumeByJobId && item.id === readyId) {
+            resumedAlignmentChecksum = await hashInput(downloaded.content);
+            if (resumedMafftRecord) resumedMafftRecord.alignment_checksum = resumedAlignmentChecksum;
+          }
         }
       }
       if (kind === "tree" && item.id === selected.tree?.id) {
@@ -400,6 +481,8 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
   await recordStep("validate_tree", "phylogenetics.tree", null, tree.valid ? "succeeded" : "failed",
     createdAt, nowIso(now), { validation: { taxa: tree.taxa, missing: tree.missing, unknown: tree.unknown,
       duplicates: tree.duplicates, branch_lengths: tree.branch_lengths, rooting: tree.rooting } });
+  // Never emit `/api/ai/jobs/undefined/report`: a run that failed before any
+  // provider job was recorded has no report endpoint (null), not a fake id.
   const jobReportId = jobIds.galaxy_iqtree ?? jobIds.galaxy_mafft ?? null;
   await recordStep("generate_report", "phylogenetics.report", null,
     failed ? "skipped_due_to_failure" : "succeeded", createdAt, nowIso(now),
@@ -445,6 +528,17 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
       files: retrievedFiles, errors: retrievalErrors,
       classification: "name_extension_and_output_mapping" },
     workflow_completed: validation.status === "pass",
+    // Recovery provenance: the ORIGINAL provider job and its real, observed
+    // state/output — never a resubmitted MAFFT job or an invented identifier.
+    resume: resumeByJobId ? {
+      provider_job_id: resumeProviderJobId,
+      provider_job_state: resumedJobState,
+      alignment_hda_id: resumeId,
+      output_uuid: resumedOutputUuid,
+      alignment_checksum: resumedAlignmentChecksum,
+      history_id: resolvedResumeHistoryId ?? historyId,
+      resumed_from_provider_job: true
+    } : null,
     reopen: {
       ai_run_id: aiRunJobId,
       ai_run_url: aiRunJobId ? `/api/ai/runs/${aiRunJobId}` : null,
