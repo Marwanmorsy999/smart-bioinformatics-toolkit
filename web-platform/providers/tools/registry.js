@@ -42,7 +42,11 @@ const TOOL_ENTRY_POINTS = Object.freeze({
   "protein.validate": Object.freeze({ label: "Open protein annotation", href: "protein.html" }),
   "protein.annotate": Object.freeze({ label: "Open protein annotation", href: "protein.html" }),
   "protein.get_result": Object.freeze({ label: "Open research history", href: "history.html" }),
-  "protein.get_domain_details": Object.freeze({ label: "Open research history", href: "history.html" })
+  "protein.get_domain_details": Object.freeze({ label: "Open research history", href: "history.html" }),
+  "microbiome.validate": Object.freeze({ label: "Open microbiome workflow", href: "microbiome.html" }),
+  "microbiome.annotate": Object.freeze({ label: "Open microbiome workflow", href: "microbiome.html" }),
+  "microbiome.run": Object.freeze({ label: "Open microbiome workflow", href: "microbiome.html" }),
+  "microbiome.get_result": Object.freeze({ label: "Open research history", href: "history.html" })
 });
 
 // Paraphrases of the generated descriptions only. No scientific claim is added.
@@ -60,7 +64,11 @@ const TOOL_PURPOSES = Object.freeze({
   "protein.validate": "Validate protein FASTA/accession input and compute the EBI-style uppercase-ASCII MD5.",
   "protein.annotate": "Retrieve genuine InterPro evidence for a protein (precomputed matches or an executed job).",
   "protein.get_result": "Read a stored protein annotation result without re-submitting to a provider.",
-  "protein.get_domain_details": "Inspect a stored protein domain, family or site with its genuine coordinates and evidence."
+  "protein.get_domain_details": "Inspect a stored protein domain, family or site with its genuine coordinates and evidence.",
+  "microbiome.validate": "Validate multiplexed 16S FASTQ reads, barcodes and sample metadata before any workflow is submitted.",
+  "microbiome.annotate": "Review the live-discovered multi-sample 16S workflow plan and classifier provenance without submitting a job from chat.",
+  "microbiome.run": "Alias of microbiome.annotate; calls never submit a Galaxy workflow.",
+  "microbiome.get_result": "Read a stored 16S microbiome workflow result without re-submitting to a provider."
 });
 
 const copy = (value) => JSON.parse(JSON.stringify(value ?? null));

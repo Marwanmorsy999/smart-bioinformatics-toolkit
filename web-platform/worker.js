@@ -15,6 +15,10 @@ import { onRequest as onAiJobResult } from "./functions/api/ai/jobs/[id]/result.
 import { onRequest as onPhyloRun } from "./functions/api/ai/workflows/phylo/run.js";
 import { onRequest as onPhyloStatus } from "./functions/api/ai/workflows/phylo/status.js";
 import { onRequest as onPhyloTool } from "./functions/api/ai/workflows/phylo/tool.js";
+import { onRequest as onMicrobiomePlan } from "./functions/api/ai/workflows/microbiome/plan.js";
+import { onRequest as onMicrobiomeRun } from "./functions/api/ai/workflows/microbiome/run.js";
+import { onRequest as onMicrobiomeStatus } from "./functions/api/ai/workflows/microbiome/status.js";
+import { onRequest as onMicrobiomeResult } from "./functions/api/ai/workflows/microbiome/result.js";
 import {
   proteinHandlers as createProteinHandlers
 } from "./functions/api/protein/workflow.js";
@@ -82,6 +86,10 @@ export const handlers = {
   phyloRun: onPhyloRun,
   phyloStatus: onPhyloStatus,
   phyloTool: onPhyloTool,
+  microbiomePlan: onMicrobiomePlan,
+  microbiomeRun: onMicrobiomeRun,
+  microbiomeStatus: onMicrobiomeStatus,
+  microbiomeResult: onMicrobiomeResult,
   proteinPlan: PROTEIN_HANDLERS.proteinPlan,
   proteinAnnotate: PROTEIN_HANDLERS.proteinAnnotate,
   proteinStatus: PROTEIN_HANDLERS.proteinStatus,
@@ -198,6 +206,12 @@ const ROUTES = [
   { key: "proteinStatus", re: /^\/api\/ai\/workflows\/protein\/status\/?$/, names: [] },
   { key: "proteinResult", re: /^\/api\/ai\/workflows\/protein\/result\/?$/, names: [] },
   { key: "proteinDomains", re: /^\/api\/ai\/workflows\/protein\/domains\/?$/, names: [] },
+  // M7.14 microbiome routes. Specific static paths precede every generic AI
+  // run/plan path so no /api/** request can fall through to a static asset.
+  { key: "microbiomePlan", re: /^\/api\/ai\/workflows\/microbiome\/plan\/?$/, names: [] },
+  { key: "microbiomeRun", re: /^\/api\/ai\/workflows\/microbiome\/run\/?$/, names: [] },
+  { key: "microbiomeStatus", re: /^\/api\/ai\/workflows\/microbiome\/status\/?$/, names: [] },
+  { key: "microbiomeResult", re: /^\/api\/ai\/workflows\/microbiome\/result\/?$/, names: [] },
   { key: "phyloTool", re: /^\/api\/ai\/workflows\/phylo\/tool\/?$/, names: [] },
   { key: "phyloStatus", re: /^\/api\/ai\/workflows\/phylo\/status\/?$/, names: [] },
   { key: "phyloRun", re: /^\/api\/ai\/workflows\/phylo\/run\/?$/, names: [] },

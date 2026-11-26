@@ -1,0 +1,6 @@
+#SampleID	PC1	PC2
+sampleA	-0.42	0.21
+sampleB	0.31	-0.18
+sampleC	0.11	-0.03
+# PC1 explains 62.0% of variance
+# PC2 explains 25.0% of variance

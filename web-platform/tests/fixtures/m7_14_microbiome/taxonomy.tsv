@@ -1,0 +1,4 @@
+Feature ID	Taxon	Confidence
+asv1	k__Bacteria; p__Firmicutes; g__Lactobacillus	0.98
+asv2	k__Bacteria; p__Bacteroidetes; g__Bacteroides	0.95
+asv3	Unassigned	0.50

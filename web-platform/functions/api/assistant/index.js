@@ -82,7 +82,8 @@ phylogenetics.validate, phylogenetics.align, phylogenetics.tree,
 phylogenetics.report, phylogenetics.workflow, sequence-stats.validate,
 sequence-stats.profile, microbiome-16s.blast-parse,
 microbiome-16s.taxonomy, ncbi.blastn, protein.validate, protein.annotate,
-protein.get_result, protein.get_domain_details.
+protein.get_result, protein.get_domain_details, microbiome.validate,
+microbiome.annotate, microbiome.run, microbiome.get_result.
 Use no other tool id. If a needed capability is absent, say it is unavailable
 rather than naming a plausible-sounding nonexistent tool.
 
@@ -115,6 +116,8 @@ const TOOL_USE_GUIDANCE = `TOOL USE (server-side guidance; the browser cannot ch
 - ncbi.blastn and every external or approval-gated capability are NOT executable from this chat. You may describe them as catalog capabilities, but any use requires the existing plan approval UI and an explicit, scoped, single-use consent token. Never claim to have executed, approved or consented to them.
 - protein.validate/get_result/get_domain_details read or validate genuine records; protein.annotate may read precomputed InterPro Matches evidence only, but calling it PERSISTS a run record in the server-side AI D1 (a write side-effect). Executed InterProScan 6 jobs require the explicit Protein annotation page action and a configured server-side contact email; never claim one ran from chat.
 - InterPro route labels are distinct: precomputed_reference_annotation is NOT an executed analysis. Member database releases come from source responses; no InterPro release version or job id may be guessed.
+- microbiome.validate reads/validates a 16S FASTQ + metadata pair; microbiome.annotate and its alias microbiome.run only REVIEW the live-discovered workflow plan. Chat never submits a Galaxy workflow: an executed 16S run requires the explicit approval gate on the Microbiome page. microbiome.get_result reads a stored run only.
+- Microbiome taxonomy is reported exactly as the discovered live classifier option is labelled; no SILVA release or identifier may be guessed. Relative abundance comes only from retrieved feature-table counts and unclassified reads are retained. No significance claim is made.
 - If a requested value was not returned by a tool, say you cannot determine it. Do not fill gaps with plausible-sounding values.`;
 
 class AssistantError extends Error {

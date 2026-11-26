@@ -82,7 +82,8 @@ test("tool definitions come only from the registry and stay within the allowlist
   const definitions = getAssistantToolDefinitions();
   assert.deepEqual(definitions.map((item) => item.function.name), [
     "sequence-stats.validate", "sequence-stats.profile",
-    "protein.validate", "protein.annotate", "protein.get_result", "protein.get_domain_details"
+    "protein.validate", "protein.annotate", "protein.get_result", "protein.get_domain_details",
+    "microbiome.validate", "microbiome.annotate", "microbiome.run", "microbiome.get_result"
   ]);
   // The strict wire-shape assertions stay on the two long-standing tools; the
   // four M7.13 protein manifests are asserted in m7_13_protein_tool.test.mjs.

@@ -237,7 +237,8 @@ test("outgoing request uses the exact /v1 URL, env-only bearer key and server to
   assert.equal(outgoing.messages.at(-1).content, "Plan a QC step");
   assert.deepEqual(outgoing.tools.map((tool) => tool.function.name), [
     "sequence-stats.validate", "sequence-stats.profile",
-    "protein.validate", "protein.annotate", "protein.get_result", "protein.get_domain_details"
+    "protein.validate", "protein.annotate", "protein.get_result", "protein.get_domain_details",
+    "microbiome.validate", "microbiome.annotate", "microbiome.run", "microbiome.get_result"
   ]);
   assert.equal(outgoing.tool_choice, "auto");
   assert.equal(Object.hasOwn(outgoing, "api_key"), false);
@@ -399,7 +400,8 @@ test("reported usage is never invented when the provider omits it", async () => 
 test("tool definitions expose the allowlisted registry functions", async () => {
   assert.deepEqual(getAssistantToolDefinitions().map((item) => item.function.name), [
     "sequence-stats.validate", "sequence-stats.profile",
-    "protein.validate", "protein.annotate", "protein.get_result", "protein.get_domain_details"
+    "protein.validate", "protein.annotate", "protein.get_result", "protein.get_domain_details",
+    "microbiome.validate", "microbiome.annotate", "microbiome.run", "microbiome.get_result"
   ]);
   for (const name of ["unknown.tool", "phylogenetics.tree", "microbiome-16s.taxonomy", "ncbi.blastn"]) {
     assert.equal((await executeTool(name, {})).ok, false, name);
