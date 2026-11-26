@@ -63,7 +63,9 @@ export function classifyPhyloArtifact(artifact = {}) {
 // Pure, evidence-only parser for a GENUINE IQ-TREE report file. Every value
 // returned comes from the supplied text; absent fields stay null, never guessed.
 export function parseIqtreeReport(text) {
-  const source = String(text ?? "");
+  // Galaxy text datasets are commonly CRLF: normalize at the entry so every
+  // line-anchored pattern below works identically on CRLF and LF reports.
+  const source = String(text ?? "").replace(/\r\n?/g, "\n");
   const empty = { model: null, log_likelihood: null, support: null, support_settings: [],
     final_tree: null, rooting_note: null, available: false };
   if (!source.trim()) return empty;
@@ -99,7 +101,10 @@ export function parseIqtreeReport(text) {
   // sometimes on the following line. Both come from the FULL report text.
   const sameLineTree = capture(/(?:^|\n)[ \t]*Tree in newick format[ \t]*:[ \t]*([^\r\n]+)/i);
   const nextLineTree = capture(/(?:^|\n)[ \t]*Tree in newick format[ \t]*:[ \t]*(?:\r?\n)[ \t]*([^\r\n]+)/i);
-  const finalTree = sameLineTree || nextLineTree;
+  // Unanchored fallback: unusual indentation or a leading marker must not hide
+  // a genuine final-tree line. Only text AFTER the real label is captured.
+  const unanchoredTree = capture(/Tree in newick format[ \t]*:[ \t]*([^\r\n]+)/i);
+  const finalTree = sameLineTree || nextLineTree || unanchoredTree;
   const rootingNote = capture(/((?:^|\n)[^\n]*?NOTE:[^\r\n]*UNROOTED[^\r\n]*)/i);
   return {
     model: model ? model.slice(0, 200) : null,
