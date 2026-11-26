@@ -228,8 +228,11 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
         item.id === resumeId || item.uuid === resumeId || item.dataset_id === resumeId || item.name === resumeId
       ));
       if (!match) throw new Error("resume output association unavailable: no HDA matching the reference in verified history contents");
+      if (match.history_id && String(match.history_id) !== String(resumeHistoryId)) {
+        throw new Error("resume output association unavailable: history membership mismatch");
+      }
       readyId = match.id;
-      historyId = match.history_id ?? resumeHistoryId;
+      historyId = String(match.history_id ?? resumeHistoryId);
       await recordStep("upload_input", "upload1", null, "succeeded", createdAt, nowIso(now), { resumed: true });
       await recordStep("galaxy_mafft", tools.mafft.id, null, "succeeded", createdAt, nowIso(now),
         { resumed: true, dataset_id: readyId, history_id: historyId, tool_version: tools.mafft.version,
@@ -271,8 +274,20 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
 
     // Step 3 — IQ-TREE phylogenetic inference from the REAL MAFFT alignment.
     const alignmentArtifacts = await adapter.getArtifacts({ history_id: historyId }, ctx);
-    const alignmentCandidates = (alignmentArtifacts.artifacts ?? []).filter((item) => item.id !== uploadedHdaId);
-    const alignmentDataset = selectPhyloArtifacts(alignmentCandidates, mafftOutputs).alignment;
+    let alignmentDataset = null;
+    if (resumeId) {
+      // Resume is keyed by the resolved MAFFT HDA, never by a name/extension
+      // guess. A history may contain several FASTA datasets; only the HDA
+      // resolved from the original run's history is eligible.
+      const verified = (alignmentArtifacts.artifacts ?? []).find((item) => item.id === readyId);
+      if (!verified || (verified.history_id && String(verified.history_id) !== String(historyId))) {
+        throw new Error("resolved MAFFT dataset is not in the verified history");
+      }
+      alignmentDataset = verified;
+    } else {
+      const alignmentCandidates = (alignmentArtifacts.artifacts ?? []).filter((item) => item.id !== uploadedHdaId);
+      alignmentDataset = selectPhyloArtifacts(alignmentCandidates, mafftOutputs).alignment;
+    }
     if (!alignmentDataset) throw new Error("no retrieved alignment dataset available for tree inference");
     const treeSchema = await fetchToolSchema(env, tools.iqtree.id, tools.iqtree.version);
     const treePayload = buildSchemaPayload(treeSchema, alignmentDataset.id);
@@ -295,6 +310,14 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
     const finalArtifacts = await adapter.getArtifacts({ history_id: historyId }, ctx);
     const outputArtifacts = (finalArtifacts.artifacts ?? []).filter((item) => item.id !== uploadedHdaId);
     const selected = selectPhyloArtifacts(outputArtifacts, [...mafftOutputs, ...iqtreeOutputs]);
+    if (resumeId) {
+      // Keep the reported alignment identical to the HDA used for IQ-TREE.
+      const verified = outputArtifacts.find((item) => item.id === readyId);
+      if (!verified || (verified.history_id && String(verified.history_id) !== String(historyId))) {
+        throw new Error("resolved MAFFT dataset is not in the verified history");
+      }
+      selected.alignment = verified;
+    }
     const selectedIds = new Set([selected.alignment?.id, selected.tree?.id, selected.report?.id,
       ...selected.logs.map((item) => item.id)].filter(Boolean));
     let ordinal = 0;
@@ -306,18 +329,21 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
       const sourceStep = [...mafftOutputs, ...iqtreeOutputs].find((entry) => entry.id === item.id)?.step ?? null;
       const toolVersion = sourceStep === "galaxy_mafft" ? tools.mafft.version
         : sourceStep === "galaxy_iqtree" ? tools.iqtree.version : null;
-      const retrievedAt = nowIso(now + ordinal);
+      // One honest batch timestamp: the Worker did not observe distinct times
+      // per dataset, so none are claimed. `retrieval_order` is deterministic.
+      const retrievedAt = retrievalStartedAt;
       if (!downloaded.ok || typeof downloaded.content !== "string") {
         retrievalErrors.push({ dataset_id: item.id, name: item.name, reason: "content_unavailable" });
         continue;
       }
+      const bytes = new TextEncoder().encode(downloaded.content).length;
       retrievedFiles.push({ dataset_id: item.id, hda_id: item.id, name: item.name, kind,
-        extension: item.type ?? null, retrieved_at: retrievedAt, tool_version: toolVersion,
-        source_step: sourceStep, bytes: downloaded.content.length });
+        extension: item.type ?? null, retrieved_at: retrievedAt, retrieval_order: ordinal,
+        tool_version: toolVersion, source_step: sourceStep, bytes });
       // Artifact rows are keyed to the AI job id so the existing
       // GET /api/ai/runs/:jobId endpoint can reopen them.
       await insertRow(db, SQL.insertArtifact, [makeId("art", idFactory), jobIds.galaxy_iqtree ?? runId, item.name, kind,
-        `galaxy:${item.id}`, await hashInput(downloaded.content), downloaded.content.length,
+        `galaxy:${item.id}`, await hashInput(downloaded.content), bytes,
         "text/plain", downloaded.content, retrievedAt]);
 
       if (kind === "alignment" && item.id === selected.alignment?.id) {
@@ -340,7 +366,7 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
     if (!alignmentText) retrievalErrors.push({ reason: "no_valid_alignment_retrieved" });
     if (!treeText) retrievalErrors.push({ reason: "no_valid_newick_tree_retrieved" });
     await recordStep("retrieve_outputs", null, null, retrievalErrors.length ? "partial" : "succeeded",
-      retrievalStartedAt, nowIso(now + ordinal + 1),
+      retrievalStartedAt, nowIso(now),
       { dataset_ids: (finalArtifacts.artifacts ?? []).map((item) => item.id),
         files: retrievedFiles, tool_versions: toolVersions, errors: retrievalErrors,
         classification: "name_extension_and_output_mapping" });
@@ -375,8 +401,10 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
     createdAt, nowIso(now), { validation: { taxa: tree.taxa, missing: tree.missing, unknown: tree.unknown,
       duplicates: tree.duplicates, branch_lengths: tree.branch_lengths, rooting: tree.rooting } });
   const jobReportId = jobIds.galaxy_iqtree ?? jobIds.galaxy_mafft ?? null;
-  await recordStep("generate_report", "phylogenetics.report", null, "succeeded", createdAt, nowIso(now),
-    { report_endpoint: jobReportId ? `/api/ai/jobs/${jobReportId}/report` : null });
+  await recordStep("generate_report", "phylogenetics.report", null,
+    failed ? "skipped_due_to_failure" : "succeeded", createdAt, nowIso(now),
+    { report_endpoint: jobReportId ? `/api/ai/jobs/${jobReportId}/report` : null,
+      skipped_reason: failed ? "workflow_failed" : null });
   await audit(db, { actor: "phylo-worker", action: "phylo_workflow_completed", target: runId,
     detail: { plan_id: planId, dataset_id: datasetId, input_sha256: inputHash, status: validation.status }, timestamp: nowIso(now), idFactory });
 

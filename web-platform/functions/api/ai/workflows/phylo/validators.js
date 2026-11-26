@@ -38,21 +38,27 @@ function parseFastaRecords(fasta) {
 //
 // Grammar: node := label? (":" length)? | "(" node ("," node)* ")" label? (":" length)?
 // Labels may be quoted. An unquoted label may itself contain ':' (IQ-TREE writes
-// labels such as `UFboot:95` or `95/87`); the LAST colon followed by a number is
-// the branch-length separator. A non-numeric tail is retained as raw_length and
-// reported as an invalid branch length rather than silently dropped.
+// labels such as `UFboot:95`, `UFboot2:95` or `95/87`); the LAST colon followed
+// by a number is the branch-length separator unless the label is a support
+// label. A non-numeric tail is retained as raw_length and reported as an
+// invalid branch length rather than silently dropped.
 
 const SUPPORT_LABEL_PREFIX = /^(ufboot|sh-?alrt|bootstrap|support|sh|local bootstrap)$/i;
 
-function splitLabelAndLength(raw) {
+function splitLabelAndLength(raw, { internal = false } = {}) {
   const text = String(raw ?? "").trim();
   if (!text) return { name: null, rawLength: null };
   const colon = text.lastIndexOf(":");
   if (colon > 0) {
     const name = text.slice(0, colon).trim();
     const tail = text.slice(colon + 1).trim();
-    // `UFboot:95` is a support label, not a branch length, when nothing follows.
-    if (SUPPORT_LABEL_PREFIX.test(name) && NUMBER.test(tail) && Number(tail) <= 1000) {
+    const numericTail = NUMBER.test(tail) && Number(tail) <= 1000;
+    // Known prefixes are always support labels. For unrecognized prefixes on
+    // internal nodes, an integer-sized numeric tail (>= 1, e.g. `UFboot2:95`)
+    // is support-only; sub-unit tails such as `Inner:0.2` stay branch lengths.
+    const unrecognizedSupport = internal && /[A-Za-z]/.test(name)
+      && numericTail && Number(tail) >= 1;
+    if ((SUPPORT_LABEL_PREFIX.test(name) || unrecognizedSupport) && numericTail) {
       return { name: text, rawLength: null };
     }
     if (name && tail) return { name, rawLength: tail };
@@ -84,7 +90,7 @@ export function parseNewick(text) {
     }
     throw new Error("newick: unclosed quoted label");
   };
-  const parseLabelToken = () => {
+  const parseLabelToken = ({ internal = false } = {}) => {
     skipWs();
     if (pos >= s.length) return { name: null, rawLength: null };
     if (s[pos] === "'" || s[pos] === '"') {
@@ -102,7 +108,7 @@ export function parseNewick(text) {
     if ("(),;".includes(s[pos]) || s[pos] === ":") return { name: null, rawLength: null };
     const start = pos;
     while (pos < s.length && !/[\s(),;]/.test(s[pos])) pos += 1;
-    return splitLabelAndLength(s.slice(start, pos));
+    return splitLabelAndLength(s.slice(start, pos), { internal });
   };
   const parseLengthAfterLabel = () => {
     skipWs();
@@ -151,11 +157,11 @@ export function parseNewick(text) {
         if (s[pos] === ")") { eat(); break; }
         throw new Error("newick: expected ',' or ')'");
       }
-      applyLabel(node, parseLabelToken());
+      applyLabel(node, parseLabelToken({ internal: node.children.length > 0 }));
       const explicit = parseLengthAfterLabel();
       if (explicit !== null && node.raw_length === null) applyLength(node, explicit);
     } else {
-      applyLabel(node, parseLabelToken());
+      applyLabel(node, parseLabelToken({ internal: false }));
       const explicit = parseLengthAfterLabel();
       if (explicit !== null && node.raw_length === null) applyLength(node, explicit);
     }
