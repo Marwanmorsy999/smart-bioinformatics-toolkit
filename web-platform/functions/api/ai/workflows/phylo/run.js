@@ -212,8 +212,24 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
     const notUploadedInput = (id, name) => !inputIds.has(String(id ?? "")) && !inputNames.has(String(name ?? ""));
     const verifiedArtifacts = historyContents?.ok === true ? (historyContents.artifacts ?? []) : [];
 
+    // Both sources are READ-ONLY: /api/jobs/{id}/outputs and the job detail's
+    // `outputs` map parsed by getJobStatus. Dedupe by real identity; identity-less
+    // associations are kept only as diagnostics, never as fabricated candidates.
+    const statusAssociations = status.output?.structured?.output_associations ?? [];
+    const seenAssociations = new Set();
+    const associations = [...(jobOutputs.outputs ?? []), ...statusAssociations].filter((item) => {
+      const keys = [item?.galaxyHdaId ?? item?.id, item?.galaxyDatasetUuid ?? item?.uuid,
+        item?.galaxyDatasetId ?? item?.dataset_id]
+        .filter((value) => value !== null && value !== undefined && String(value) !== "")
+        .map(String);
+      if (!keys.length) return true;
+      if (keys.some((key) => seenAssociations.has(key))) return false;
+      keys.forEach((key) => seenAssociations.add(key));
+      return true;
+    });
+
     // Direct, already-valid HDA associations keep the existing selection rules.
-    const directCandidates = (jobOutputs.outputs ?? []).filter(isUsableAssociation).map((item) => ({
+    const directCandidates = associations.filter(isUsableAssociation).map((item) => ({
       id: item.id,
       uuid: item.uuid ?? null,
       dataset_id: item.dataset_id ?? null,
@@ -229,7 +245,7 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
     // identity against VERIFIED history contents and apply the same safety
     // gates; never fabricate an HDA id from an unresolved association.
     const resolvedCandidates = [];
-    for (const item of jobOutputs.outputs ?? []) {
+    for (const item of associations) {
       if (isUsableAssociation(item)) continue;
       const uuid = String(item.galaxyDatasetUuid ?? item.uuid ?? "").trim();
       const datasetId = String(item.galaxyDatasetId ?? item.dataset_id ?? "").trim();
@@ -269,7 +285,7 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
       // included even when it has no usable HDA id, so the operator can resolve
       // the dataset against the verified history contents.
       const diagnostic = mismatch ? {} : {
-        output_associations: (jobOutputs.outputs ?? []).map((item) => {
+        output_associations: associations.map((item) => {
           const hdaId = safeString(item.galaxyHdaId ?? item.hda_id ?? item.id, 200) || null;
           const datasetId = safeString(item.galaxyDatasetId ?? item.dataset_id, 200) || null;
           const uuid = safeString(item.galaxyDatasetUuid ?? item.uuid, 200) || null;
@@ -296,7 +312,11 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
           extension: safeString(artifact.type ?? artifact.extension, 100) || null,
           uuid: safeString(artifact.uuid, 200) || null
         })),
-        recovery_version: "m7111-uuid-resolution"
+        recovery_version: "m7111-uuid-resolution",
+        job_output_keys: Array.isArray(jobOutputs.output_keys) ? jobOutputs.output_keys.slice(0, 50) : [],
+        job_detail_output_keys: Array.isArray(status.output?.structured?.raw_output_keys)
+          ? status.output.structured.raw_output_keys.slice(0, 50)
+          : (Array.isArray(jobOutputs.job_detail_output_keys) ? jobOutputs.job_detail_output_keys.slice(0, 50) : [])
       };
       return resumeError(
         mismatch
