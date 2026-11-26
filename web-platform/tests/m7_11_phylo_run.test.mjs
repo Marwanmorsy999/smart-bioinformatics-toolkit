@@ -27,6 +27,7 @@ const FIX = Object.freeze({
   treeHda: "cccccccc1111dddd2222eeee3333ffff",
   reportHda: "dddddddd1111eeee2222ffff3333aaaa",
   logHda: "eeeeeeee1111ffff2222aaaa3333bbbb",
+  decoyFastaHda: "ffffffff0000aaaa1111bbbb2222cccc",
   mafftId: "toolshed.g2.bx.psu.edu/repos/rnateam/mafft/rbc_mafft/7.526+galaxy2",
   iqtreeId: "toolshed.g2.bx.psu.edu/repos/iuc/iqtree/iqtree/3.1.4+galaxy1",
   mafftVersion: "7.526+galaxy2",
@@ -39,12 +40,17 @@ function json(body, status = 200) {
 }
 
 function makeStub({ alignmentContent = ALIGNMENT, treeContent = TREE, includeAlignment = true,
-  includeTree = true, initialPhase = 0 } = {}) {
+  includeTree = true, initialPhase = 0, extraFastas = [],
+  logContent = "IQ-TREE log µ\n" } = {}) {
   const calls = [];
   let phase = initialPhase;
   const contents = () => {
     const items = [{ id: FIX.inputHda, name: "phylo.fasta", extension: "fasta", state: "ok",
       history_id: FIX.historyId, deleted: false, size: INPUT_FASTA.length }];
+    // Decoy FASTA datasets can appear earlier in the history and outrank the
+    // real MAFFT output by name; resume must still key off the resolved HDA.
+    for (const extra of extraFastas) items.push({ id: extra.id, name: extra.name, extension: "fasta",
+      state: "ok", history_id: FIX.historyId, deleted: false, size: extra.content.length });
     if (phase >= 1 && includeAlignment) items.push({ id: FIX.mafftHda, name: "MAFFT on data 1",
       uuid: FIX.datasetUuid, extension: "fasta", state: "ok", history_id: FIX.historyId,
       deleted: false, size: alignmentContent.length });
@@ -60,7 +66,8 @@ function makeStub({ alignmentContent = ALIGNMENT, treeContent = TREE, includeAli
   };
   const textById = new Map([
     [FIX.inputHda, INPUT_FASTA], [FIX.mafftHda, alignmentContent], [FIX.treeHda, treeContent],
-    [FIX.reportHda, "IQ-TREE summary\n"], [FIX.logHda, "IQ-TREE log\n"]
+    [FIX.reportHda, "IQ-TREE summary\n"], [FIX.logHda, logContent],
+    ...extraFastas.map((extra) => [extra.id, extra.content])
   ]);
   const schemaFor = (id) => ({
     inputs: [{ model_class: "Section", name: "general_options", inputs: [
@@ -176,9 +183,15 @@ test("FIXTURE run contract: stubbed MAFFT→IQ-TREE succeeds with real metrics a
   assert.equal(mafftStep.tool_version, FIX.mafftVersion);
   assert.equal(retrieval.tool_versions.iqtree, FIX.iqtreeVersion);
   assert.equal(retrieval.files.length, 4);
-  for (const file of retrieval.files) assert.match(file.retrieved_at, /^2026-11-26T12:00:00\.\d{3}Z$/);
-  assert.equal(new Set(retrieval.files.map((file) => file.retrieved_at)).size, retrieval.files.length);
+  // One honest batch timestamp; order is explicit instead of invented times.
+  assert.equal(new Set(retrieval.files.map((file) => file.retrieved_at)).size, 1);
+  assert.equal(retrieval.files[0].retrieved_at, body.retrieval.started_at);
+  assert.deepEqual(retrieval.files.map((file) => file.retrieval_order), [1, 2, 3, 4]);
   assert.ok(retrieval.files.some((file) => file.kind === "report" && file.tool_version === FIX.iqtreeVersion));
+  const logFile = retrieval.files.find((file) => file.kind === "log");
+  assert.equal(logFile.bytes, Buffer.byteLength("IQ-TREE log µ\n"), "bytes must be UTF-8 byte length");
+  assert.equal(fake.state.tables.artifacts.find((row) => row.name === "IQ-TREE log on data 2").bytes,
+    Buffer.byteLength("IQ-TREE log µ\n"));
   assert.equal(fake.state.tables.artifacts.length, 4);
   assert.equal(body.reopen.workspace_persisted, true);
   assert.equal(body.reopen.ai_run_id, body.job_ids.galaxy_iqtree);
@@ -195,6 +208,8 @@ test("FIXTURE: a missing MAFFT alignment is never turned into a fabricated tree"
   assert.equal(body.validation.alignment.valid, false);
   assert.equal(body.validation.status !== "pass", true);
   assert.match(body.error, /no retrieved alignment dataset/);
+  assert.equal(body.provenance.find((step) => step.step_id === "generate_report").status,
+    "skipped_due_to_failure");
 });
 
 test("FIXTURE: MAFFT output with too few records fails validation and is not presented", async (t) => {
@@ -216,9 +231,10 @@ test("FIXTURE: tree with wrong tips fails taxa checks while preserving real text
 });
 
 test("FIXTURE resume: UUID resolves to an HDA through the run's history_id (no undefined prior)", async (t) => {
+  const decoy = { id: FIX.decoyFastaHda, name: "MAFFT alignment on data 0", content: ">taxon_a\nAAAAAAAAAAA\n>taxon_b\nAAAAAAAAAAA\n>taxon_c\nAAAAAAAAAAA\n" };
   const { response, body } = await runWorkflow(t, {
     payload: { history_id: FIX.historyId, resume_alignment_dataset_id: FIX.datasetUuid },
-    stubOptions: { initialPhase: 2 }
+    stubOptions: { initialPhase: 2, extraFastas: [decoy] }
   });
   assert.equal(response.status, 200, JSON.stringify(body));
   assert.equal(body.provenance.find((step) => step.step_id === "upload_input").resumed, true);
@@ -227,6 +243,12 @@ test("FIXTURE resume: UUID resolves to an HDA through the run's history_id (no u
   assert.equal(mafftStep.dataset_id, FIX.mafftHda);
   assert.equal(mafftStep.history_id, FIX.historyId);
   assert.notEqual(mafftStep.dataset_id, FIX.datasetUuid);
+  // A decoy FASTA appears first in the history and matches the MAFFT name
+  // pattern; the resumed run must still use the resolved HDA for IQ-TREE.
+  const iqtreeStep = body.provenance.find((step) => step.step_id === "galaxy_iqtree");
+  assert.equal(iqtreeStep.input_dataset_id, FIX.mafftHda);
+  assert.equal(body.alignment_text, ALIGNMENT);
+  assert.equal(body.retrieval.files.some((file) => file.dataset_id === FIX.decoyFastaHda), false);
   assert.equal(body.validation.status, "pass");
 });
 

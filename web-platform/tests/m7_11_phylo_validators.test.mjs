@@ -89,6 +89,23 @@ test("FIXTURE: UFboot internal label is a support value, not a branch length", (
   assert.equal(checked.metrics.branch_length_valid, true);
 });
 
+test("FIXTURE: an unrecognized numeric-support prefix stays a support label", () => {
+  // `UFboot2` is not in the known-prefix list; `95` must not become a length.
+  const root = parseNewick("(A:0.1,B:0.2)UFboot2:95;");
+  assert.equal(root.name, "UFboot2:95");
+  assert.equal(root.length, null);
+  assert.equal(root.raw_length, null);
+  const metrics = computeTreeMetrics(root);
+  assert.equal(metrics.support_value_count, 1);
+  assert.deepEqual(metrics.support_values[0].values, [{ kind: "UFboot2", value: 95 }]);
+  assert.equal(metrics.branch_length_valid, true);
+  assert.equal(metrics.branch_lengths_complete, true);
+  // A sub-unit numeric tail is still a genuine branch length.
+  const withLength = parseNewick("(A:0.1,B:0.2)Inner:0.3;");
+  assert.equal(withLength.name, "Inner");
+  assert.equal(withLength.length, 0.3);
+});
+
 test("FIXTURE: negative and non-numeric branch lengths are invalid", () => {
   const checked = validateTree(fixture("tree_invalid_branch.nwk"), ["A", "B", "C", "D"]);
   assert.equal(checked.valid, false);
