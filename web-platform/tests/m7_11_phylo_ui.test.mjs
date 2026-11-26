@@ -201,8 +201,9 @@ test("FIXTURE UI: a run without a tree fails honestly and offers no tree export"
 
 test("FIXTURE UI: URL resume params are forwarded only after approval; no secrets are sent", async () => {
   const jobId = "4838ba20a6d8676526e1c47a033d95de";
+  const iqtreeJobId = "4838ba20a6d8676542ae6f938b169e38";
   const historyId = "11ac94870d0bb33adfdcc31d5164dd84";
-  const query = `?resume_provider_job_id=${jobId}&history_id=${historyId}&api_key=stub-secret`;
+  const query = `?resume_provider_job_id=${jobId}&resume_iqtree_provider_job_id=${iqtreeJobId}&history_id=${historyId}&api_key=stub-secret`;
   const { page, errors } = await openPage(RUN_RESPONSE, query);
   await loadFasta(page, FASTA);
   await page.click("#phylo-plan");
@@ -218,6 +219,7 @@ test("FIXTURE UI: URL resume params are forwarded only after approval; no secret
   assert.equal(runCalls.length, 1);
   const body = JSON.parse(runCalls[0].body);
   assert.equal(body.resume_provider_job_id, jobId);
+  assert.equal(body.resume_iqtree_provider_job_id, iqtreeJobId);
   assert.equal(body.history_id, historyId);
   assert.equal(body.api_key, undefined);
   assert.doesNotMatch(runCalls[0].body, /stub-secret|X-API-Key/i);

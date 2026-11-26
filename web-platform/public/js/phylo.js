@@ -28,14 +28,18 @@ let state = { fasta: "", filename: "", objective: "", validation: null, plan: nu
 // job id / history id is forwarded, never a token, key or arbitrary string.
 // These are included in the POST body only after the approval gate is passed.
 function readResumeParams() {
-  const empty = { resume_provider_job_id: null, history_id: null };
+  const empty = { resume_provider_job_id: null, resume_iqtree_provider_job_id: null, history_id: null };
   try {
     const params = new URLSearchParams(window.location.search);
     const safe = (key) => {
       const value = params.get(key);
       return value && /^[A-Za-z0-9._-]+$/.test(value) ? value.slice(0, 200) : null;
     };
-    return { resume_provider_job_id: safe("resume_provider_job_id"), history_id: safe("history_id") };
+    return {
+      resume_provider_job_id: safe("resume_provider_job_id"),
+      resume_iqtree_provider_job_id: safe("resume_iqtree_provider_job_id"),
+      history_id: safe("history_id")
+    };
   } catch {
     return empty;
   }
@@ -429,6 +433,7 @@ $("phylo-run").addEventListener("click", async () => {
       body: JSON.stringify({ fasta_text: state.fasta, filename: state.filename || "phylo.fasta",
         objective: state.objective, sequence_type: "dna",
         ...(RESUME_PARAMS.resume_provider_job_id ? { resume_provider_job_id: RESUME_PARAMS.resume_provider_job_id } : {}),
+        ...(RESUME_PARAMS.resume_iqtree_provider_job_id ? { resume_iqtree_provider_job_id: RESUME_PARAMS.resume_iqtree_provider_job_id } : {}),
         ...(RESUME_PARAMS.history_id ? { history_id: RESUME_PARAMS.history_id } : {}) })
     });
     body = await response.json();
