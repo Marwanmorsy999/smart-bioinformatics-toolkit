@@ -2,6 +2,7 @@
 // approval gate, real run response, interactive tree, metrics and downloads.
 // No illustrative tree, fixture or fabricated result is ever rendered.
 import { parseNewick, renderTree, analyzeTree } from "./phylo-tree-view.js";
+import { capturePhyloRun } from "./research-history.js";
 
 const $ = (id) => document.getElementById(id);
 if (typeof window !== "undefined") window.__phylo = { renderTree, parseNewick, analyzeTree };
@@ -345,34 +346,44 @@ function renderInterpretation(body) {
   $("phylo-interpretation").textContent = parts.join(" ");
 }
 
-async function requestAiPhrasing(body) {
+// Optional, explicit opt-in only. No chat request is made on page load or on
+// results render: the deterministic interpretation above is always shown, and
+// a 503 from any model provider must never become a console error here.
+async function requestOptionalAiPhrasing() {
   const status = $("phylo-ai-status");
   const phrase = $("phylo-ai-phrasing");
+  const button = $("phylo-ai-optin");
+  const body = state.body;
+  if (!body) return;
+  button.disabled = true;
   phrase.hidden = true;
-  status.textContent = "Requesting AI-generated phrasing of the deterministic metrics…";
+  status.textContent = "Requesting optional AI-generated phrasing through S Bio Assistant…";
   try {
     // Only deterministic metrics enter the message: no sequences, tree text,
     // run ids, provenance or model-generated findings.
     const facts = { alignment: body.metrics?.alignment ?? null, tree: body.metrics?.tree ?? null };
-    const response = await fetch("/api/providers/chat", {
+    const response = await fetch("/api/assistant/chat", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({
-        category: "explanation_evaluation",
         message: `Rephrase these deterministic workflow metrics in plain language without adding scientific claims or citations: ${JSON.stringify(facts)}`,
-        system: "You may only restate the supplied metrics. Do not infer ancestry, taxonomy or significance."
+        stream: false
       })
     });
-    if (!response.ok) throw new Error(`chat_http_${response.status}`);
+    if (!response.ok) throw new Error(`assistant_http_${response.status}`);
     const result = await response.json();
     if (!result?.reply) throw new Error("no_reply");
     status.textContent = "AI-generated phrasing — unverified, not scientific evidence:";
     phrase.textContent = result.reply;
     phrase.hidden = false;
-  } catch {
-    status.textContent = "AI phrasing is unavailable. The deterministic metrics and evidence-based interpretation above remain the record.";
+  } catch (error) {
+    status.textContent = `AI phrasing is unavailable (${error?.message ?? error}). The deterministic metrics and evidence-based interpretation above remain the record.`;
+  } finally {
+    button.disabled = false;
   }
 }
+
+$("phylo-ai-optin")?.addEventListener("click", () => { requestOptionalAiPhrasing(); });
 
 function renderDownloads(body, view) {
   const list = $("phylo-downloads");
@@ -460,6 +471,13 @@ $("phylo-run").addEventListener("click", async () => {
     return;
   }
   state.body = body;
+  // Store only genuine run metadata in the browser-local research history.
+  // Server storage is authoritative; a storage failure must not break results.
+  try {
+    capturePhyloRun(body, { objective: state.objective, sequence_ids: state.validation?.names ?? [] });
+  } catch {
+    // No browser storage available: the run record remains on the server.
+  }
   renderProgress(body.provenance ?? []);
   const pass = body.validation?.status === "pass" || body.validation?.status === "pass_with_warnings";
   const completed = body.workflow_completed === true && pass;
@@ -500,5 +518,7 @@ $("phylo-run").addEventListener("click", async () => {
   }
   renderDownloads(body, state.treeView);
   renderReopen(body);
-  requestAiPhrasing(body);
+  $("phylo-ai-optin").hidden = false;
+  $("phylo-ai-status").textContent = "AI-generated phrasing: not requested. The deterministic interpretation above is always shown.";
+  $("phylo-ai-phrasing").hidden = true;
 });

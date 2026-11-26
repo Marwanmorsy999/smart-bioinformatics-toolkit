@@ -5,6 +5,7 @@
 import { validateFasta, parseFasta } from "./fasta.js";
 import { parseBlast, analyzeBlast, queryLengthsFromFasta } from "./blast.js";
 import { analyzeTaxonomy } from "./taxonomy.js";
+import { capture16sRun } from "./research-history.js";
 import {
   alignmentTsv,
   buildInterpretation,
@@ -412,6 +413,17 @@ ui.approve.addEventListener("click", async () => {
       throw new Error("No BLAST consent token was issued. Nothing was submitted.");
     }
     state.consent = data.blast_consent;
+    // Store only the genuine approval-created run id and short identifiers.
+    // If the approval response has no job_ id, nothing is written.
+    try {
+      capture16sRun(data, {
+        objective: ui.objective.value.trim(),
+        plan_id: state.planId,
+        sequence_ids: parseFasta(fasta).records.map((record) => record.id)
+      });
+    } catch {
+      // Browser storage is optional; the AI-run record remains on the server.
+    }
     ui.consent.replaceChildren();
     ui.consent.hidden = false;
     ui.consent.append(element("h3", "", "Consent issued (token value intentionally not displayed)"));

@@ -72,7 +72,7 @@ async function openPage(runResponse = RUN_RESPONSE, query = "") {
         ] } });
       }
       if (url.includes("/api/ai/workflows/phylo/run")) return json(window.__fixtureRun);
-      if (url.includes("/api/providers/chat")) {
+      if (url.includes("/api/assistant/chat")) {
         return json({ reply: "Fixture-only phrasing: three taxa, one support label.", evidence_status: "unverified" });
       }
       if (url.includes("/api/ai/runs/")) return json({ run_id: "job_0000000000000003",
@@ -160,14 +160,23 @@ test("FIXTURE UI: real tree rendering, metrics, highlights, exports and honest A
   assert.ok(downloads[1].includes("<svg"));
   assert.ok(downloads[2].includes(">taxon_a"));
   assert.ok(downloads[3].includes('"conserved_columns": 4'));
+  // M7.12: no chat request on results render; deterministic interpretation is
+  // always displayed and AI phrasing is strictly opt-in via the assistant.
+  assert.match(await page.locator("#phylo-interpretation").innerText(), /retrieved alignment/i);
+  assert.equal(await page.locator("#phylo-ai-phrasing").isVisible(), false);
+  assert.match(await page.locator("#phylo-ai-status").innerText(), /not requested/i);
+  assert.equal(await page.evaluate(() => window.__calls.some((item) => item.url.includes("/api/providers/chat"))), false);
+  assert.equal(await page.evaluate(() => window.__calls.some((item) => item.url.includes("/api/assistant/chat"))), false);
+  await page.click("#phylo-ai-optin");
   await page.waitForFunction(() => !document.getElementById("phylo-ai-phrasing").hidden);
   assert.match(await page.locator("#phylo-ai-status").innerText(), /AI-generated phrasing .*unverified/i);
-  const chatCall = await page.evaluate(() => window.__calls.find((item) => item.url.includes("/api/providers/chat")));
+  const chatCall = await page.evaluate(() => window.__calls.find((item) => item.url.includes("/api/assistant/chat")));
   const chatBody = JSON.parse(chatCall.body);
-  assert.equal(chatBody.category, "explanation_evaluation");
+  assert.equal(chatBody.stream, false);
   assert.match(chatBody.message, /conserved_columns/);
   assert.doesNotMatch(chatBody.message, new RegExp(NEWICK.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.doesNotMatch(chatBody.message, /ACGT-ACGTACG/);
+  assert.equal(await page.evaluate(() => window.__calls.some((item) => item.url.includes("/api/providers/chat"))), false);
   await page.click("#phylo-reopen-ai");
   await page.waitForFunction(() => document.getElementById("phylo-reopen-detail").textContent.includes("artifacts:"));
   assert.match(await page.locator("#phylo-reopen-detail").innerText(), /artifacts: tree\.nwk/);

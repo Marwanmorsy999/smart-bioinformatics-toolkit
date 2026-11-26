@@ -19,6 +19,7 @@ import { onRequest as onAiJobReport } from "./functions/api/ai/jobs/[id]/report.
 import { onRequest as onAiPlan } from "./functions/api/ai/plans/[id]/index.js";
 import { onRequest as onAiPlanApprove } from "./functions/api/ai/plans/[id]/approve.js";
 import { onRequest as onAiRun } from "./functions/api/ai/runs/[id]/index.js";
+import { onRequest as onAiRunRecovery } from "./functions/api/ai/runs/[id]/recovery.js";
 import { onRequest as onAiRunProvenance } from "./functions/api/ai/runs/[id]/provenance.js";
 import { onRequest as onAiRunReport } from "./functions/api/ai/runs/[id]/report.js";
 import { onRequest as onBlastSubmit } from "./functions/api/blast/submit.js";
@@ -80,6 +81,7 @@ export const handlers = {
   aiPlan: onAiPlan,
   aiPlanApprove: onAiPlanApprove,
   aiRun: onAiRun,
+  aiRunRecovery: onAiRunRecovery,
   aiRunProvenance: onAiRunProvenance,
   aiRunReport: onAiRunReport,
   blastSubmit: onBlastSubmit,
@@ -184,6 +186,7 @@ const ROUTES = [
   { key: "phyloRun", re: /^\/api\/ai\/workflows\/phylo\/run\/?$/, names: [] },
   { key: "aiJobResult", re: /^\/api\/ai\/jobs\/([^/]+)\/result\/?$/, names: ["id"] },
   { key: "aiPlanApprove", re: /^\/api\/ai\/plans\/([^/]+)\/approve\/?$/, names: ["id"] },
+  { key: "aiRunRecovery", re: /^\/api\/ai\/runs\/([^/]+)\/recovery\/?$/, names: ["id"] },
   { key: "aiRunProvenance", re: /^\/api\/ai\/runs\/([^/]+)\/provenance\/?$/, names: ["id"] },
   { key: "aiRunReport", re: /^\/api\/ai\/runs\/([^/]+)\/report\/?$/, names: ["id"] },
   { key: "blastStatus", re: /^\/api\/blast\/status\/([^/]+)\/?$/, names: ["rid"] },
