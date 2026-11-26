@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Analyze a BLAST tabular result file locally in your browser. Research use only.">
   <meta name="theme-color" content="#eef2f4">
-  <title>BLAST Results Analyzer · Smart Bioinformatics Toolkit</title>
+  <title>BLAST Results Analyzer · Smart Bioinformatics AI</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="stylesheet" href="css/tokens.css">
   <link rel="stylesheet" href="css/main.css">
   <link rel="stylesheet" href="css/tool-views.css">
@@ -14,9 +15,8 @@
   <a class="skip-link" href="#main-content">Skip to main content</a>
 
   <header class="topbar">
-    <a class="brand" href="index.html" aria-label="Smart Bioinformatics Toolkit home">
-      <span class="brand-mark" aria-hidden="true">S<span>Bio</span></span>
-      <span class="brand-name">Smart Bioinformatics <span>Toolkit</span></span>
+    <a class="brand" href="index.html" aria-label="Smart Bioinformatics AI home">
+      <img class="brand-logo" src="brand/sbio-logo-primary.svg" alt="Smart Bioinformatics AI" width="245" height="28">
     </a>
     <button class="nav-toggle" type="button" aria-label="Open navigation" aria-controls="primary-nav" aria-expanded="false">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
@@ -25,6 +25,7 @@
       <a href="index.html#tools">Tools</a>
       <a href="workspace.html">Research workspace</a>
       <a href="phylo.html">Phylogenetics</a>
+      <a href="assistant.html">Assistant</a>
       <a href="index.html#about">About</a>
     </nav>
     <span class="local-badge"><span class="status-dot" aria-hidden="true"></span> Browser processing</span>
@@ -146,7 +147,7 @@
 
             <div class="empty-state">
               <span class="empty-state-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="1"/><path d="M3 9h18M9 9v11M15 9v11"/></svg>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="1"/><path d="M3 9h18M9 9v11M15 9v11"/></svg>
               </span>
               <div>
                 <h3>No analysis yet</h3>
@@ -163,8 +164,7 @@
     <div class="footer-grid">
       <div>
         <div class="footer-brand">
-          <span class="brand-mark" aria-hidden="true">S<span>Bio</span></span>
-          <span class="brand-name">Smart Bioinformatics <span>Toolkit</span></span>
+          <img class="footer-logo" src="brand/sbio-logo-dark.svg" alt="Smart Bioinformatics AI" width="245" height="28">
         </div>
         <p>A modular, browser-first research workspace for sequence checks. Inspect the inputs, keep the outputs, and read the caveats.</p>
       </div>
@@ -183,18 +183,20 @@
           <li><a href="ai.html">AI workspace</a></li>
           <li><a href="workspace.html">Research workspace</a></li>
           <li><a href="phylo.html">Phylogenetics</a></li>
+          <li><a href="assistant.html">Assistant</a></li>
         </ul>
       </div>
       <div>
-        <h2 class="footer-heading">About</h2>
+        <h2 class="footer-heading">Documentation</h2>
         <ul class="footer-links">
-          <li><a href="index.html#about">About the project</a></li>
+          <li><a href="index.html#about">About</a></li>
           <li><a href="benchmark.html#bench-limits-title">Known limitations</a></li>
+          <li><a href="research-use.html">Research-use policy</a></li>
         </ul>
       </div>
     </div>
-    <p class="footer-disclaimer"><strong>Research-use disclaimer.</strong> This toolkit produces screening evidence for research and teaching. It is not a diagnostic device, does not establish organism identity or pathogenicity, and is not validated for clinical, forensic or regulatory decisions. All outputs require independent interpretation by a qualified user.</p>
-    <div class="footer-bottom"><span>Smart Bioinformatics Toolkit · Milestone 0.5.0</span><span>No external fonts, images or CDNs · Static, framework-free pages</span></div>
+    <p class="footer-disclaimer">Research and educational use only. Results require independent scientific interpretation. <a href="research-use.html">Full research-use statement</a>.</p>
+    <div class="footer-bottom"><span>Smart Bioinformatics AI</span></div>
   </footer>
   <script src="js/nav.js"></script>
   <script type="module" src="js/project-context.js"></script>

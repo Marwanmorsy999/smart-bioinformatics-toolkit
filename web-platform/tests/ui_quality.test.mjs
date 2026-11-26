@@ -25,7 +25,8 @@ test("index has a restrained hero with a value proposition and multiple actions"
 test("index exposes capability cards with inline SVG icons", () => {
   assert.ok(count(indexHtml, /class="capability-card"/g) >= 3);
   assert.match(indexHtml, /class="capability-icon"[^>]*><svg\b/);
-  assert.doesNotMatch(indexHtml, /<img\b/i, "no external image resources");
+  // Local brand SVGs are allowed; remote/data-URI images are not.
+  assert.doesNotMatch(indexHtml, /<img\b[^>]*\bsrc\s*=\s*["'](?:(?:https?:)?\/\/|data:)/i, "no external image resources");
 });
 
 test("both pages show a four-stage workflow strip with state styling", () => {

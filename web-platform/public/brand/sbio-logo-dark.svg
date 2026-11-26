@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 48" width="420" height="48" role="img" aria-label="Smart Bioinformatics AI">
+  <title>Smart Bioinformatics AI — light wordmark for dark backgrounds</title>
+  <g transform="scale(.75)">
+    <rect x="3" y="3" width="58" height="58" rx="13" fill="#f4f8f9"/>
+    <path d="M42 19C42 13 22 13 22 23C22 32 42 30 42 40C42 50 22 50 22 45" fill="none" stroke="#0d5254" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M42 19 32 13M32 13 25 7M32 13 39 7" fill="none" stroke="#0d5254" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <text x="58" y="34" fill="#f4f8f9" font-family="system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="29" font-weight="650" letter-spacing="-.7">Smart Bioinformatics <tspan fill="#a9d8d5" font-weight="750">AI</tspan></text>
+</svg>

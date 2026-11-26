@@ -221,6 +221,15 @@
 .info-card-head h3 { font-size: var(--fs-500); }
 .info-card > p { margin: 0; color: var(--muted); font-size: var(--fs-300); line-height: 1.7; }
 
+/* ---------- Research-use policy page ---------- */
+.policy-statement {
+  max-width: var(--maxw); margin: var(--space-5) auto var(--space-8);
+  padding: var(--space-5) var(--space-6); background: var(--surface);
+  border: var(--border-hairline); border-left: var(--border-accent-width) solid var(--accent);
+  border-radius: var(--radius-3); color: var(--ink); font-size: var(--fs-400); line-height: 1.75;
+}
+.policy-view .info-card > p + p { margin-top: var(--space-3); }
+
 /* ---------- M7.4 research workspace metadata forms ---------- */
 .ws-form .field-group { margin-bottom: var(--space-4); }
 .ws-form .field-group textarea {
@@ -267,6 +276,8 @@
 }
 .footer-brand { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); }
 .footer-brand .brand-mark { background: #ffffff14; border: var(--border-hairline); border-color: #ffffff30; }
+/* The dark lockup is the only wordmark used on the ink footer surface. */
+.footer-logo { display: block; height: 28px; width: auto; max-width: 100%; }
 .footer-grid > div > p { max-width: 320px; color: #b9cbd6; font-size: var(--fs-300); line-height: 1.7; margin: 0; }
 .footer-heading { margin: 0 0 var(--space-3); color: #fff; font-size: var(--fs-200); font-weight: var(--fw-bold); letter-spacing: var(--tracking-caps); text-transform: uppercase; }
 .footer-links { list-style: none; margin: 0; padding: 0; display: grid; gap: 9px; }
@@ -277,6 +288,8 @@
   border-top: var(--border-hairline); border-color: #ffffff26; color: #b9cbd6; font-size: var(--fs-200); line-height: 1.7;
 }
 .footer-disclaimer strong { color: #e3f1ee; }
+.footer-disclaimer a { color: #bfe6dd; text-decoration: underline; text-underline-offset: 3px; }
+.footer-disclaimer a:hover { color: #fff; }
 .footer-bottom {
   max-width: var(--maxw); margin: var(--space-4) auto 0;
   display: flex; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap;

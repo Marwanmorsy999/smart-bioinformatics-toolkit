@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Smart Bioinformatics AI">
+  <title>Smart Bioinformatics AI — favicon</title>
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="#eef2f4" stroke="#0d5254" stroke-width="4"/>
+  <path d="M42 19C42 13 22 13 22 23C22 32 42 30 42 40C42 50 22 50 22 45" fill="none" stroke="#0d5254" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M42 19 32 13M32 13 25 7M32 13 39 7" fill="none" stroke="#0d5254" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

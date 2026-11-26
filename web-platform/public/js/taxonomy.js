@@ -571,7 +571,7 @@ export function analyzeTaxonomy(blastReport, map, options = {}) {
   }
 
   return {
-    tool: "Smart Bioinformatics Toolkit",
+    tool: "Smart Bioinformatics AI",
     tool_version: "0.1.0",
     top_n: topN,
     min_consensus: minConsensus,
