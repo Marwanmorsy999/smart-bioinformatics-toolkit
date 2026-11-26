@@ -3,69 +3,168 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="M7.3 â€” run a real multi-step Galaxy phylogenetics workflow (MAFFT alignment and IQ-TREE tree) from the browser.">
-  <title>Phylogenetics workflow â€” Smart Bioinformatics Toolkit</title>
+  <meta name="theme-color" content="#eef2f4">
+  <meta name="description" content="Multi-step phylogenetics on Galaxy: proposed MAFFT → IQ-TREE workflow with plan review and consent. MAFFT submission/completion was evidenced once; full multi-step execution is unverified; workflow not production-ready.">
+  <title>Phylogenetics workflow — Smart Bioinformatics AI</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="css/tokens.css">
   <link rel="stylesheet" href="css/main.css">
   <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/app-views.css">
 </head>
 <body>
   <a class="skip-link" href="#phylo-main">Skip to main content</a>
   <header class="topbar">
-    <a class="brand" href="index.html" aria-label="Smart Bioinformatics Toolkit home">
-      <span class="brand-mark" aria-hidden="true">S<span>Bio</span></span>
-      <span class="brand-name">Smart Bioinformatics <span>Toolkit</span></span>
+    <a class="brand" href="index.html" aria-label="Smart Bioinformatics AI home">
+      <img class="brand-logo" src="brand/sbio-logo-primary.svg" alt="Smart Bioinformatics AI" width="245" height="28">
     </a>
-    <nav class="top-nav" aria-label="Main navigation">
-      <a href="index.html">Tools</a>
-      <a href="ai.html">AI workspace</a>
-      <a class="active" href="phylo.html" aria-current="location">Phylogenetics</a>
-    <a href="workspace.html">Research workspace</a>
+    <button class="nav-toggle" type="button" aria-label="Open navigation" aria-controls="primary-nav" aria-expanded="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+    <nav id="primary-nav" class="top-nav" aria-label="Main navigation">
+      <a href="index.html#tools">Tools</a>
+      <a href="workspace.html">Research workspace</a>
+      <a href="phylo.html" aria-current="location">Phylogenetics</a>
+      <a href="assistant.html">Assistant</a>
+      <a href="index.html#about">About</a>
     </nav>
     <span class="local-badge"><span class="status-dot" aria-hidden="true"></span> Galaxy execution</span>
   </header>
 
-  <main id="phylo-main" tabindex="-1" class="section-block">
+  <main id="phylo-main" class="app-main phylo-view" tabindex="-1">
     <p id="project-context" class="info-card" hidden></p>
-    <h1>Multi-step phylogenetics on Galaxy</h1>
-    <p class="section-kicker">M7.3 â€” the first cloud workflow: MAFFT alignment â†’ IQ-TREE tree, executed remotely with full provenance.</p>
-    <div class="research-strip" role="note">
-      <span class="privacy-icon" aria-hidden="true">i</span>
-      <p><strong>Research use only.</strong> Your FASTA is uploaded to Galaxy only after you approve the plan. Trees are hypotheses, not publication-grade inference without independent validation.</p>
+    <header class="view-head">
+      <div>
+        <h1>Multi-step phylogenetics on Galaxy</h1>
+        <p class="section-kicker">Proposed cloud workflow: MAFFT alignment → IQ-TREE tree. MAFFT submission/completion was evidenced once; full multi-step execution is unverified; workflow not production-ready.</p>
+      </div>
+      <div class="research-strip" role="note">
+        <span class="privacy-icon" aria-hidden="true">i</span>
+        <p><strong>Research use only.</strong> Your FASTA is uploaded to Galaxy only after you approve the plan. Trees are hypotheses, not publication-grade inference without independent validation.</p>
+      </div>
+      <p class="ws-status-line" id="phylo-status" role="status" aria-live="polite"></p>
+    </header>
+
+    <ol class="stage-rail" aria-label="Workflow sequence (not status)">
+      <li><span class="rail-index">01</span> Dataset</li>
+      <li><span class="rail-index">02</span> Plan</li>
+      <li><span class="rail-index">03</span> Approval</li>
+      <li><span class="rail-index">04</span> Progress</li>
+      <li><span class="rail-index">05</span> Results</li>
+    </ol>
+    <p class="stage-note">This rail is a sequence guide, not a status display. Job state is reported in the progress list and status line; no stage is presented as complete until output is reported.</p>
+
+    <div class="app-shell">
+      <aside class="app-rail" aria-label="Dataset and plan">
+        <section id="phylo-input" class="panel" aria-labelledby="phylo-input-title">
+          <div class="panel-head"><h2 id="phylo-input-title">1. Provide a multi-FASTA dataset</h2></div>
+          <p class="panel-note">The file stays in this page until you approve the plan. The exact step list appears next; no job is submitted by selecting a file.</p>
+          <div class="field-group">
+            <label for="phylo-file">FASTA file (.fasta / .fa / .fna / .txt)</label>
+            <input id="phylo-file" type="file" accept=".fasta,.fa,.fna,.fas,.txt">
+          </div>
+          <div class="field-group">
+            <label for="phylo-objective">Research objective</label>
+            <textarea id="phylo-objective" rows="3" placeholder="e.g. Infer relationships among these homologous sequences"></textarea>
+          </div>
+          <button id="phylo-plan" type="button" class="primary-link">Inspect proposed plan</button>
+        </section>
+
+      </aside>
+
+      <div class="app-detail phylo-detail-host">
+        <section id="phylo-plan-view" class="panel" aria-live="polite" hidden>
+          <div class="panel-head"><h2>2. Proposed execution plan</h2></div>
+          <p class="panel-note">Seven proposed steps. Review them before granting Galaxy consent.</p>
+          <ol id="phylo-plan-steps"></ol>
+          <div class="consent-box">
+            <p class="panel-note">Galaxy consent: approval uploads this dataset to Galaxy Europe for this workflow. Nothing is sent before you check the box and run.</p>
+            <label><input id="phylo-approve-check" type="checkbox"> I approve uploading this dataset to Galaxy Europe for this workflow.</label>
+          </div>
+          <button id="phylo-run" type="button" class="primary-link" disabled>Approve &amp; run on Galaxy</button>
+        </section>
+
+        <section id="phylo-progress" class="panel" aria-live="polite" hidden>
+          <div class="panel-head"><h2>3. Galaxy job progress</h2></div>
+          <ul id="phylo-job-list" class="data-list"></ul>
+        </section>
+
+        <section id="phylo-results" class="panel" aria-live="polite" hidden>
+          <div class="panel-head"><h2>4. Results</h2></div>
+          <p id="phylo-validation"></p>
+
+          <figure class="phylo-figure">
+            <div id="phylo-tree" aria-label="Phylogenetic tree visualization"></div>
+            <figcaption>Phylogenetic tree — rendered from returned Newick text when a job supplies it.</figcaption>
+          </figure>
+
+          <figure class="phylo-figure">
+            <div class="alignment-placeholder">No alignment text has been returned by a completed job. Alignment output is retrieved with the Galaxy job datasets; nothing is shown here until real output is available.</div>
+            <figcaption>Multiple-sequence alignment — awaiting retrieved output</figcaption>
+          </figure>
+
+          <h3>Downloads</h3>
+          <ul id="phylo-downloads" class="data-list"></ul>
+          <p><a id="phylo-report-link" href="#">Download reproducible report (HTML)</a></p>
+
+          <details>
+            <summary>Full provenance</summary>
+            <pre id="phylo-provenance"></pre>
+          </details>
+        </section>
+
+        <div class="empty-state panel phylo-empty">
+          <span class="empty-state-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM4 10h16M9 10v9"/></svg>
+          </span>
+          <div>
+            <h3>No Galaxy job started</h3>
+            <p>Select a multi-FASTA file, inspect the proposed plan and approve it to submit a job. Progress and results appear here with their reported state; blocked or incomplete stages are never shown as succeeded.</p>
+          </div>
+        </div>
+      </div>
     </div>
-
-    <section id="phylo-input" aria-labelledby="phylo-input-title">
-      <h2 id="phylo-input-title">1. Provide a multi-FASTA dataset</h2>
-      <label for="phylo-file">FASTA file (.fasta / .fa / .fna / .txt)</label>
-      <input id="phylo-file" type="file" accept=".fasta,.fa,.fna,.fas,.txt">
-      <label for="phylo-objective">Research objective</label>
-      <textarea id="phylo-objective" rows="3" placeholder="e.g. Infer relationships among these homologous sequences"></textarea>
-      <button id="phylo-plan" type="button" class="primary-link">Inspect proposed plan</button>
-    </section>
-
-    <section id="phylo-plan-view" aria-live="polite" hidden>
-      <h2>2. Proposed execution plan</h2>
-      <ol id="phylo-plan-steps"></ol>
-      <label><input id="phylo-approve-check" type="checkbox"> I approve uploading this dataset to Galaxy Europe for this workflow.</label>
-      <button id="phylo-run" type="button" class="primary-link" disabled>Approve &amp; run on Galaxy</button>
-    </section>
-
-    <section id="phylo-progress" aria-live="polite" hidden>
-      <h2>3. Galaxy job progress</h2>
-      <ul id="phylo-job-list"></ul>
-    </section>
-
-    <section id="phylo-results" aria-live="polite" hidden>
-      <h2>4. Results</h2>
-      <p id="phylo-validation"></p>
-      <div id="phylo-tree" aria-label="Phylogenetic tree visualization"></div>
-      <ul id="phylo-downloads"></ul>
-      <p><a id="phylo-report-link" href="#">Download reproducible report (HTML)</a></p>
-      <details><summary>Full provenance</summary><pre id="phylo-provenance"></pre></details>
-    </section>
-    <p id="phylo-status" role="status" aria-live="polite"></p>
   </main>
+  <footer class="site-footer">
+    <div class="footer-grid">
+      <div>
+        <div class="footer-brand">
+          <img class="footer-logo" src="brand/sbio-logo-dark.svg" alt="Smart Bioinformatics AI" width="245" height="28">
+        </div>
+        <p>A modular, browser-first research workspace for sequence checks. Inspect the inputs, keep the outputs, and read the caveats.</p>
+      </div>
+      <div>
+        <h2 class="footer-heading">Tools</h2>
+        <ul class="footer-links">
+          <li><a href="index.html#tools">FASTA validation</a></li>
+          <li><a href="index.html#tools">Sequence statistics</a></li>
+          <li><a href="blast.html">BLAST results</a></li>
+          <li><a href="taxonomy.html">Taxonomy</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2 class="footer-heading">Research</h2>
+        <ul class="footer-links">
+          <li><a href="ai.html">AI workspace</a></li>
+          <li><a href="workspace.html">Research workspace</a></li>
+          <li><a href="phylo.html">Phylogenetics</a></li>
+          <li><a href="assistant.html">Assistant</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2 class="footer-heading">Documentation</h2>
+        <ul class="footer-links">
+          <li><a href="index.html#about">About</a></li>
+          <li><a href="benchmark.html#bench-limits-title">Known limitations</a></li>
+          <li><a href="research-use.html">Research-use policy</a></li>
+        </ul>
+      </div>
+    </div>
+    <p class="footer-disclaimer">Research and educational use only. Results require independent scientific interpretation. <a href="research-use.html">Full research-use statement</a>.</p>
+    <div class="footer-bottom"><span>Smart Bioinformatics AI</span></div>
+  </footer>
+  <script src="js/nav.js"></script>
   <script type="module" src="js/project-context.js"></script>
   <script type="module" src="js/phylo.js"></script>
 </body>
 </html>
-

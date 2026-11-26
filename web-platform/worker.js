@@ -59,6 +59,7 @@ import { onRequest as onWorkspaceRun } from "./functions/api/workspace/runs/[id]
 import { onRequest as onWorkspaceRunProvenance } from "./functions/api/workspace/runs/[id]/provenance.js";
 import { onRequest as onWorkspaceRunReport } from "./functions/api/workspace/runs/[id]/report.js";
 import { onRequest as onWorkspaceDemo } from "./functions/api/workspace/demo.js";
+import { onStatus as onAssistantStatus, onChat as onAssistantChat } from "./functions/api/assistant/index.js";
 import { errorResponse } from "./functions/api/ai/_lib.js";
 
 // Stable keys let unit tests inject stubbed handlers without changing the
@@ -117,13 +118,19 @@ export const handlers = {
   workspaceRun: onWorkspaceRun,
   workspaceRunProvenance: onWorkspaceRunProvenance,
   workspaceRunReport: onWorkspaceRunReport,
-  workspaceDemo: onWorkspaceDemo
+  workspaceDemo: onWorkspaceDemo,
+  assistantStatus: onAssistantStatus,
+  assistantChat: onAssistantChat
 };
 
 // Order is explicit. Static and dynamic patterns do not overlap, but the more
 // specific dynamic routes are listed first so future additions stay unambiguous.
 // `names` maps capture groups to the `params` object the handlers expect.
 const ROUTES = [
+  // S Bio Assistant gateway. Explicit static routes before every catch-all so
+  // an /api/assistant/** path can never fall through to a static HTML page.
+  { key: "assistantStatus", re: /^\/api\/assistant\/status\/?$/, names: [] },
+  { key: "assistantChat", re: /^\/api\/assistant\/chat\/?$/, names: [] },
   // M7.4 batch-1 workspace routes. Specific sub-paths precede the dynamic
   // /:id routes so "archive", "datasets", "runs" and "report" can never be
   // captured as an id. These are listed before the legacy catch-all below.

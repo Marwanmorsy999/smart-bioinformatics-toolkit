@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="S Bio Assistant — a guidance layer over Smart Bioinformatics AI. Chat is unavailable: no authorized model provider is configured. Research use only.">
+  <meta name="theme-color" content="#eef2f4">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <title>S Bio Assistant · Smart Bioinformatics AI</title>
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/main.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/assistant.css">
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+
+  <header class="topbar">
+    <a class="brand" href="index.html" aria-label="Smart Bioinformatics AI home">
+      <img class="brand-logo" src="brand/sbio-logo-primary.svg" alt="Smart Bioinformatics AI" width="245" height="28">
+    </a>
+    <button class="nav-toggle" type="button" aria-label="Open navigation" aria-controls="primary-nav" aria-expanded="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+    <nav id="primary-nav" class="top-nav" aria-label="Main navigation">
+      <a href="index.html#tools">Tools</a>
+      <a href="workspace.html">Research workspace</a>
+      <a href="phylo.html">Phylogenetics</a>
+      <a href="assistant.html" aria-current="location">Assistant</a>
+      <a href="index.html#about">About</a>
+    </nav>
+    <span id="assistant-backend-badge" class="local-badge unavailable">
+      <span class="status-dot" aria-hidden="true"></span> AI chat unavailable
+    </span>
+  </header>
+
+  <main id="main-content" class="assistant-main" tabindex="-1">
+    <header class="assistant-page-head">
+      <div>
+        <p class="eyebrow section-kicker">Smart Bioinformatics AI · guidance layer</p>
+        <h1>S Bio Assistant</h1>
+        <p class="section-lede">A guidance and navigation layer over the existing toolkit. It explains formats, workflows, tool parameters and plans — it does not measure, validate or execute anything.</p>
+      </div>
+      <aside class="research-strip" aria-label="Research use notice">
+        <span class="privacy-icon" aria-hidden="true">i</span>
+        <p><strong>Research use only.</strong> No clinical diagnosis. Scientific values come only from executed tools and validated artifacts, never from conversation. <a href="research-use.html">Read the research-use terms</a>.</p>
+      </aside>
+    </header>
+
+    <div id="assistant-banner" class="assistant-banner" role="status" aria-live="polite">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2.5 20h19L12 3Zm0 6v5m0 3v.5"/></svg>
+      <div>
+        <p class="banner-title">AI chat is unavailable: no authorized model provider is configured for this deployment.</p>
+        <p id="assistant-banner-detail" class="banner-detail">The composer is disabled. Nothing is generated, sent to a model, or simulated.</p>
+        <p class="banner-links">Continue with the <a href="ai.html">AI research workspace</a>, the <a href="blast.html">BLAST analyzer</a>, the <a href="taxonomy.html">taxonomy analyzer</a> or <a href="phylo.html">phylogenetics workflow</a>.</p>
+      </div>
+    </div>
+
+    <section class="activity-strip" aria-labelledby="activity-title">
+      <h2 id="activity-title" class="activity-title">Activity — real lifecycle events only</h2>
+      <ol id="activity-list" class="activity-list">
+        <li class="activity-stage" data-state="not-started"><span class="stage-name">Understanding</span><span class="stage-state">Not started</span></li>
+        <li class="activity-stage" data-state="not-started"><span class="stage-name">Preparing</span><span class="stage-state">Not started</span></li>
+        <li class="activity-stage" data-state="not-started"><span class="stage-name">Reviewing evidence</span><span class="stage-state">Not started</span></li>
+        <li class="activity-stage" data-state="not-started"><span class="stage-name">Preparing plan</span><span class="stage-state">Not started</span></li>
+        <li class="activity-stage" data-state="not-started"><span class="stage-name">Awaiting approval</span><span class="stage-state">Not started</span></li>
+        <li class="activity-stage" data-state="not-started"><span class="stage-name">Executing approved</span><span class="stage-state">Not started</span></li>
+        <li class="activity-stage" data-state="not-started"><span class="stage-name">Retrieving</span><span class="stage-state">Not started</span></li>
+        <li class="activity-stage" data-state="not-started"><span class="stage-name">Validating</span><span class="stage-state">Not started</span></li>
+      </ol>
+      <p class="activity-note">These stages advance only on an observed event from the gateway or the existing control plane. No progress is simulated.</p>
+    </section>
+
+    <div class="assistant-shell">
+      <button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-controls="assistant-sidebar" aria-expanded="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+        Conversations
+      </button>
+
+      <aside id="assistant-sidebar" class="assistant-sidebar" aria-label="Conversation history" aria-labelledby="sidebar-title">
+        <div class="sidebar-head">
+          <h2 id="sidebar-title">Conversations</h2>
+          <button id="new-conversation" class="primary-button small-button" type="button">New conversation</button>
+        </div>
+        <p class="storage-note">Stored in this browser session only — no server-side ownership. Conversation text is cleared when you close or reload this tab.</p>
+
+        <div class="field-group sidebar-search">
+          <label for="conversation-search">Search conversations</label>
+          <input id="conversation-search" type="search" placeholder="Filter by message text" autocomplete="off">
+        </div>
+
+        <h3 class="sidebar-subhead">Recent conversations</h3>
+        <ul id="conversation-list" class="conversation-list" aria-live="polite"></ul>
+        <p id="conversation-empty" class="sidebar-empty">No conversations yet. Nothing has been stored on a server.</p>
+
+        <div class="sidebar-context">
+          <label for="project-context-input">Project context (optional)</label>
+          <input id="project-context-input" type="text" inputmode="text" maxlength="60" placeholder="ds_0123456789abcdef" aria-describedby="project-context-help">
+          <small id="project-context-help">A public dataset or project id only. No file contents are sent to any model. <button type="button" id="remove-context" class="quiet-button">Remove context</button></small>
+        </div>
+
+        <div class="sidebar-footer">
+          <p id="current-conversation" class="current-conversation">Current conversation: none — no messages</p>
+          <button id="clear-conversations" type="button" class="secondary-button small-button">Clear all</button>
+        </div>
+      </aside>
+
+      <section class="assistant-panel" aria-labelledby="assistant-name">
+        <header class="assistant-panel-head">
+          <img class="assistant-avatar" src="brand/sbio-assistant.svg" alt="S Bio Assistant" width="32" height="32">
+          <div>
+            <h2 id="assistant-name">S Bio Assistant</h2>
+            <p id="assistant-state" class="assistant-state">Unavailable — no authorized model provider</p>
+          </div>
+          <span class="status-chip status-chip-caution">AI-generated phrasing only</span>
+        </header>
+
+        <ol id="message-list" class="message-list" aria-live="polite" aria-relevant="additions text"></ol>
+
+        <div id="empty-state" class="empty-state">
+          <img src="brand/sbio-assistant.svg" alt="" aria-hidden="true" width="48" height="48">
+          <h3>No conversation yet</h3>
+          <p>Chat cannot start: no authorized model provider is configured. The questions below only fill the composer — nothing is executed or answered.</p>
+        </div>
+
+        <section class="suggested" aria-labelledby="suggested-title">
+          <h3 id="suggested-title">Example questions — clicking fills the composer; nothing is executed.</h3>
+          <div class="suggested-list">
+            <button type="button" class="suggested-prompt" data-prompt="What is FASTA and what does the validator check?">What is FASTA and what does the validator check?</button>
+            <button type="button" class="suggested-prompt" data-prompt="How does 16S rRNA identification work in this toolkit?">How does 16S rRNA identification work in this toolkit?</button>
+            <button type="button" class="suggested-prompt" data-prompt="Which tools parse BLAST output and compute taxonomy consensus?">Which tools parse BLAST output and compute taxonomy consensus?</button>
+            <button type="button" class="suggested-prompt" data-prompt="How do I choose parameters for alignment and tree inference?">How do I choose parameters for alignment and tree inference?</button>
+            <button type="button" class="suggested-prompt" data-prompt="How do analysis plans, approval and consent work here?">How do analysis plans, approval and consent work here?</button>
+          </div>
+        </section>
+
+        <div id="assistant-error" class="assistant-error" role="alert" aria-live="assertive" hidden></div>
+
+        <form id="composer" class="composer" novalidate>
+          <div class="composer-row">
+            <label for="message-input" class="composer-label">Message S Bio Assistant</label>
+            <button id="clear-draft" type="button" class="quiet-button">Clear draft</button>
+          </div>
+          <textarea id="message-input" rows="3" maxlength="4000" disabled
+            aria-describedby="composer-help char-count"
+            placeholder="e.g. What does the FASTA validator check?"></textarea>
+          <p id="composer-help" class="composer-help">Enter sends · Shift+Enter adds a new line. Maximum 4 000 characters. Chat is disabled until a provider is authorized.</p>
+          <div class="composer-actions">
+            <span id="char-count" class="char-count">0 / 4 000</span>
+            <div class="composer-buttons">
+              <button id="stop-generation" type="button" class="secondary-button small-button" disabled>Stop</button>
+              <button id="send-message" type="submit" class="primary-button small-button" disabled>Send message</button>
+            </div>
+          </div>
+        </form>
+        <p class="composer-footnote">No attachments are supported. Raw FASTA content is never sent to a model from this page. Stopping only aborts the browser request; it cannot cancel a server job.</p>
+      </section>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-grid">
+      <div>
+        <div class="footer-brand">
+          <img class="footer-logo" src="brand/sbio-logo-dark.svg" alt="Smart Bioinformatics AI" width="245" height="28">
+        </div>
+        <p>A modular, browser-first research workspace for sequence checks. Inspect the inputs, keep the outputs, and read the caveats.</p>
+      </div>
+      <div>
+        <h2 class="footer-heading">Tools</h2>
+        <ul class="footer-links">
+          <li><a href="index.html#tools">FASTA validation</a></li>
+          <li><a href="index.html#tools">Sequence statistics</a></li>
+          <li><a href="blast.html">BLAST results</a></li>
+          <li><a href="taxonomy.html">Taxonomy</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2 class="footer-heading">Research</h2>
+        <ul class="footer-links">
+          <li><a href="ai.html">AI workspace</a></li>
+          <li><a href="workspace.html">Research workspace</a></li>
+          <li><a href="phylo.html">Phylogenetics</a></li>
+          <li><a href="assistant.html">Assistant</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2 class="footer-heading">Documentation</h2>
+        <ul class="footer-links">
+          <li><a href="research-use.html">Research-use policy</a></li>
+          <li><a href="benchmark.html#bench-limits-title">Known limitations</a></li>
+          <li><a href="index.html#about">About</a></li>
+        </ul>
+      </div>
+    </div>
+    <p class="footer-disclaimer">Research and educational use only. Results require independent scientific interpretation. <a href="research-use.html">Full research-use statement</a>.</p>
+    <div class="footer-bottom"><span>Smart Bioinformatics AI</span></div>
+  </footer>
+
+  <dialog id="assistant-dialog" class="assistant-dialog" aria-labelledby="dialog-title">
+    <form id="dialog-form" method="dialog">
+      <h2 id="dialog-title">Confirm</h2>
+      <p id="dialog-message"></p>
+      <div id="dialog-field" hidden>
+        <label for="dialog-input">Conversation title</label>
+        <input id="dialog-input" type="text" maxlength="80" autocomplete="off">
+      </div>
+      <div class="dialog-actions">
+        <button id="dialog-cancel" type="submit" value="cancel" class="secondary-button small-button">Cancel</button>
+        <button id="dialog-confirm" type="submit" value="confirm" class="primary-button small-button">Confirm</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="js/nav.js" defer></script>
+  <script src="js/assistant.js" defer></script>
+</body>
+</html>

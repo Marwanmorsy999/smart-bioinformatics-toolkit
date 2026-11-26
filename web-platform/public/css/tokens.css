@@ -1,0 +1,187 @@
+/* Smart Bioinformatics Toolkit - M7.4.1 design foundation.
+   "Precision instrument bench": cool porcelain surfaces, deep ink/slate text,
+   restrained teal/cyan-grey scientific accent, amber for caution.
+
+   This file is the single source of truth for design decisions. It is loaded
+   as the FIRST stylesheet in every HTML page; main.css and components.css
+   consume these custom properties. No external fonts, images or CDNs. */
+
+:root {
+  color-scheme: light;
+
+  /* -----------------------------------------------------------------------
+     COLOR - surfaces (cool porcelain, never warm cream)
+     ----------------------------------------------------------------------- */
+  --doc-bg: #eef2f4;          /* page canvas */
+  --surface: #ffffff;         /* primary work surface */
+  --surface-2: #f5f8f9;       /* inset / zebra surface */
+  --surface-3: #e9eff1;       /* recessed surface */
+  --surface-inset: #f0f4f5;   /* empty states, help blocks */
+
+  /* COLOR - ink and slate text */
+  --ink: #16252e;             /* primary text and headings */
+  --ink-2: #334750;           /* secondary text */
+  --muted: #566a74;           /* supporting copy */
+  --faint: #5f727b;           /* metadata, disabled-ish labels; >=4.5:1 on light surfaces */
+  --ink-inverse: #f4f8f9;     /* text on dark surfaces */
+
+  /* COLOR - hairlines */
+  --line: #d3dde1;
+  --line-soft: #e6edef;
+  --line-strong: #b3c3c9;
+
+  /* COLOR - restrained scientific accent */
+  --accent: #176b6e;          /* teal / cyan-grey */
+  --accent-strong: #0d5254;
+  --accent-tint: #e6f0f0;
+  --accent-line: #bcd6d5;
+
+  /* COLOR - caution (amber) and status */
+  --caution: #8a5a12;
+  --caution-bg: #fbf2e2;
+  --caution-line: #e4cc9f;
+  --success: #1d6b54;
+  --success-bg: #e7f2ed;
+  --success-line: #bcdccf;
+  --danger: #a23b31;
+  --danger-bg: #fbecea;
+  --danger-line: #e9c4c0;
+  --info: #2b5b6b;
+  --info-bg: #e8f0f3;
+  --info-line: #c2d8e0;
+
+  /* COLOR - focus */
+  --focus: #0d5254;           /* >= 3:1 on every light surface */
+  --focus-on-dark: #a9d8d5;   /* dark footer links only */
+
+  /* -----------------------------------------------------------------------
+     Backward-compatible aliases. Existing CSS/JS and benchmark.css use these
+     names; they now resolve to the instrument-bench palette above.
+     ----------------------------------------------------------------------- */
+  --navy: var(--ink);
+  --navy-soft: #243a44;
+  --navy-deep: #101d24;
+  --teal: var(--accent);
+  --teal-bright: #2c8487;
+  --teal-deep: var(--accent-strong);
+  --teal-tint: var(--accent-tint);
+  --ink-soft: var(--ink-2);
+  --subtle: var(--faint);
+  --canvas: var(--doc-bg);
+  --surface-alt: var(--surface-inset);
+  --border-strong: var(--line-strong);
+  --warning: var(--caution);
+  --warning-bg: var(--caution-bg);
+
+  /* -----------------------------------------------------------------------
+     TYPOGRAPHY - local/system stacks only; monospace for data/IDs/parameters
+     ----------------------------------------------------------------------- */
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono-stack: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+  --font: var(--font-ui);
+  --font-mono: var(--font-mono-stack);
+
+  --fs-100: .6875rem;   /* 11px - micro labels */
+  --fs-200: .75rem;     /* 12px - metadata */
+  --fs-300: .8125rem;   /* 13px - dense table / help */
+  --fs-400: .875rem;    /* 14px - UI body */
+  --fs-500: 1rem;       /* 16px - reading body */
+  --fs-600: 1.125rem;   /* 18px - lead */
+  --fs-700: 1.375rem;   /* 22px - h3 */
+  --fs-800: 1.75rem;    /* 28px - h2 */
+  --fs-900: clamp(2rem, 3.2vw, 2.75rem); /* hero h1 */
+
+  --lh-tight: 1.15;
+  --lh-snug: 1.35;
+  --lh-body: 1.6;
+
+  --fw-regular: 400;
+  --fw-medium: 550;
+  --fw-semibold: 650;
+  --fw-bold: 750;
+
+  --tracking-tight: -.025em;
+  --tracking-caps: .12em;
+  --numeric: tabular-nums;
+
+  /* -----------------------------------------------------------------------
+     SPACING - 4px base scale
+     ----------------------------------------------------------------------- */
+  --space-0: 0;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 28px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-14: 56px;
+  --space-16: 64px;
+  --space-20: 80px;
+
+  /* Legacy spacing aliases used by components.css. */
+  --space-xs: var(--space-2);
+  --space-sm: var(--space-3);
+  --space-md: var(--space-5);
+  --space-lg: var(--space-8);
+  --space-xl: var(--space-14);
+
+  /* -----------------------------------------------------------------------
+     RADII - 2 to 6px only; no pill-everything
+     ----------------------------------------------------------------------- */
+  --radius-1: 2px;
+  --radius-2: 3px;
+  --radius-3: 4px;
+  --radius-4: 6px;
+  --radius-sm: var(--radius-2);
+  --radius: var(--radius-3);
+  --radius-lg: var(--radius-4);
+  --radius-xl: var(--radius-4);
+
+  /* -----------------------------------------------------------------------
+     BORDERS - hairlines carry the structure, not shadows
+     ----------------------------------------------------------------------- */
+  --border-width: 1px;
+  --border-accent-width: 3px;
+  --border-hairline: var(--border-width) solid var(--line);
+  --border-soft: var(--border-width) solid var(--line-soft);
+  --border-strong-line: var(--border-width) solid var(--line-strong);
+
+  /* -----------------------------------------------------------------------
+     ELEVATION - minimal; hairlines do the work
+     ----------------------------------------------------------------------- */
+  --elev-0: none;
+  --elev-1: 0 1px 0 rgba(22, 37, 46, .05);
+  --elev-2: 0 2px 6px rgba(22, 37, 46, .06);
+  --shadow-sm: var(--elev-1);
+  --shadow: var(--elev-2);
+  --shadow-md: var(--elev-2);
+
+  /* -----------------------------------------------------------------------
+     FOCUS
+     ----------------------------------------------------------------------- */
+  --focus-ring-width: 3px;
+  --focus-ring-offset: 2px;
+
+  /* -----------------------------------------------------------------------
+     MOTION - short, explicit, transform/opacity only
+     ----------------------------------------------------------------------- */
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --ease-standard: cubic-bezier(.2, .7, .3, 1);
+
+  /* -----------------------------------------------------------------------
+     BREAKPOINTS (documentation tokens)
+     CSS custom properties cannot be used in @media conditions; these values
+     are mirrored literally in the media queries of main.css/components.css.
+     ----------------------------------------------------------------------- */
+  --bp-xs: 360px;
+  --bp-sm: 480px;
+  --bp-md: 720px;
+  --bp-lg: 980px;
+  --bp-xl: 1180px;
+  --maxw: 1180px;
+}

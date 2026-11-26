@@ -1,0 +1,547 @@
+/* Smart Bioinformatics Toolkit - page-scoped layouts for the three standalone
+   scientific tools (BLAST, taxonomy, benchmark). Loaded after tokens.css and
+   main.css; every value below resolves to a token. benchmark.css stays last
+   on the benchmark page so its chart/table rules keep priority there.
+   No gradients, decorative art, emoji or invented metrics. */
+
+/* ==========================================================================
+   Shared: the two-column input / output bench
+   ========================================================================== */
+.tool-view .workspace-header { gap: var(--space-5); }
+
+.tool-view .tool-columns {
+  display: grid;
+  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+  gap: var(--space-6);
+  align-items: start;
+  margin-top: var(--space-5);
+}
+
+.tool-view .input-panel,
+.tool-view .output-panel {
+  min-width: 0;
+  padding: var(--space-5);
+  border: var(--border-hairline);
+  border-radius: var(--radius-3);
+}
+
+.tool-view .input-panel { background: var(--surface-2); }
+.tool-view .output-panel { background: var(--surface); }
+
+.tool-view .panel-head {
+  margin-bottom: var(--space-5);
+  padding-bottom: var(--space-4);
+  border-bottom: var(--border-hairline);
+}
+.tool-view .panel-head .eyebrow { margin-bottom: var(--space-2); }
+.tool-view .panel-head h2 { font-size: var(--fs-700); }
+.tool-view .panel-hint {
+  margin: var(--space-2) 0 0;
+  color: var(--muted);
+  font-size: var(--fs-200);
+  line-height: var(--lh-body);
+}
+
+/* Labelled field groups keep the form compact and task-ordered. */
+.tool-view fieldset.input-group {
+  min-width: 0;
+  margin: 0 0 var(--space-5);
+  padding: var(--space-4);
+  background: var(--surface);
+  border: var(--border-hairline);
+  border-radius: var(--radius-3);
+}
+.tool-view fieldset.input-group > legend {
+  padding: 0 var(--space-2);
+  color: var(--accent-strong);
+  font: var(--fw-bold) var(--fs-200)/1.2 var(--font);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+.tool-view fieldset.input-group > legend .group-index {
+  margin-right: var(--space-2);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-variant-numeric: var(--numeric);
+}
+.tool-view fieldset.input-group > legend + * { margin-top: 0; }
+.tool-view .input-group .input-grid { margin-top: 0; gap: var(--space-4); }
+/* A native file chooser needs the full panel width to show its filename. */
+.tool-view .source-group .input-grid { grid-template-columns: minmax(0, 1fr); }
+.tool-view .input-group .sequence-input-group { margin-top: var(--space-4); }
+.tool-view .input-group .sequence-input-group:first-of-type { margin-top: 0; }
+
+/* The disclosure holds two sub-groups; each carries its own legend. */
+.tool-view .advanced { padding: var(--space-3) var(--space-4) var(--space-1); }
+.tool-view .advanced > .input-group {
+  margin-bottom: var(--space-4);
+  background: var(--surface-2);
+}
+.tool-view .advanced > .input-group:last-child { margin-bottom: 0; }
+
+.tool-view .label-row,
+.tool-view .textarea-footer { gap: var(--space-2); flex-wrap: wrap; }
+.tool-view .field-group textarea { height: 132px; }
+.tool-view #query-lengths,
+.tool-view #query-fasta,
+.tool-view #query-list,
+.tool-view #taxonomy-query-list { height: 84px; }
+
+.tool-view .action-row {
+  padding-top: var(--space-4);
+  border-top: var(--border-hairline);
+}
+.tool-view .action-row .primary-button { min-height: 44px; }
+
+.tool-view #project-context {
+  max-width: var(--maxw);
+  margin: 0 auto var(--space-5);
+  padding: var(--space-3) var(--space-4);
+  background: var(--accent-tint);
+  border: var(--border-hairline);
+  border-color: var(--accent-line);
+  border-left: var(--border-accent-width) solid var(--accent);
+  border-radius: var(--radius-2);
+  color: var(--ink-2);
+  font-size: var(--fs-300);
+}
+.tool-view #project-context[hidden] { display: none; }
+
+/* Standalone tool pages do not load components.css, where .info-card lives.
+   This token-based equivalent keeps the project-context note styled there. */
+.tool-view .info-card {
+  padding: var(--space-5);
+  background: var(--surface);
+  border: var(--border-hairline);
+  border-left: var(--border-accent-width) solid var(--accent);
+  border-radius: var(--radius-3);
+  color: var(--ink-2);
+  font-size: var(--fs-300);
+  line-height: var(--lh-body);
+}
+
+/* ==========================================================================
+   Shared: results region
+   ========================================================================== */
+.tool-view .results-panel {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+.tool-view .results-header {
+  padding-bottom: var(--space-4);
+  border-bottom: var(--border-hairline);
+}
+.tool-view .results-header .eyebrow { margin: 0 0 5px; }
+.tool-view .results-header h3 { font-size: var(--fs-700); }
+
+/* Export actions sit at the top of the output, not below the table. */
+.tool-view .export-row {
+  margin: var(--space-4) 0 var(--space-5);
+  padding: var(--space-3);
+  background: var(--surface-2);
+  border: var(--border-hairline);
+  border-radius: var(--radius-2);
+}
+.tool-view .export-row::before {
+  content: "Export";
+  display: block;
+  width: 100%;
+  margin-bottom: var(--space-2);
+  color: var(--muted);
+  font-size: var(--fs-100);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+
+.tool-view .summary-grid {
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: var(--space-2);
+  margin: var(--space-5) 0;
+}
+.tool-view .summary-card strong { font-size: var(--fs-700); }
+
+/* Scientific interpretation is a distinct, text-labelled note region. */
+.tool-view .note-region {
+  margin: var(--space-5) 0;
+  padding: var(--space-4);
+  background: var(--info-bg);
+  border: var(--border-hairline);
+  border-color: var(--info-line);
+  border-left: var(--border-accent-width) solid var(--info);
+  border-radius: var(--radius-2);
+}
+.tool-view .note-label {
+  margin: 0 0 var(--space-2);
+  color: var(--info);
+  font-size: var(--fs-200);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+.tool-view .results-note {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-300);
+  line-height: var(--lh-body);
+}
+
+.tool-view .table-wrap {
+  max-height: 520px;
+  margin-top: var(--space-4);
+  border-color: var(--line);
+}
+.tool-view .table-wrap thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-3);
+  box-shadow: inset 0 calc(-1 * var(--border-width)) 0 var(--line-strong);
+  white-space: nowrap;
+}
+.tool-view .table-wrap td,
+.tool-view .table-wrap th { font-size: var(--fs-200); }
+.tool-view table { font-variant-numeric: var(--numeric); }
+
+.tool-view .flag-region {
+  margin: var(--space-5) 0 0;
+  padding: var(--space-3) var(--space-4);
+  background: var(--caution-bg);
+  border: var(--border-hairline);
+  border-color: var(--caution-line);
+  border-left: var(--border-accent-width) solid var(--caution);
+  border-radius: var(--radius-2);
+}
+.tool-view .flag-region .flag-label {
+  margin: 0;
+  color: var(--caution);
+  font-size: var(--fs-200);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+.tool-view .flag-region .message {
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--caution);
+}
+
+/* Clear, pre-analysis state. The panel is shown only while results are hidden. */
+.tool-view .empty-state {
+  display: flex;
+  gap: var(--space-4);
+  align-items: flex-start;
+  margin-top: var(--space-5);
+  padding: var(--space-8) var(--space-5);
+  background: var(--surface-inset);
+  border: var(--border-width) dashed var(--line-strong);
+  border-radius: var(--radius-3);
+}
+.tool-view .empty-state-icon {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  display: grid;
+  place-items: center;
+  background: var(--surface);
+  color: var(--accent-strong);
+  border: var(--border-hairline);
+  border-radius: var(--radius-3);
+}
+.tool-view .empty-state-icon svg {
+  width: 20px;
+  height: 20px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.tool-view .empty-state h3 { font-size: var(--fs-500); }
+.tool-view .empty-state p {
+  margin: var(--space-2) 0 0;
+  color: var(--muted);
+  font-size: var(--fs-300);
+  line-height: var(--lh-body);
+}
+.tool-view .results-panel:not([hidden]) + .empty-state { display: none; }
+.tool-view .results-panel[hidden] { display: none; }
+
+/* ==========================================================================
+   BLAST-specific: data table and notes
+   ========================================================================== */
+.tool-blast .table-wrap { overflow: auto; }
+.tool-blast #blast-table td:last-child { min-width: 220px; white-space: normal; }
+
+/* ==========================================================================
+   Taxonomy-specific: per-query evidence cards
+   ========================================================================== */
+.tool-taxonomy .result-card {
+  margin-top: var(--space-4);
+  padding: var(--space-4);
+  background: var(--surface);
+  border: var(--border-hairline);
+  border-radius: var(--radius-3);
+  box-shadow: var(--elev-0);
+  overflow-x: auto;
+}
+.tool-taxonomy .result-card h4 {
+  font-family: var(--font-mono);
+  font-size: var(--fs-400);
+}
+.tool-taxonomy .consensus-summary {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  background: var(--surface-2);
+  border: var(--border-soft);
+  border-radius: var(--radius-2);
+}
+.tool-taxonomy .consensus-summary p {
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-300);
+  line-height: var(--lh-snug);
+}
+.tool-taxonomy .consensus-summary p:last-child { margin-bottom: 0; }
+.tool-taxonomy .result-card > .small-title { margin-top: var(--space-4); }
+.tool-taxonomy .result-card table.compact { min-width: 560px; }
+.tool-taxonomy .result-card table.compact thead th { background: var(--surface-3); }
+.tool-taxonomy .result-card .verdict-box { border-radius: var(--radius-2); }
+.tool-taxonomy .result-card .verdict-head { font-size: var(--fs-300); }
+.tool-taxonomy .result-card .small { font-variant-numeric: var(--numeric); }
+
+/* ==========================================================================
+   Benchmark: honest synthetic chart, labelled axes and structured reading
+   ========================================================================== */
+.bench-page .bench-note {
+  max-width: var(--maxw);
+  margin: var(--space-6) auto 0;
+  padding: var(--space-4) var(--space-5);
+  background: var(--caution-bg);
+  border: var(--border-hairline);
+  border-color: var(--caution-line);
+  border-left: var(--border-accent-width) solid var(--caution);
+  border-radius: var(--radius-3);
+}
+.bench-page .bench-note h2 {
+  margin: 0 0 var(--space-2);
+  color: var(--caution);
+  font-size: var(--fs-500);
+}
+.bench-page .bench-note p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-300);
+  line-height: var(--lh-body);
+}
+.bench-page .bench-intro,
+.bench-page .bench-chart-section,
+.bench-page .bench-explain,
+.bench-page .bench-table-section,
+.bench-page .bench-limits { padding-bottom: var(--space-8); }
+.bench-page .bench-lede {
+  max-width: 760px;
+  margin: var(--space-4) 0 0;
+  color: var(--muted);
+  font-size: var(--fs-500);
+  line-height: var(--lh-body);
+}
+.bench-page .section-heading { margin-bottom: var(--space-5); }
+.bench-page .section-heading .eyebrow { margin-bottom: var(--space-2); }
+.bench-page .section-heading h2 { font-size: var(--fs-700); }
+.bench-page .section-note { max-width: 560px; }
+
+.bench-page .bench-figure {
+  margin: 0;
+  padding: var(--space-5);
+  background: var(--surface);
+  border: var(--border-hairline);
+  border-radius: var(--radius-4);
+}
+.bench-page .bench-figure figcaption {
+  margin-bottom: var(--space-5);
+  padding-bottom: var(--space-3);
+  border-bottom: var(--border-soft);
+  color: var(--muted);
+  font-size: var(--fs-300);
+  line-height: var(--lh-body);
+}
+.bench-page .chart-grid {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-items: start;
+}
+.bench-page .chart-grid #chart {
+  grid-column: 2;
+  grid-row: 1;
+  margin: 0;
+}
+.bench-page .axis-y {
+  grid-column: 1;
+  grid-row: 1;
+  margin: var(--space-6) var(--space-3) 0 0;
+  color: var(--muted);
+  font-size: var(--fs-100);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+}
+.bench-page .axis-x {
+  grid-column: 2;
+  grid-row: 2;
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-200);
+  font-weight: var(--fw-semibold);
+  text-align: center;
+}
+.bench-page .bench-figure .legend {
+  margin: var(--space-3) 0 0;
+  padding-top: var(--space-3);
+  border-top: var(--border-soft);
+}
+.bench-page .legend-call::before,
+.bench-page .legend-wrong::before {
+  content: "";
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  margin-right: var(--space-2);
+  border-radius: var(--radius-1);
+  vertical-align: -1px;
+}
+.bench-page .legend-call::before { background: var(--info); }
+.bench-page .legend-wrong::before { background: var(--danger); }
+
+.bench-page .bench-explain-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+  margin-top: var(--space-5);
+}
+.bench-page .bench-info-card {
+  padding: var(--space-5);
+  background: var(--surface);
+  border: var(--border-hairline);
+  border-top: var(--border-accent-width) solid var(--accent);
+  border-radius: var(--radius-3);
+}
+.bench-page .bench-info-card.is-limited { border-top-color: var(--caution); }
+.bench-page .bench-info-card h3 { font-size: var(--fs-500); }
+.bench-page .bench-info-card ul {
+  margin: var(--space-3) 0 0;
+  padding-left: var(--space-5);
+}
+.bench-page .bench-info-card li {
+  margin-bottom: var(--space-2);
+  color: var(--ink-2);
+  font-size: var(--fs-300);
+  line-height: var(--lh-body);
+}
+.bench-page .bench-info-card li:last-child { margin-bottom: 0; }
+.bench-page .bench-info-card code { white-space: nowrap; }
+
+.bench-page .bench-table-wrap {
+  overflow-x: auto;
+  margin-top: var(--space-4);
+  background: var(--surface);
+  border: var(--border-hairline);
+  border-radius: var(--radius-3);
+}
+.bench-page .bench-table-wrap #rc-table {
+  margin: 0;
+  font-variant-numeric: var(--numeric);
+}
+.bench-page .bench-table-wrap #rc-table thead { background: var(--surface-3); }
+.bench-page .bench-table-wrap #rc-table th { color: var(--ink); font-weight: var(--fw-bold); }
+.bench-page .bench-table-wrap #rc-table td { color: var(--ink-2); }
+.bench-page .bench-table-wrap #rc-table caption {
+  padding: var(--space-3);
+  border-bottom: var(--border-hairline);
+  font-weight: var(--fw-semibold);
+}
+/* Small screens clip the final columns inside the scroll wrapper. The hint is
+   a visible affordance next to the table; wide screens do not need it. */
+.bench-page .table-scroll-hint { display: none; }
+.bench-page .table-scroll-hint::after { content: " \2192"; }
+
+/* ==========================================================================
+   Shared footer: parity with components.css for pages that do not load it
+   ========================================================================== */
+.site-footer {
+  background: var(--navy-deep); color: var(--ink-inverse);
+  padding: var(--space-12) max(5vw, var(--space-6)) var(--space-5);
+}
+.footer-grid {
+  max-width: var(--maxw); margin: 0 auto;
+  display: grid; grid-template-columns: 1.6fr 1fr 1fr 1fr; gap: var(--space-8);
+}
+.footer-brand { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); }
+.footer-brand .brand-mark { background: #ffffff14; border: var(--border-hairline); border-color: #ffffff30; }
+.footer-grid > div > p { max-width: 320px; color: var(--ink-inverse); font-size: var(--fs-300); line-height: 1.7; margin: 0; }
+.footer-heading {
+  margin: 0 0 var(--space-3); color: var(--surface);
+  font-size: var(--fs-200); font-weight: var(--fw-bold);
+  letter-spacing: var(--tracking-caps); text-transform: uppercase;
+}
+.footer-links { list-style: none; margin: 0; padding: 0; display: grid; gap: 9px; }
+.footer-links a { color: var(--ink-inverse); font-size: var(--fs-300); font-weight: var(--fw-medium); }
+.footer-links a:hover { color: var(--surface); text-decoration: underline; text-underline-offset: 3px; }
+.footer-disclaimer {
+  max-width: var(--maxw); margin: var(--space-8) auto 0; padding-top: var(--space-5);
+  border-top: var(--border-hairline); border-color: #ffffff26;
+  color: var(--ink-inverse); font-size: var(--fs-200); line-height: 1.7;
+}
+.footer-disclaimer strong { color: var(--surface); }
+.footer-bottom {
+  max-width: var(--maxw); margin: var(--space-4) auto 0;
+  display: flex; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap;
+  color: var(--ink-inverse); font-size: var(--fs-200);
+}
+:where(.site-footer a, .footer-links a):focus-visible { outline-color: var(--focus-on-dark); }
+
+/* ==========================================================================
+   Responsive: stack the bench and let wide data scroll inside its wrapper
+   ========================================================================== */
+@media (max-width: 980px) {
+  .tool-view .tool-columns { grid-template-columns: minmax(0, 1fr); gap: var(--space-5); }
+  .tool-view .table-wrap { max-height: 420px; }
+  .footer-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-7); }
+}
+
+@media (max-width: 640px) {
+  .tool-view .tool-workspace { padding: var(--space-4); }
+  .tool-view .input-panel,
+  .tool-view .output-panel { padding: var(--space-4); }
+  .tool-view .workspace-header { flex-direction: column; }
+  .tool-view .standalone-tag { align-self: flex-start; }
+  .tool-view .action-row > * { flex: 1 1 auto; }
+  .tool-view .action-row .quiet-button { flex: 0 0 auto; }
+  .tool-view .textarea-footer small { flex: 1 1 100%; }
+  .tool-view .empty-state { padding: var(--space-5) var(--space-4); }
+  .bench-page .bench-figure { padding: var(--space-4); }
+  .bench-page .chart-grid { grid-template-columns: minmax(0, 1fr); }
+  .bench-page .axis-y { display: none; }
+  .bench-page .chart-grid #chart { grid-column: 1; }
+  .bench-page .axis-x { grid-column: 1; }
+  .bench-page .bench-explain-grid { grid-template-columns: minmax(0, 1fr); }
+  /* Keep one scroll container: the wrapper, not the table itself. */
+  .bench-page .bench-table-wrap #rc-table {
+    display: table;
+    overflow: visible;
+    white-space: normal;
+  }
+  .bench-page .table-scroll-hint {
+    display: block;
+    margin: var(--space-2) 0 0;
+    color: var(--muted);
+    font-size: var(--fs-200);
+  }
+  .footer-grid { grid-template-columns: 1fr; gap: var(--space-5); }
+  .footer-bottom { flex-direction: column; gap: 6px; }
+}
