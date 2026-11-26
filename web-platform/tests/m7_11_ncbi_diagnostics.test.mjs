@@ -327,7 +327,9 @@ test("transport failure still fails closed as ncbi_error with one audited attemp
     globalThis.fetch = original;
   }
   assert.equal(response.status, 502);
-  assert.equal((await response.json()).code, "ncbi_error");
+  const errorBody = await response.json();
+  assert.equal(errorBody.code, "ncbi_error");
+  assert.equal(errorBody.transmitted, null, "a network error cannot confirm transmission");
   assert.equal(calls.length, 1, "no retry on transport failure");
   assert.equal(state.rows.length, 0);
   assert.equal(state.auditEvents.length, 1);

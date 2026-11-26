@@ -254,8 +254,10 @@ export async function handleSubmit(request, env, { now = Date.now() } = {}) {
     return jsonResponse({
       error: "Could not submit the search to NCBI.",
       code: "ncbi_error",
-      // A 429/5xx still reached NCBI; only a local pre-egress failure did not.
-      transmitted: Boolean(transport) || !mock,
+      // A received HTTP response (including 429/5xx) proves transmission. A
+      // timeout/network error does NOT: transmission stays unknown (null),
+      // never overclaimed as true.
+      transmitted: transport && Number.isFinite(transport.httpStatus) ? true : null,
       rid: null,
       diagnostics_available: Boolean(diagnosticDetail)
     }, 502, request);
