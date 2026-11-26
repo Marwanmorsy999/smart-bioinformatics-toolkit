@@ -48,7 +48,7 @@ before(async () => {
 
 after(async () => { await browser?.close(); });
 
-async function openPage(runResponse = RUN_RESPONSE) {
+async function openPage(runResponse = RUN_RESPONSE, query = "") {
   const page = await browser.newPage();
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -84,7 +84,7 @@ async function openPage(runResponse = RUN_RESPONSE) {
     URL.createObjectURL = (blob) => { window.__downloads.push(blob); return `blob:stub-${window.__downloads.length}`; };
     URL.revokeObjectURL = () => {};
   }, runResponse);
-  await page.goto(PAGE);
+  await page.goto(PAGE + query);
   return { page, errors };
 }
 
@@ -99,8 +99,14 @@ test("FIXTURE UI: multi-FASTA validation, single-sequence routing and approval g
   assert.equal(await page.locator("#phylo-plan").isDisabled(), true);
   await loadFasta(page, ">a\nACGTZZ\n>b\nACGT\n>c\nACGT\n");
   assert.match(await page.locator("#phylo-fasta-stats").innerText(), /non-nucleotide characters/);
+  // FIXTURE: unequal RAW input lengths are expected before MAFFT — reported as
+  // a neutral statistic, never an error, and the plan stays available.
   await loadFasta(page, ">a\nACGT\n>b\nACGTA\n>c\nACGT\n");
-  assert.match(await page.locator("#phylo-fasta-stats").innerText(), /Unequal sequence lengths/);
+  const stats = await page.locator("#phylo-fasta-stats").innerText();
+  assert.match(stats, /Unequal sequence lengths/);
+  assert.match(stats, /MAFFT will align them/);
+  assert.equal(await page.locator("#phylo-fasta-stats .is-invalid").count(), 0);
+  assert.equal(await page.locator("#phylo-plan").isDisabled(), false);
   await loadFasta(page, ">a\nACGT\n");
   assert.equal(await page.locator("#phylo-identify-link").isVisible(), true);
   assert.match(await page.locator("#phylo-fasta-stats").innerText(), /use 16S identification/i);
@@ -189,6 +195,32 @@ test("FIXTURE UI: a run without a tree fails honestly and offers no tree export"
   assert.equal(await buttons.nth(0).isDisabled(), true);
   assert.equal(await buttons.nth(1).isDisabled(), true);
   assert.match(await page.locator("#phylo-status").innerText(), /No outputs are claimed|could not produce verified results/);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
+test("FIXTURE UI: URL resume params are forwarded only after approval; no secrets are sent", async () => {
+  const jobId = "4838ba20a6d8676526e1c47a033d95de";
+  const historyId = "11ac94870d0bb33adfdcc31d5164dd84";
+  const query = `?resume_provider_job_id=${jobId}&history_id=${historyId}&api_key=stub-secret`;
+  const { page, errors } = await openPage(RUN_RESPONSE, query);
+  await loadFasta(page, FASTA);
+  await page.click("#phylo-plan");
+  await page.waitForFunction(() => document.querySelectorAll("#phylo-plan-steps li").length === 7);
+  // The approval gate is unchanged: no run call before the checkbox is checked.
+  assert.equal(await page.locator("#phylo-run").isDisabled(), true);
+  let runCalls = await page.evaluate(() => window.__calls.filter((item) => item.url.includes("/api/ai/workflows/phylo/run")));
+  assert.equal(runCalls.length, 0);
+  await page.check("#phylo-approve-check");
+  await page.click("#phylo-run");
+  await page.waitForSelector("#phylo-results:not([hidden])");
+  runCalls = await page.evaluate(() => window.__calls.filter((item) => item.url.includes("/api/ai/workflows/phylo/run")));
+  assert.equal(runCalls.length, 1);
+  const body = JSON.parse(runCalls[0].body);
+  assert.equal(body.resume_provider_job_id, jobId);
+  assert.equal(body.history_id, historyId);
+  assert.equal(body.api_key, undefined);
+  assert.doesNotMatch(runCalls[0].body, /stub-secret|X-API-Key/i);
   assert.deepEqual(errors, []);
   await page.close();
 });

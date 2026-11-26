@@ -14,6 +14,7 @@
 .phylo-validation .is-valid { color: #17643a; }
 .phylo-validation .is-invalid { color: #9b2226; }
 .phylo-validation .is-warning { color: #8a5a00; }
+.phylo-validation .is-info { color: var(--ink-2, #4a5563); }
 
 #phylo-reference-select {
   display: flex;

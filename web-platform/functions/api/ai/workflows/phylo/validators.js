@@ -1,8 +1,12 @@
 // M7.11 scientific validators. Pure ES module — no network, no secrets.
 //
-// - validateAlignment(fasta): structural checks, equal lengths, IUPAC/gap alphabet
-//   and deterministic column metrics. Gaps are legal in an aligned FASTA, so the
-//   generic BLAST FASTA gate (which rejects '-') is deliberately NOT reused here.
+// - validateInputFasta(fasta): INPUT gate for raw homologous sequences. Unequal
+//   lengths are legitimate BEFORE MAFFT, so this gate deliberately does NOT
+//   require equal lengths (only the retrieved alignment does).
+// - validateAlignment(fasta): strict ALIGNED-output checks — equal lengths,
+//   IUPAC/gap alphabet and deterministic column metrics. Gaps are legal in an
+//   aligned FASTA, so the generic BLAST FASTA gate (which rejects '-') is
+//   deliberately NOT reused here.
 // - validateTree(newick, alignmentNames, options): parseable with an INDEPENDENT
 //   parser below; taxa-set equality, duplicate/unnamed tips, finite/non-negative
 //   branch lengths, parsed support labels and an explicit rooting statement.
@@ -372,6 +376,43 @@ export function validateAlignment(fastaText) {
     duplicates,
     errors,
     metrics
+  };
+}
+
+// --------------------------------------------------------------- input gate
+//
+// Pure, network-free gate for RAW (pre-alignment) homologous sequences.
+// Unequal lengths are expected here: MAFFT is precisely the step that makes
+// them equal. This helper never accepts fewer than three distinct records and
+// never silently drops a malformed record. `validateAlignment` remains strict
+// for the retrieved MAFFT output and is the ONLY place equal length is required.
+export function validateInputFasta(fastaText) {
+  const records = parseFastaRecords(fastaText);
+  const errors = [];
+  if (!String(fastaText ?? "").trim().startsWith(">")) {
+    return { valid: false, error: "FASTA input must start with a '>' header line.",
+      records: 0, lengths: [], names: [], errors: ["input_has_no_header"] };
+  }
+  if (records.length < 3) errors.push("input_requires_at_least_three_records");
+  const badHeaders = records.map((record, index) => ({ record, index })).filter(({ record }) => !record.name);
+  if (badHeaders.length) errors.push(`input_empty_identifier_at_record_${badHeaders[0].index + 1}`);
+  const emptyRecords = records.filter((record) => !record.sequence);
+  if (emptyRecords.length) errors.push("input_has_empty_sequences");
+  const invalidRecords = records.filter((record) => record.sequence && !DNA_ALPHABET.test(record.sequence));
+  if (invalidRecords.length) errors.push("input_alphabet_not_dna_iupac");
+  const names = records.map((record) => record.name);
+  const duplicates = names.filter((name, index) => name && names.indexOf(name) !== index);
+  if (duplicates.length) errors.push("input_duplicate_identifiers");
+  const lengths = records.map((record) => record.sequence.length);
+  return {
+    valid: errors.length === 0,
+    error: errors.length ? errors.join("; ") : null,
+    records: records.length,
+    names,
+    lengths,
+    duplicates,
+    unique_lengths: [...new Set(lengths)].sort((a, b) => a - b),
+    errors
   };
 }
 

@@ -24,6 +24,24 @@ const STEP_TEMPLATE = Object.freeze([
 
 let state = { fasta: "", filename: "", objective: "", validation: null, plan: null, body: null, treeView: null, pollTimer: null };
 
+// Optional RECOVERY parameters. Strict allow-list + length limit: only a real
+// job id / history id is forwarded, never a token, key or arbitrary string.
+// These are included in the POST body only after the approval gate is passed.
+function readResumeParams() {
+  const empty = { resume_provider_job_id: null, history_id: null };
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const safe = (key) => {
+      const value = params.get(key);
+      return value && /^[A-Za-z0-9._-]+$/.test(value) ? value.slice(0, 200) : null;
+    };
+    return { resume_provider_job_id: safe("resume_provider_job_id"), history_id: safe("history_id") };
+  } catch {
+    return empty;
+  }
+}
+const RESUME_PARAMS = readResumeParams();
+
 async function sha256(text) {
   try {
     const bytes = new TextEncoder().encode(text);
@@ -61,7 +79,7 @@ function recordList(text) {
 
 function validateMultiFasta(text) {
   const { records, errors } = recordList(text);
-  const dna = /^[ACGTURYSWKMBDHVN]+$/i;
+  const dna = /^[ACGTURYSWKMBDHVN-]+$/i;
   const names = records.map((record) => record.name);
   const duplicates = names.filter((name, index) => name && names.indexOf(name) !== index);
   if (duplicates.length) errors.push(`Duplicate identifiers: ${[...new Set(duplicates)].join(", ")}.`);
@@ -71,7 +89,12 @@ function validateMultiFasta(text) {
   }
   const lengths = records.map((record) => record.sequence.length).filter((length) => length > 0);
   const uniqueLengths = [...new Set(lengths)].sort((a, b) => a - b);
-  if (uniqueLengths.length > 1) errors.push(`Unequal sequence lengths: ${uniqueLengths.join(", ")}.`);
+  // Unequal lengths are EXPECTED for raw homologous 16S sequences before
+  // MAFFT. They are informational statistics here, never an input error;
+  // equal length is required only for the retrieved aligned output.
+  const info = uniqueLengths.length > 1
+    ? [`Unequal sequence lengths (${uniqueLengths.join(", ")}): expected before alignment; MAFFT will align them.`]
+    : [];
   if (records.length === 1) errors.push("Single sequence: use 16S identification, not phylogenetics.");
   else if (records.length === 2) errors.push("At least three taxa are required; four or more are recommended.");
   else if (records.length === 0) errors.push("No FASTA records were found.");
@@ -82,6 +105,7 @@ function validateMultiFasta(text) {
     unique_ids: new Set(names).size,
     duplicates,
     errors,
+    info,
     names,
     min_length: lengths.length ? Math.min(...lengths) : null,
     max_length: lengths.length ? Math.max(...lengths) : null,
@@ -107,6 +131,13 @@ function renderFastaStats(validation) {
   const summary = document.createElement("p");
   summary.textContent = `Records: ${validation.record_count}; unique IDs: ${validation.unique_ids}; lengths: ${validation.lengths.join(", ") || "n/a"}${validation.min_length !== null ? ` (min ${validation.min_length}, max ${validation.max_length})` : ""}.`;
   box.append(summary);
+  // Informational statistics (e.g. unequal raw lengths) are neutral notes,
+  // never validation errors — MAFFT aligns the sequences before tree inference.
+  if ((validation.info ?? []).length) {
+    const notes = document.createElement("ul");
+    for (const note of validation.info) appendLine(notes, note, "is-info");
+    box.append(notes);
+  }
   if (!validation.valid) {
     const list = document.createElement("ul");
     for (const error of validation.errors) appendLine(list, error, "is-invalid");
@@ -396,7 +427,9 @@ $("phylo-run").addEventListener("click", async () => {
     response = await fetch("/api/ai/workflows/phylo/run", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ fasta_text: state.fasta, filename: state.filename || "phylo.fasta",
-        objective: state.objective, sequence_type: "dna" })
+        objective: state.objective, sequence_type: "dna",
+        ...(RESUME_PARAMS.resume_provider_job_id ? { resume_provider_job_id: RESUME_PARAMS.resume_provider_job_id } : {}),
+        ...(RESUME_PARAMS.history_id ? { history_id: RESUME_PARAMS.history_id } : {}) })
     });
     body = await response.json();
   } catch {
