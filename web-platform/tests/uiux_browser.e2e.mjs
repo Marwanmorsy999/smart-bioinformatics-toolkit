@@ -24,7 +24,8 @@ const PAGES = [
   { key: "blast", file: "blast.html", title: /BLAST Results Analyzer/ },
   { key: "taxonomy", file: "taxonomy.html", title: /Taxonomy Analyzer/ },
   { key: "workspace", file: "workspace.html", title: /Research workspace/ },
-  { key: "phylo", file: "phylo.html", title: /Phylogenetics workflow/ }
+  { key: "phylo", file: "phylo.html", title: /Phylogenetics workflow/ },
+  { key: "history", file: "history.html", title: /Research history/ }
 ];
 const VIEWPORTS = [
   { width: 1440, height: 900 },
@@ -80,7 +81,7 @@ async function open(key, viewport = DESKTOP) {
 }
 
 // --------------------------------------------------------------- (a) + (b)
-test("(a,b) all seven pages load from file:// and the skip link targets main", async () => {
+test("(a,b) all eight pages load from file:// and the skip link targets main", async () => {
   const problems = [];
   for (const def of PAGES) {
     const page = await open(def.key);
@@ -248,6 +249,10 @@ test("(h) no horizontal overflow at five viewports; responsive screenshots saved
       await page.close();
     }
   }
+  // M7.12: the new history page is included in PAGES, so the loop above checks
+  // it at every viewport; make the tablet-width guarantee explicit as well.
+  assert.equal(problems.filter((line) => line.startsWith("history @ 768x1024")).length, 0,
+    "history page must not overflow at tablet width");
   assert.equal(shots, PAGES.length * VIEWPORTS.length, "unexpected screenshot count");
   assert.deepEqual(problems, [], `horizontal overflow:\n- ${problems.join("\n- ")}`);
 });

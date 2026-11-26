@@ -16,6 +16,7 @@ import { createFetch, handlers } from "../worker.js";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const HISTORY_PAGE = "file://" + resolve(HERE, "../public/history.html").replace(/\\/g, "/");
 const PHYLO_PAGE = "file://" + resolve(HERE, "../public/phylo.html").replace(/\\/g, "/");
+const SIXTEEN_PAGE = "file://" + resolve(HERE, "../public/16s.html").replace(/\\/g, "/");
 const STORAGE_KEY = "sbio.research-history.v1";
 
 const RUN_ID = "job_492333f6d7ef364e";
@@ -523,4 +524,70 @@ test("BROWSER: phylo results never auto-request chat; opt-in uses the assistant 
   assert.equal(await page.evaluate(() => window.__calls.filter((call) => call.url.includes("/api/assistant/chat")).length), 1);
   assert.deepEqual(errors, []);
   await page.close();
+});
+
+// Integration coverage of the real 16S approval handler. Unit-testing the
+// exported capture helper alone cannot catch a stale variable in the handler.
+async function open16sWithApproval(jobIds) {
+  const page = await browser.newPage();
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(`pageerror: ${error.message}`));
+  page.on("console", (message) => { if (message.type() === "error") errors.push(`console.error: ${message.text()}`); });
+  await page.addInitScript(({ jobIds }) => {
+    window.__calls = [];
+    try { localStorage.removeItem("sbio.research-history.v1"); } catch { /* ignored */ }
+    window.fetch = async (input, init = {}) => {
+      const url = String(input);
+      window.__calls.push({ url, method: String(init.method ?? "GET") });
+      const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+      if (url.includes("/api/assistant/chat")) return json({ reply: "FIXTURE only." });
+      if (url.includes("/api/ai/requests")) return json({
+        plan_id: "plan_0000000000000002", request_id: "req_0000000000000002", dataset_id: "ds_0000000000000002",
+        plan: { intent: "identify_taxa", domain: "microbiome-16s", steps: [
+          { id: "step_1", tool_id: "ncbi.blastn", external_egress: true, consent_required: true, params: {}, inputs: [], backend: "remote-python" }
+        ] }
+      });
+      if (url.includes("/api/ai/plans/") && url.includes("/approve")) return json({
+        blast_consent: { token: "fixture-consent-token", database: "fixture-db", program: "blastn",
+          input_hash: "fixture-hash", expires_at: "2026-11-27T00:00:00.000Z" },
+        job_ids: jobIds, execution_mode: "real"
+      });
+      return json({ error: "stub_not_found" }, 404);
+    };
+  }, { jobIds });
+  await page.goto(SIXTEEN_PAGE);
+  return { page, errors };
+}
+
+test("BROWSER: the real 16S approval handler stores the genuine job id, and invents none when absent", async () => {
+  const runId = "job_00000000000000b1";
+  const { page, errors } = await open16sWithApproval([runId]);
+  await page.fill("#fasta-text", ">NR_111111.1 first fixture taxon\nACGTACGTAC\n>NR_222222.1 second fixture taxon\nACGTTCGTAC\n");
+  await page.click("#create-request");
+  await page.waitForSelector("#approval-box:not([hidden])");
+  await page.check("#approve-check");
+  await page.click("#approve-plan");
+  await page.waitForFunction((id) => String(localStorage.getItem("sbio.research-history.v1") ?? "").includes(id), runId);
+  const entries = JSON.parse(await page.evaluate(() => localStorage.getItem("sbio.research-history.v1")));
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].run_id, runId);
+  assert.equal(entries[0].workflow_type, "16s");
+  assert.equal(entries[0].status, "awaiting_user_action");
+  assert.deepEqual(entries[0].sequence_ids, ["NR_111111.1", "NR_222222.1"]);
+  const raw = await page.evaluate(() => localStorage.getItem("sbio.research-history.v1"));
+  assert.doesNotMatch(raw, /fixture-consent-token|ACGTACGTAC|ncbi\.blastn/);
+  assert.deepEqual(errors, []);
+  await page.close();
+
+  const noId = await open16sWithApproval([]);
+  await noId.page.fill("#fasta-text", ">NR_333333.1 third fixture taxon\nACGTACGTAC\n");
+  await noId.page.click("#create-request");
+  await noId.page.waitForSelector("#approval-box:not([hidden])");
+  await noId.page.check("#approve-check");
+  await noId.page.click("#approve-plan");
+  await noId.page.waitForSelector("#consent-view:not([hidden])");
+  assert.equal(await noId.page.evaluate(() => localStorage.getItem("sbio.research-history.v1")), null,
+    "no run id in the approval response means no index entry is invented");
+  assert.deepEqual(noId.errors, []);
+  await noId.page.close();
 });

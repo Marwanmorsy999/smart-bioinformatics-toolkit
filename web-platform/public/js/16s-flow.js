@@ -419,7 +419,7 @@ ui.approve.addEventListener("click", async () => {
       capture16sRun(data, {
         objective: ui.objective.value.trim(),
         plan_id: state.planId,
-        sequence_ids: parseFasta(fasta).records.map((record) => record.id)
+        sequence_ids: parseFasta(state.fasta).records.map((record) => record.id)
       });
     } catch {
       // Browser storage is optional; the AI-run record remains on the server.
