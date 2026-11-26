@@ -389,10 +389,46 @@ export function parsePutResponse(text) {
   return null;
 }
 
+// NCBI CMD=Put also returns RTOE: the estimated seconds until results are
+// ready (numeric). A missing or non-numeric RTOE is null, never invented.
+export function parseRtoe(text) {
+  const body = String(text ?? "");
+  const patterns = [
+    /name=["']RTOE["']\s+value=["']\s*(\d+(?:\.\d+)?)\s*["']/i,
+    /value=["']\s*(\d+(?:\.\d+)?)\s*["']\s+name=["']RTOE["']/i,
+    /\bRTOE\s*[=:]\s*(\d+(?:\.\d+)?)/i
+  ];
+  for (const pattern of patterns) {
+    const match = body.match(pattern);
+    if (match) {
+      const seconds = Number(match[1]);
+      return Number.isFinite(seconds) ? seconds : null;
+    }
+  }
+  return null;
+}
+
+// Detailed CMD=Put parsing. parsePutResponse above is unchanged; this returns
+// the RID plus RTOE. No sequence value is read or returned.
+export function parsePutResponseDetailed(text) {
+  return { rid: parsePutResponse(text), rtoe: parseRtoe(text) };
+}
+
 // ------------------------------------------------ strict QBlastInfo status
-// Only QBlastInfoBegin ... QBlastInfoEnd blocks from the canonical CMD=Get body
-// are authoritative. A FORMAT_OBJECT=SearchInfo page also contains a READY
-// block, but that READY describes the formatting request, not the search.
+// Only QBlastInfoBegin ... QBlastInfoEnd blocks are authoritative; tokens
+// outside those blocks (page titles, stale "Status=Searching" tables, hidden
+// form fields) are never read as search status.
+//
+// Two retrieval modes exist. The production canonical CMD=Get body is parsed
+// with mode="canonical" (default). A FORMAT_OBJECT=SearchInfo body carries its
+// own valid QBlastInfo search-status evidence (Status=READY +
+// ThereAreHits=yes/no, WAITING/QUEUED/RUNNING/FAILED/UNKNOWN); parse it with
+// mode="SearchInfo" (or it is auto-detected when the body clearly is a
+// SearchInfo page AND no canonical error page is present). A SearchInfo READY
+// is NOT, by itself, a substitute for the canonical CMD=Get body in the
+// results gate: when two structured snapshots disagree on Status the typed
+// state is "status_conflict", never queued/no-hit/success, and production
+// results require canonical complete. See reconcileStatusEvidence().
 
 export const QBLAST_STATES = Object.freeze({
   QUEUED: "queued",
@@ -400,16 +436,26 @@ export const QBLAST_STATES = Object.freeze({
   COMPLETE: "complete",
   FAILED: "failed",
   ERROR: "error",
-  UNAVAILABLE: "unavailable"
+  UNAVAILABLE: "unavailable",
+  CONFLICT: "status_conflict"
 });
 export const QBLAST_TERMINAL_STATES = new Set([
-  QBLAST_STATES.COMPLETE, QBLAST_STATES.FAILED, QBLAST_STATES.ERROR, QBLAST_STATES.UNAVAILABLE
+  QBLAST_STATES.COMPLETE, QBLAST_STATES.FAILED, QBLAST_STATES.ERROR, QBLAST_STATES.UNAVAILABLE, QBLAST_STATES.CONFLICT
 ]);
 const QBLAST_STATUS_VALUES = new Set(["READY", "RUNNING", "WAITING", "QUEUED", "FAILED", "UNKNOWN"]);
+const QBLAST_KNOWN_STATES = new Set(Object.values(QBLAST_STATES));
 const PROVIDER_DATABASE_ERROR = /No alias or index file found/i;
 const SAFE_ERROR_CODES = new Set([
-  "timeout", "network_error", "http_error", "empty_response", "malformed_response", "format_status_only"
+  "timeout", "network_error", "http_error", "empty_response", "malformed_response", "status_conflict"
 ]);
+// A body clearly servicing a FORMAT_OBJECT=SearchInfo request. The visible
+// "Format Request Status" title and the hidden FORMAT_OBJECT=SearchInfo field
+// mark it; a stale "Status=Searching" table alone does not.
+const SEARCHINFO_PAGE = /Format Request Status|FORMAT_OBJECT\s*=\s*["']?SearchInfo/i;
+const SEARCHINFO_FORM_FIELD = [
+  /name\s*=\s*["']FORMAT_OBJECT["'][^>]*value\s*=\s*["']SearchInfo["']/i,
+  /value\s*=\s*["']SearchInfo["'][^>]*name\s*=\s*["']FORMAT_OBJECT["']/i
+];
 
 export function extractQBlastBlocks(text) {
   const body = String(text ?? "");
@@ -462,8 +508,10 @@ function normalizeTimestamp(at) {
 }
 
 // SAFE raw-status evidence: RID, timestamp, upstream HTTP status, canonical
-// QBlastInfo status, truncated provider error, hit flag and transport code.
-// Query sequence, HTML, consent tokens and credentials are never included.
+// QBlastInfo status, truncated provider error, hit flag(s), conflicting
+// statuses and transport code. Query sequence, HTML, consent tokens and
+// credentials are never included. `no_hits` is the boolean form of
+// ThereAreHits=no; `there_are_hits` keeps the raw provider token.
 export function safeStatusEvidence({
   rid = null,
   at = null,
@@ -471,10 +519,16 @@ export function safeStatusEvidence({
   qblastStatus = null,
   providerError = null,
   thereAreHits = null,
-  errorCode = null
+  errorCode = null,
+  conflictingStatuses = []
 } = {}) {
   const status = String(qblastStatus ?? "").toUpperCase();
   const hits = String(thereAreHits ?? "").toLowerCase();
+  const thereAreHitsValue = hits === "yes" || hits === "no" ? hits : null;
+  const conflicts = (Array.isArray(conflictingStatuses) ? conflictingStatuses : [])
+    .map((value) => String(value ?? "").toUpperCase())
+    .filter((value) => QBLAST_STATUS_VALUES.has(value))
+    .slice(0, 8);
   return Object.freeze({
     rid: isValidRid(rid) ? rid : null,
     timestamp: normalizeTimestamp(at),
@@ -483,7 +537,9 @@ export function safeStatusEvidence({
     // Re-extract rather than trusting an arbitrary string: only a provider
     // error phrase is allowed into evidence, never surrounding HTML/secrets.
     provider_error: providerError ? extractProviderError(providerError) : null,
-    there_are_hits: hits === "yes" || hits === "no" ? hits : null,
+    there_are_hits: thereAreHitsValue,
+    no_hits: thereAreHitsValue === "no",
+    conflicting_statuses: Object.freeze(conflicts),
     error_code: SAFE_ERROR_CODES.has(errorCode) ? errorCode : null
   });
 }
@@ -492,15 +548,50 @@ function statusResult({ state, reason, message, evidence }) {
   return Object.freeze({ state, reason, message, evidence, terminal: QBLAST_TERMINAL_STATES.has(state) });
 }
 
+// Map a recognized QBlastInfo Status token to a typed state. WAITING and
+// QUEUED both mean not-yet-running; UNKNOWN means unknown, not failed.
+function mapQBlastToken(token) {
+  switch (String(token ?? "").toUpperCase()) {
+    case "READY": return QBLAST_STATES.COMPLETE;
+    case "RUNNING": return QBLAST_STATES.RUNNING;
+    case "WAITING": case "QUEUED": return QBLAST_STATES.QUEUED;
+    case "FAILED": return QBLAST_STATES.FAILED;
+    case "UNKNOWN": return QBLAST_STATES.UNAVAILABLE;
+    default: return null;
+  }
+}
+
+// Collect EVERY Status= value across QBlastInfo blocks (not just the first),
+// so contradictory blocks cannot hide behind a benign first match.
+function collectQBlastStatuses(blocks) {
+  const pattern = /^\s*Status\s*=\s*([^\r\n]+)/im;
+  const values = [];
+  for (const block of blocks) {
+    const match = block.match(pattern);
+    if (match && match[1].trim()) values.push(match[1].trim());
+  }
+  return values;
+}
+
+export function clearlySearchInfo(text) {
+  const body = typeof text === "string" ? text : "";
+  if (SEARCHINFO_PAGE.test(body)) return true;
+  return SEARCHINFO_FORM_FIELD.some((pattern) => pattern.test(body));
+}
+
 export function parseQBlastStatus(text, {
   rid = null,
   httpStatus = 200,
   at = null,
   errorCode = null,
   timeout = false,
-  allowBareStatus = false
+  allowBareStatus = false,
+  mode = "canonical"
 } = {}) {
   const body = typeof text === "string" ? text : "";
+  // `mode` selects the documented retrieval flavour ("canonical" default,
+  // "SearchInfo"). The typed QBlastInfo mapping is identical for both, so
+  // `mode` never loosens a safeguard; canonical error pages always win.
   const transportCode = errorCode || (timeout ? "timeout" : null);
   if (transportCode === "timeout" || transportCode === "network_error") {
     const evidence = safeStatusEvidence({ rid, at, httpStatus, errorCode: transportCode });
@@ -545,47 +636,69 @@ export function parseQBlastStatus(text, {
     });
   }
 
-  const status = qblastValue(blocks, "Status");
   const thereAreHits = qblastValue(blocks, "ThereAreHits");
   const providerError = extractProviderError(body);
-  const evidence = safeStatusEvidence({ rid, at, httpStatus, qblastStatus: status, providerError, thereAreHits });
-  const normalized = String(status ?? "").toUpperCase();
+  const canonicalErrorPage = providerError !== null || PROVIDER_DATABASE_ERROR.test(body);
+  const rawStatuses = collectQBlastStatuses(blocks);
+  const recognized = [...new Set(rawStatuses.map((value) => value.toUpperCase()).filter((value) => QBLAST_STATUS_VALUES.has(value)))];
+  const unrecognized = rawStatuses.filter((value) => !QBLAST_STATUS_VALUES.has(value.toUpperCase()));
+  const evidenceBase = { rid, at, httpStatus, providerError, thereAreHits };
+  const hitsNo = String(thereAreHits ?? "").toLowerCase() === "no";
 
-  // A FORMAT_OBJECT status page is not a search status page, even though it
-  // contains a QBlastInfo READY block and a stale "Searching" table cell.
-  if (normalized === "READY" && /Format Request Status|FORMAT_OBJECT\s*=\s*SearchInfo/i.test(body)) {
+  // Contradictory search status inside one response: never queued, never
+  // no-hit, never success. Preserve every recognized value.
+  if (recognized.length > 1) {
     return statusResult({
-      state: QBLAST_STATES.UNAVAILABLE,
-      reason: "format_status_only",
-      message: "NCBI returned a formatting-request READY, not a search status. The search state is unknown; no result was retrieved.",
-      evidence: safeStatusEvidence({ rid, at, httpStatus, qblastStatus: status, providerError, thereAreHits, errorCode: "format_status_only" })
+      state: QBLAST_STATES.CONFLICT,
+      reason: "conflicting_status",
+      message: `NCBI returned contradictory QBlastInfo status values (${recognized.join(", ")}). The search state is not trustworthy; no result was retrieved.`,
+      evidence: safeStatusEvidence({ ...evidenceBase, qblastStatus: null, errorCode: "status_conflict", conflictingStatuses: recognized })
     });
   }
-  if (!QBLAST_STATUS_VALUES.has(normalized)) {
+  // Unknown token, or no recognized Status at all: malformed, never queued.
+  if (recognized.length === 0 || unrecognized.length > 0) {
     return statusResult({
       state: QBLAST_STATES.ERROR,
       reason: "malformed_response",
       message: "NCBI returned an unrecognised QBlastInfo status. The search state is unknown; no result was retrieved.",
-      evidence: safeStatusEvidence({ rid, at, httpStatus, qblastStatus: status, providerError, thereAreHits, errorCode: "malformed_response" })
+      evidence: safeStatusEvidence({ ...evidenceBase, qblastStatus: recognized[0] ?? null, errorCode: "malformed_response" })
     });
   }
 
+  const normalized = recognized[0];
+  const evidence = safeStatusEvidence({ ...evidenceBase, qblastStatus: normalized });
+  const state = mapQBlastToken(normalized);
+
   if (normalized === "READY") {
+    // An error page carrying an unrelated READY is contradictory evidence,
+    // never a success; a SearchInfo READY requires no canonical error page.
+    if (canonicalErrorPage) {
+      return statusResult({
+        state: QBLAST_STATES.CONFLICT,
+        reason: "conflicting_evidence",
+        message: "NCBI returned an error page with an unrelated QBlastInfo READY. The search state is not trustworthy; no result was retrieved.",
+        evidence: safeStatusEvidence({ ...evidenceBase, qblastStatus: normalized, errorCode: "status_conflict", conflictingStatuses: ["READY"] })
+      });
+    }
+    const noHitsNote = hitsNo ? " NCBI reports ThereAreHits=no." : "";
     return statusResult({
       state: QBLAST_STATES.COMPLETE,
       reason: null,
-      message: "NCBI reports the search is complete. Results may now be requested.",
+      message: `NCBI reports the search is complete. Results may now be requested.${noHitsNote}`,
       evidence
     });
   }
   if (normalized === "FAILED" || normalized === "UNKNOWN") {
     const databaseError = PROVIDER_DATABASE_ERROR.test(providerError || "") || PROVIDER_DATABASE_ERROR.test(body);
+    const failed = normalized === "FAILED";
     return statusResult({
-      state: QBLAST_STATES.FAILED,
-      reason: databaseError ? "provider_database_error" : (normalized === "UNKNOWN" ? "provider_unknown" : "provider_error"),
+      state: failed ? QBLAST_STATES.FAILED : QBLAST_STATES.UNAVAILABLE,
+      reason: databaseError ? "provider_database_error" : (failed ? "provider_error" : "provider_unknown"),
       message: databaseError
         ? "NCBI rejected the search before retrieving hits: the requested 16S database was not found on the provider. No results exist for this RID and none were fabricated."
-        : "NCBI reported a failed search. No results exist for this RID and none were fabricated.",
+        : failed
+          ? "NCBI reported a failed search. No results exist for this RID and none were fabricated."
+          : "NCBI reports the search state as UNKNOWN. The search state is not trustworthy; no result was retrieved.",
       evidence
     });
   }
@@ -597,12 +710,67 @@ export function parseQBlastStatus(text, {
       evidence
     });
   }
+  // WAITING / QUEUED
   return statusResult({
     state: QBLAST_STATES.QUEUED,
     reason: null,
     message: "NCBI reports the search is queued or waiting. No results have been retrieved.",
     evidence
   });
+}
+
+// Reconcile two structured status snapshots (each a parseQBlastStatus result,
+// a safe evidence object, or a bare recognized status token). Returns
+// { conflict, state, reason, evidences }. When the two snapshots disagree on
+// QBlastInfo Status, conflict=true and state="status_conflict"; BOTH original
+// evidences are preserved. Never maps contradiction to queued/no-hit/success.
+export function reconcileStatusEvidence(a, b) {
+  const evidences = [snapshotEvidence(a), snapshotEvidence(b)];
+  const rawA = recognizedTokenOf(a);
+  const rawB = recognizedTokenOf(b);
+  const stateA = snapshotState(a);
+  const stateB = snapshotState(b);
+  const rawConflict = Boolean(rawA && rawB && rawA !== rawB);
+  const stateConflict = Boolean(stateA && stateB && stateA !== stateB);
+  if (rawConflict || stateConflict) {
+    const pair = [rawA ?? stateA, rawB ?? stateB].filter(Boolean).join(" vs ");
+    return { conflict: true, state: QBLAST_STATES.CONFLICT, reason: `conflicting_status: ${pair}`, evidences, a, b };
+  }
+  return { conflict: false, state: stateA ?? stateB ?? null, reason: null, evidences, a, b };
+}
+
+function snapshotEvidence(snapshot) {
+  if (snapshot === null || snapshot === undefined) return null;
+  if (typeof snapshot === "string") return null;
+  if (typeof snapshot !== "object") return null;
+  return snapshot.evidence ?? snapshot;
+}
+
+function recognizedTokenOf(snapshot) {
+  if (snapshot === null || snapshot === undefined) return null;
+  if (typeof snapshot === "string") {
+    const token = snapshot.trim().toUpperCase();
+    return QBLAST_STATUS_VALUES.has(token) ? token : null;
+  }
+  if (typeof snapshot !== "object") return null;
+  const evidence = snapshotEvidence(snapshot);
+  const raw = evidence?.qblast_status ?? evidence?.qblastStatus ?? snapshot.qblast_status ?? snapshot.qblastStatus ?? null;
+  if (raw === null || raw === undefined || raw === "") return null;
+  const token = String(raw).trim().toUpperCase();
+  return QBLAST_STATUS_VALUES.has(token) ? token : null;
+}
+
+function snapshotState(snapshot) {
+  if (snapshot === null || snapshot === undefined) return null;
+  const raw = typeof snapshot === "string" ? snapshot : (snapshot.state ?? snapshot.status ?? null);
+  if (raw !== null && raw !== undefined && raw !== "") {
+    const value = String(raw).toLowerCase();
+    if (QBLAST_KNOWN_STATES.has(value)) return value;
+    const mapped = mapQBlastToken(raw);
+    if (mapped) return mapped;
+  }
+  const token = recognizedTokenOf(snapshot);
+  return token ? mapQBlastToken(token) : null;
 }
 
 // Backwards-compatible string view for older callers. It never authorises a
@@ -613,7 +781,8 @@ const LEGACY_STATUS_MAP = {
   [QBLAST_STATES.QUEUED]: "queued",
   [QBLAST_STATES.FAILED]: "error",
   [QBLAST_STATES.ERROR]: "error",
-  [QBLAST_STATES.UNAVAILABLE]: "error"
+  [QBLAST_STATES.UNAVAILABLE]: "error",
+  [QBLAST_STATES.CONFLICT]: "error"
 };
 
 export function parseStatusResponse(text) {

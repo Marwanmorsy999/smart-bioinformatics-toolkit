@@ -41,6 +41,9 @@ QBlastInfoBegin
 QBlastInfoEnd
 --></p></body></html>`;
 
+// Evidence-B style FORMAT_OBJECT=SearchInfo page (M7.7): valid QBlastInfo
+// search-status evidence, NOT a "format-only" page. Stale "Status=Searching"
+// table and hidden fields are not authoritative.
 const FORMAT_READY_BODY = `<html><body>
 <div class="pageTitle">Format Request Status</div>
 <p><!-- QBlastInfoBegin
@@ -51,7 +54,8 @@ QBlastInfoEnd
 \tThereAreHits=no
 QBlastInfoEnd
 --></p>
-<table id="statInfo"><tr><td>Status</td><td>Searching</td></tr></table>
+<table id="statInfo" class="READY"><tr><td>Status</td><td>Searching</td></tr></table>
+<form><input name="FORMAT_OBJECT" type="hidden" value="SearchInfo"><input name="CMD" type="hidden" value="Get"></form>
 </body></html>`;
 
 const NO_HITS_BODY = `<html><body><p><!--
@@ -121,14 +125,24 @@ test("FAILED database error is a typed terminal failure with safe evidence", () 
   assert.equal(JSON.stringify(parsed.evidence).includes("QBlastInfoBegin"), false);
 });
 
-test("canonical READY completes, format-only READY never does", () => {
+test("canonical READY completes; valid SearchInfo READY is search-status evidence (M7.7)", () => {
   assert.equal(parseQBlastStatus(READY_BODY).state, "complete");
-  const formatOnly = parseQBlastStatus(FORMAT_READY_BODY);
-  assert.equal(formatOnly.state, "unavailable");
-  assert.equal(formatOnly.reason, "format_status_only");
-  assert.equal(formatOnly.evidence.there_are_hits, "no");
-  assert.equal(formatOnly.evidence.qblast_status, "READY");
-  assert.match(formatOnly.message, /not a search status/i);
+  // Evidence B: FORMAT_OBJECT=SearchInfo page, no canonical error page.
+  // M7.7 corrects the M7.6 "format-only" misclassification: a valid SearchInfo
+  // QBlastInfo block is search-status evidence, and the stale "Searching"
+  // table is not authoritative.
+  const canonicalMode = parseQBlastStatus(FORMAT_READY_BODY);
+  assert.equal(canonicalMode.state, "complete");
+  assert.equal(canonicalMode.reason, null);
+  assert.equal(canonicalMode.evidence.there_are_hits, "no");
+  assert.equal(canonicalMode.evidence.no_hits, true);
+  assert.equal(canonicalMode.evidence.qblast_status, "READY");
+  const searchInfoMode = parseQBlastStatus(FORMAT_READY_BODY, { mode: "SearchInfo" });
+  assert.equal(searchInfoMode.state, "complete");
+  assert.equal(searchInfoMode.evidence.there_are_hits, "no");
+  assert.equal(searchInfoMode.evidence.no_hits, true);
+  // No "format_status_only" misclassification exists anymore.
+  assert.notEqual(canonicalMode.reason, "format_status_only");
 });
 
 test("RUNNING, WAITING and QUEUED map to non-terminal states", () => {
@@ -236,22 +250,45 @@ test("network timeout and non-2xx status become honest unavailable states", asyn
 });
 
 // ------------------------------------------------------------ results gates
-test("results are blocked before genuine completion and on format-only READY", async () => {
+test("results are blocked before genuine canonical completion (production gate)", async () => {
   const { db } = createFakeD1([realRow({ status: "queued" })]);
   const request = makeGetRequest(`/api/blast/results/${RID}?format=json`);
   const queued = await handleResults(RID, request, realEnv(db), { now: T0 });
   assert.equal(queued.status, 409);
   assert.match((await queued.json()).error, /not ready/);
 
+  // Production gate: re-verify the CANONICAL body. Inject a canonical
+  // non-complete body; only canonical complete unlocks. No "format_status_only".
+  const CANONICAL_WAITING = `<html><body><!-- QBlastInfoBegin\nStatus=WAITING\nQBlastInfoEnd --></body></html>`;
   const { db: db2 } = createFakeD1([realRow()]);
-  const { impl } = providerFetch({ statusBody: FORMAT_READY_BODY });
-  const formatOnly = await handleResults(RID, request, realEnv(db2), { now: T0, fetchImpl: impl });
-  assert.equal(formatOnly.status, 409);
-  const body = await formatOnly.json();
-  assert.equal(body.state, "unavailable");
+  const { impl } = providerFetch({ statusBody: CANONICAL_WAITING });
+  const notComplete = await handleResults(RID, request, realEnv(db2), { now: T0, fetchImpl: impl });
+  assert.equal(notComplete.status, 409);
+  const body = await notComplete.json();
+  assert.equal(body.state, "queued");
   assert.equal(body.outcome, "provider_failure");
   assert.equal(body.table, null);
-  assert.equal(body.evidence.reason ?? body.reason, "format_status_only");
+  assert.notEqual(body.reason, "format_status_only");
+  assert.equal(body.reason, null);
+});
+
+test("contradictory canonical status evidence is typed status_conflict (409)", async () => {
+  const CONFLICT_BODY = `<html><body>
+<!-- QBlastInfoBegin\nStatus=READY\nQBlastInfoEnd -->
+<!-- QBlastInfoBegin\nStatus=FAILED\nQBlastInfoEnd -->
+</body></html>`;
+  const { db } = createFakeD1([realRow()]);
+  const { impl } = providerFetch({ statusBody: CONFLICT_BODY });
+  const result = await handleResults(RID, makeGetRequest(`/api/blast/results/${RID}?format=json`), realEnv(db), {
+    now: T0,
+    fetchImpl: impl
+  });
+  assert.equal(result.status, 409);
+  const body = await result.json();
+  assert.equal(body.state, "status_conflict");
+  assert.equal(body.code, "status_conflict");
+  assert.equal(body.table, null);
+  assert.equal(body.mock, false);
 });
 
 test("HTML, error bodies and non-TSV content are rejected without synthesis", async () => {

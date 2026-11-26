@@ -33,6 +33,10 @@
   background: var(--surface); border: var(--border-hairline); border-color: var(--line-strong); border-radius: var(--radius-2);
 }
 .field-group textarea { font-family: var(--font-mono); resize: vertical; min-height: 140px; }
+/* Placeholder text is visibly NOT a value; distinct styling, never prefilled. */
+.field-group textarea::placeholder { color: var(--muted); opacity: 1; font-style: italic; }
+.field-group textarea::-webkit-input-placeholder { color: var(--muted); opacity: 1; font-style: italic; }
+.field-group .placeholder-note { color: var(--muted); font-size: var(--fs-200); }
 .field-group small, .small { display: block; margin-top: var(--space-2); font-size: var(--fs-200); line-height: var(--lh-snug); color: var(--muted); }
 .button-row { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin-top: var(--space-3); }
 .resume-row { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: end; margin-top: var(--space-4); padding-top: var(--space-3); border-top: 1px solid var(--line-soft); }

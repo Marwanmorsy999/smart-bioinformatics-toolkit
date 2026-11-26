@@ -9,7 +9,8 @@ import { analyzeTaxonomy } from "./taxonomy.js";
 const SUBMIT_THROTTLE_MS = 10 * 1000;
 const STATUS_INTERVAL_MS = 60 * 1000;
 const OPEN_STATUSES = new Set(["queued", "running", "waiting"]);
-const TERMINAL_STATUSES = new Set(["complete", "failed", "error", "unavailable", "no_hits"]);
+// status_conflict = contradictory NCBI status evidence; terminal, never success.
+const TERMINAL_STATUSES = new Set(["complete", "failed", "error", "unavailable", "no_hits", "status_conflict"]);
 const RESULT_ENDPOINT = "/api/blast/results/";
 const RID_STORAGE_KEY = "m7_6_blast_rid";
 
@@ -52,7 +53,7 @@ const ui = {
 const state = {
   fasta: "", filename: "16s.fasta", byteSize: 0, inputHash: null, inputCheck: null,
   plan: null, planId: null, requestId: null, datasetId: null,
-  consent: null, rid: null, status: null, mockRid: false,
+  consent: null, rid: null, status: null, mockRid: false, rtoe: null,
   statusMessage: null, providerError: null, provenance: null, noHits: false,
   lastSubmitAt: 0, lastStatusAt: 0, submittedAt: null, fetchedAt: null,
   tsv: null, parsed: null, analysis: null, taxonomy: null, mockResult: false,
@@ -151,16 +152,31 @@ async function refreshInput() {
   }
   ui.create.disabled = !state.inputCheck.file_valid || tooLong;
   resetResults();
+  // Any input change invalidates a previously generated plan, approval,
+  // consent, RID and results; nothing is carried forward silently.
   ui.plan.hidden = true;
   ui.plan.replaceChildren();
   ui.approvalBox.hidden = true;
+  ui.approveCheck.checked = false;
+  ui.approve.disabled = true;
   ui.consent.hidden = true;
+  ui.consent.replaceChildren();
   ui.submit.disabled = true;
   ui.rid.hidden = true;
+  ui.providerStatus.hidden = true;
+  ui.providerStatus.replaceChildren();
   ui.checkStatus.disabled = true;
+  clearPollTimer();
   state.plan = null;
+  state.planId = null;
+  state.requestId = null;
+  state.datasetId = null;
   state.consent = null;
   state.rid = null;
+  state.rtoe = null;
+  state.status = null;
+  state.statusMessage = null;
+  state.providerError = null;
 }
 
 ui.file.addEventListener("change", async () => {
@@ -171,12 +187,38 @@ ui.file.addEventListener("change", async () => {
   await refreshInput();
 });
 ui.fasta.addEventListener("input", refreshInput);
+// Any input change re-validates from the ACTUAL value and resets downstream
+// plan/consent/results; no hidden default is carried forward.
+ui.fasta.addEventListener("change", refreshInput);
 ui.validate.addEventListener("click", () => refreshInput());
 ui.example.addEventListener("click", async () => {
   // Example INPUT ONLY. It is not a result and no analysis is implied.
   ui.fasta.value = ">example_input_1\nACGTACGTACGTACGTACGTACGTACGTACGT\n>example_input_2\nACGTACGTTCGTACGTACGTACGTACGTACGT\n";
   state.filename = "example-input.fasta";
   await refreshInput();
+});
+
+// Changing the objective invalidates any generated plan, approval and consent.
+ui.objective.addEventListener("input", () => {
+  resetResults();
+  clearPollTimer();
+  ui.plan.hidden = true;
+  ui.plan.replaceChildren();
+  ui.approvalBox.hidden = true;
+  ui.approveCheck.checked = false;
+  ui.approve.disabled = true;
+  ui.consent.hidden = true;
+  ui.consent.replaceChildren();
+  ui.submit.disabled = true;
+  ui.rid.hidden = true;
+  ui.checkStatus.disabled = true;
+  state.plan = null;
+  state.planId = null;
+  state.requestId = null;
+  state.datasetId = null;
+  state.consent = null;
+  state.rid = null;
+  state.rtoe = null;
 });
 
 // ------------------------------------------------------------------ step 2
@@ -213,13 +255,24 @@ ui.create.addEventListener("click", async () => {
   setError("");
   ui.create.disabled = true;
   try {
+    // Validation and submission reflect the ACTUAL textarea value; no hidden
+    // default or placeholder text is ever submitted.
+    const fasta = ui.fasta.value;
+    state.fasta = fasta;
+    const check = validateFasta(fasta, "dna");
+    const tooLong = fasta.length > 10000;
+    if (!check.file_valid || tooLong) {
+      setError("Enter a valid FASTA sequence first. Nothing was submitted.");
+      ui.create.disabled = false;
+      return;
+    }
     const data = await jsonOrThrow(await fetch("/api/ai/requests", {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       credentials: "same-origin",
       body: JSON.stringify({
         text: ui.objective.value.trim() || "Identify taxa for these 16S rRNA sequences using BLASTN",
-        fasta: state.fasta,
+        fasta,
         filename: state.filename
       })
     }));
@@ -324,6 +377,8 @@ function renderRid(rid, status) {
   ui.rid.append(element("h3", "", "Remote BLAST request"));
   field(ui.rid, "RID", rid);
   field(ui.rid, "Status", status);
+  // RTOE = provider-estimated seconds to completion, shown only when present.
+  if (Number.isFinite(state.rtoe)) field(ui.rid, "Estimated time to completion (RTOE)", `${state.rtoe} s`);
   field(ui.rid, "Source", "/api/blast/status/:rid (real NCBI when mock mode is off)");
   if (state.mockRid) {
     ui.rid.append(element("p", "input-warning", "This RID has the mock prefix. Its results must be treated as synthetic, never as a real NCBI result."));
@@ -338,6 +393,10 @@ function renderRid(rid, status) {
   }
   if (status === "unavailable") {
     ui.providerStatus.append(element("p", "small", "NCBI could not be reached or returned an unusable response. No result was substituted."));
+  }
+  if (status === "status_conflict") {
+    // Contradictory NCBI status evidence: honest, terminal, never success.
+    ui.providerStatus.append(element("p", "small", "NCBI returned contradictory status evidence. The search state is not trustworthy; no result was retrieved and nothing is fabricated. Monitoring stopped."));
   }
 }
 
@@ -367,6 +426,8 @@ ui.submit.addEventListener("click", async () => {
     }));
     state.rid = data.rid;
     state.status = data.status ?? "queued";
+    // RTOE: provider-estimated seconds to completion; only a finite number.
+    state.rtoe = Number.isFinite(Number(data.rtoe)) && data.rtoe !== null && data.rtoe !== "" ? Number(data.rtoe) : null;
     state.mockRid = /^MOCK/i.test(String(data.rid));
     state.lastSubmitAt = Date.now();
     state.lastStatusAt = Date.now(); // be conservative: no immediate RID poll
@@ -453,6 +514,7 @@ function resumeFromRid(value) {
   resetResults();
   state.rid = value;
   state.status = "queued";
+  state.rtoe = null;
   state.statusMessage = null;
   state.providerError = null;
   state.lastStatusAt = 0;

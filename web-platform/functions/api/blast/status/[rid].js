@@ -34,13 +34,15 @@ const CACHED_MESSAGES = {
   complete: "NCBI previously reported this search as complete.",
   failed: "NCBI previously reported a failed search. No results were retrieved or fabricated.",
   error: "The previous status check could not establish the search state. No results were retrieved.",
-  unavailable: "NCBI was unavailable on the previous check. The search state is unknown; no results were retrieved."
+  unavailable: "NCBI was unavailable on the previous check. The search state is unknown; no results were retrieved.",
+  status_conflict: "Contradictory NCBI status evidence was previously observed. The search state is not trustworthy; no results were retrieved."
 };
 
 function typedStatusResponse(rid, status, request, extra = {}) {
   return jsonResponse({
     status,
     state: status,
+    code: extra.code ?? (status === "status_conflict" ? "status_conflict" : null),
     reason: extra.reason ?? null,
     message: extra.message ?? CACHED_MESSAGES[status] ?? "No results were retrieved.",
     terminal: QBLAST_TERMINAL_STATES.has(status),
@@ -108,11 +110,14 @@ export async function handleStatus(rid, request, env, { now = Date.now(), fetchI
 
   const url = `${BLAST_API_URL}?${buildStatusParams(safeRid, env).toString()}`;
   const response = await fetchUpstream(url, { fetchImpl });
+  // Production always re-verifies the canonical CMD=Get body; only structured
+  // QBlastInfo evidence counts and contradictory status is typed status_conflict.
   const parsed = parseQBlastStatus(response.body, {
     rid: safeRid,
     httpStatus: response.httpStatus,
     at: now,
-    errorCode: response.errorCode
+    errorCode: response.errorCode,
+    mode: "canonical"
   });
 
   try {

@@ -93,6 +93,8 @@ The visible status table is:
 
 ### 3.1 Why these values are not the search status
 
+> **M7.7 correction (not erasing the M7.6 text below; see §7 "M7.7 Status-evidence reconciliation").** The M7.6 framing below that a `FORMAT_OBJECT=SearchInfo` `Status=READY`/`ThereAreHits=no` "describes the formatting request, not the search" is **not acceptable without correction**. M7.7 re-reading of the same raw bytes (`M7_7_recheck_searchinfo_raw.json`, re-confirmed reproducible) treats a **valid SearchInfo QBlastInfo block as search-status evidence**: in `mode:"SearchInfo"` (or a clearly-SearchInfo body with no canonical error page) `Status=READY` -> `complete`, `ThereAreHits=yes/no` -> `no_hits` flag, `WAITING/QUEUED` -> `queued`, `RUNNING` -> `running`, `FAILED` -> `failed`, `UNKNOWN` -> `unavailable`. The visible stale `Status=Searching` placeholder table is still **not** authoritative. **But** this evidence CONTRADICTS the canonical `CMD=Get` `Status=FAILED` for the same RID; reconciliation yields typed `status_conflict`, never queued/no-hit/success, and the production results gate re-verifies the canonical `CMD=Get` body where only canonical `complete` unlocks. The M7.6 conclusion is unchanged.
+
 - **`Status=READY`** and **`ThereAreHits=no`** in a `FORMAT_OBJECT=SearchInfo` response describe the **formatting/retrieval request** that the page is servicing, not the underlying BLAST search. They answer "can a result-format object be served for this RID?", not "did the search succeed and produce hits?".
 - The visible `Status: Searching` row sits in a JavaScript-driven placeholder table (`statInfo`, empty `Submitted at` / `Current time` / `Time since submission` cells, and an empty auto-update interval). It is a **stale JS placeholder**, not a live NCBI status value.
 - For this RID, the authoritative `CMD=Get` response captured about two minutes later is `Status=FAILED` with the database error (§2). A `READY`/`Searching` reading from the SearchInfo page is therefore a misclassification, not evidence of a running or successful search.
@@ -136,3 +138,47 @@ Note on evidence handling: the historical JSON records `queued` after compliant 
 ## 6. Constraints preserved
 
 No new NCBI call, no other provider call, no Galaxy call, no R2, no auth B2, no new provider, no production deploy, no billing change and no new scientific algorithm. Historical evidence (older commits, older staging deployments, earlier app-level status records and the labelled mock RID `MOCK07EFC2C1AEAC02A2`) is preserved with explicit history/synthetic labels, not erased or relabelled as current or real.
+
+---
+
+## 7. M7.7 Status-evidence reconciliation
+
+**Milestone:** M7.7. This section is added without erasing any original M7.6 text above; history is preserved.
+**Correction scope:** M7.6 §3.1 and §4 described `FORMAT_OBJECT=SearchInfo` `Status=READY`/`ThereAreHits=no` as "not a search status / formatting request" and called it a misclassification. M7.7 finds that reading **not acceptable without correction**.
+
+### 7.1 The real raw pair is contradictory and reproducible
+
+Same RID `GF4KCK07016`, same `tool`, no new NCBI call in M7.7 (raw already captured; re-confirmed reproducible). M7.7 re-check raw files in this directory:
+
+- `M7_7_recheck_canonical_raw.json` = evidence **A** (re-check of §2).
+- `M7_7_recheck_searchinfo_raw.json` = evidence **B** (re-check of §3).
+
+| Snapshot | Request | QBlastInfo blocks | Visible table | Canonical error |
+|---|---|---|---|---|
+| **A** canonical | `CMD=Get&RID=...` | `Status=FAILED` | — | `Error: No alias or index file found for nucleotide database [16S_ribosomal_RNA]...` |
+| **B** SearchInfo | `CMD=Get&FORMAT_OBJECT=SearchInfo&RID=...` | `Status=READY`, `ThereAreHits=no` | stale `Status=Searching` placeholder | none |
+
+The two snapshots **disagree on `Status`** (`FAILED` vs `READY`). `ThereAreHits=no` on B is not itself evidence that the search failed; it is not evidence that it succeeded either. The contradiction is real.
+
+### 7.2 Corrected parser semantics (`web-platform/functions/api/blast/_lib.js`, `parseQBlastStatus`)
+
+- Only `QBlastInfoBegin...QBlastInfoEnd` blocks are authoritative; `Status=`/`Status:` tokens elsewhere (page titles, stale `Status=Searching` tables, hidden form fields, `FORMAT_OBJECT=Alignment` links) are ignored.
+- New `mode` option: `"canonical"` (default; production `CMD=Get`) or `"SearchInfo"`. When `mode==="SearchInfo"` (or the body clearly is a SearchInfo page **and** no canonical error page is present): `READY` -> `complete`; `ThereAreHits=yes/no` -> `no_hits` flag (`no_hits` added alongside `there_are_hits`); `WAITING`/`QUEUED` -> `queued`; `RUNNING` -> `running`; `FAILED` -> `failed`; `UNKNOWN` -> `unavailable`.
+- **Removed `format_status_only` misclassification.** The M7.6 `reason:"format_status_only"` state no longer exists; a valid SearchInfo `READY` is not marked unavailable.
+- **Conflict detection:** collect ALL `Status=` values across QBlastInfo blocks; **>1 distinct recognized value -> typed `status_conflict`** (`QBLAST_STATES.CONFLICT="status_conflict"`, added to `QBLAST_TERMINAL_STATES` so auto-polling stops). Never mapped to `queued`, `no_hits`, `complete`, `failed`, or success. Unknown token -> `malformed`; missing block -> `malformed`; empty body -> `empty_response`; timeout/network -> `unavailable`; non-2xx -> `unavailable`. **Nothing malformed/empty/timed-out/non-2xx is ever mapped to `queued`.** A canonical error page with an unrelated `READY` -> `status_conflict`, not success.
+- **`reconcileStatusEvidence(a,b)`** returns `{ conflict, state, reason, evidences }`; two structured snapshots that disagree on `Status` -> `conflict:true`, `state:"status_conflict"`, **both original evidences preserved**. `reconcileStatusEvidence(A,B)` for the real pair -> `status_conflict`. Agreeing snapshots do not conflict.
+- **Production gate unchanged & conservative:** `GET /api/blast/results/:rid` re-verifies a **canonical `CMD=Get`** body (no `FORMAT_OBJECT`); only canonical `complete` unlocks; `status_conflict` -> `409` typed; `ThereAreHits=no` -> `no_hits`; no real TSV is fabricated; SHA-256 + provenance preserved; HTML/empty/non-TSV rejected; mock/real separation preserved.
+- **Status endpoint** passes `mode:"canonical"`, keeps the 60 s gate, `429`+`Retry-After`, terminal stop, safe evidence; `status_conflict` is returned typed and terminal.
+
+### 7.3 Submission: RTOE (no provider change, no D1 migration)
+
+`CMD=Put` real branch now uses `parsePutResponseDetailed(text)` -> `{ rid, rtoe }`, keeps `parsePutResponse` unchanged, adds `parseRtoe` (numeric seconds; null if absent/non-numeric; **no RTOE handling existed before**), returns `{ rid, status:"queued", rtoe }`, and records `rtoe` in the audit detail. **No sequence value is read or recorded; nothing new is stored in D1; no provider change; no migration.** Official docs list `CMD=Get` retrieval `FORMAT_TYPE=Text&ALIGNMENT_VIEW=Tabular`; `FORMAT_OBJECT=SearchInfo` is **not** in the official documented parameter list but is a real re-check query; production relies on canonical `CMD=Get`. No `CMD=Put` is performed in M7.7. **Owner authorization for a corrected live submission has NOT been given; no corrected live submission was made.** No real TSV was ever retrieved.
+
+### 7.4 Corrected P0 conclusion
+
+**The invalid database identifier is decisive.** Our submission used bare `16S_ribosomal_RNA`; NCBI's correct value is `rRNA_typestrains/16S_ribosomal_RNA` (already `ALLOWED_DATABASE`, `PROGRAM=blastn`). NCBI returned canonical `Status=FAILED` + `No alias or index file found for nucleotide database [16S_ribosomal_RNA]`. **No real result exists regardless** of the SearchInfo `READY`/`ThereAreHits=no` contradiction, regardless of `status_conflict` handling, and regardless of reconciliation. **No real TSV was ever retrieved.** Corrected identifier implemented; **corrected live submission requires EXPLICIT OWNER AUTHORIZATION and has NOT happened.** Overall 16S workflow remains **PARTIAL / `production_ready:false`.** Mock RIDs/results are synthetic only. No provider change, no scientific algorithm change, no scope expansion, no weakening of existing tests; no new NCBI call in M7.7.
+
+### 7.5 UI honesty (P5 input honesty + status rendering)
+
+`status_conflict` rendered honestly; terminal states stop polling; no indefinite animation. `RTOE` shown when present. The 16S input placeholder is clearly labelled **placeholder, not a value**; **no sequence is loaded until pasted/selected**; validation reflects actual `textarea.value`; any input change resets validation/plan/consent/results; create disabled until valid; no hidden default submission; truthful data-handling disclosure (what leaves the browser, what is stored in D1, what is sent to NCBI) retained. Concise note on RID/monitoring honesty added.
+

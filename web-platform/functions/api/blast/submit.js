@@ -21,7 +21,7 @@ import {
   NCBI_SUBMIT_LIMIT,
   NCBI_SUBMIT_WINDOW_MS,
   ncbiFetchText,
-  parsePutResponse,
+  parsePutResponseDetailed,
   preflightResponse,
   recentRealSubmissionCount,
   resolveBlastConsent,
@@ -159,7 +159,8 @@ export async function handleSubmit(request, env, { now = Date.now() } = {}) {
     mock,
     transmitted: !mock,
     success: null,
-    status: "pending"
+    status: "pending",
+    rtoe: null
   };
   let auditId;
   try {
@@ -176,14 +177,19 @@ export async function handleSubmit(request, env, { now = Date.now() } = {}) {
 
   // One audited egress attempt. The pending row above is written first, so a
   // failure here still leaves an append-only record of the attempted action.
+  // RTOE (estimated seconds to completion) is captured when NCBI returns it;
+  // no sequence value is read, audited or returned. Nothing new is stored in D1.
   let rid = null;
+  let rtoe = null;
   let failure = null;
   if (mock) {
     rid = mockRid(inputHash);
   } else {
     try {
       const url = `${BLAST_API_URL}?${buildPutParams(fasta, env).toString()}`;
-      rid = parsePutResponse(await ncbiFetchText(url));
+      const detailed = parsePutResponseDetailed(await ncbiFetchText(url));
+      rid = detailed.rid;
+      rtoe = Number.isFinite(detailed.rtoe) ? detailed.rtoe : null;
       if (!isValidRid(rid)) failure = "invalid_rid";
     } catch {
       failure = "ncbi_error";
@@ -195,7 +201,8 @@ export async function handleSubmit(request, env, { now = Date.now() } = {}) {
       success: failure === null,
       status: failure === null ? "succeeded" : "failed",
       error: failure,
-      rid: failure === null ? rid : null
+      rid: failure === null ? rid : null,
+      rtoe: failure === null ? rtoe : null
     });
   } catch {
     // The pending audit row already holds the hash, target and byte counts.
@@ -224,5 +231,8 @@ export async function handleSubmit(request, env, { now = Date.now() } = {}) {
 
   // The token was already claimed before egress; nothing can un-burn it here.
 
-  return jsonResponse({ rid, status: "queued" }, 200, request);
+  // Real NCBI branch reports RTOE when the provider returned it (numeric
+  // seconds, may be null); the labelled mock branch keeps its minimal shape.
+  if (mock) return jsonResponse({ rid, status: "queued" }, 200, request);
+  return jsonResponse({ rid, status: "queued", rtoe }, 200, request);
 }

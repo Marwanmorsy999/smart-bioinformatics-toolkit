@@ -1,5 +1,7 @@
 // GET /api/blast/results/:rid - return tabular results only after the search
-// (not merely a format request) is genuinely complete at NCBI.
+// is genuinely complete on a canonical CMD=Get body. A formatting-request
+// READY, a SearchInfo-only page or contradictory status evidence never unlocks
+// retrieval; only canonical complete does.
 // LIMITATION: provenance cannot be persisted in D1 without a new column; M7.6
 // adds no migration, so provenance is returned in the response (JSON with
 // ?format=json, or X-Blast-* headers on the plain-text response).
@@ -199,18 +201,34 @@ export async function handleResults(rid, request, env, { now = Date.now(), fetch
     return textResponse(tsv, 200, request, provenanceHeaders(provenance));
   }
 
-  // Re-verify the provider immediately before retrieval. A FORMAT_OBJECT=SearchInfo
-  // READY is not a search completion and must never unlock results.
+  // Re-verify the provider immediately before retrieval on a CANONICAL CMD=Get
+  // body (no FORMAT_OBJECT). Only canonical complete unlocks; contradictory
+  // status evidence is typed status_conflict (409); ThereAreHits=no is no_hits.
   const statusUrl = `${BLAST_API_URL}?${buildStatusParams(safeRid, env).toString()}`;
   const statusFetch = await fetchUpstream(statusUrl, { fetchImpl });
   const parsed = parseQBlastStatus(statusFetch.body, {
     rid: safeRid,
     httpStatus: statusFetch.httpStatus,
     at: now,
-    errorCode: statusFetch.errorCode
+    errorCode: statusFetch.errorCode,
+    mode: "canonical"
   });
+  if (parsed.state === "status_conflict") {
+    return jsonResponse({
+      status: "status_conflict",
+      state: "status_conflict",
+      code: "status_conflict",
+      reason: parsed.reason ?? "status_conflict",
+      terminal: true,
+      outcome: "status_conflict",
+      table: null,
+      message: parsed.message,
+      evidence: parsed.evidence,
+      mock: false
+    }, 409, request);
+  }
   if (parsed.state !== "complete") return providerFailureResponse(request, parsed);
-  if (parsed.evidence.there_are_hits === "no") {
+  if (parsed.evidence.there_are_hits === "no" || parsed.evidence.no_hits === true) {
     return noHitsResponse(request, safeRid, parsed, new Date(now).toISOString());
   }
 

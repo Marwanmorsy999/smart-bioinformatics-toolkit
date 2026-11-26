@@ -45,7 +45,7 @@
       </aside>
     </header>
 
-    <p class="storage-notice" role="note">Legacy input path: FASTA bytes are stored inline in D1 for this request, not durably in object storage. Do not submit sequences you are not authorised to transmit. Only the approved FASTA text is sent to NCBI, under a short-lived, single-use consent token bound to its hash, database and program.</p>
+    <p class="storage-notice" role="note" data-testid="data-handling-disclosure">Data handling: no sequence is transmitted until you explicitly approve and submit. Before any external call, only the approved FASTA text is sent to <strong>NCBI BLAST</strong>; a short-lived, single-use consent token bound to its hash, database and program gates the transmission. FASTA bytes are stored inline in D1 for this request, not durably in object storage, along with its hash, status, provenance and any retrieved result table; an audit record of the transmission is kept. Nothing else leaves your browser. Do not submit sequences you are not authorised to transmit.</p>
 
     <ol class="flow-steps" aria-label="Workflow steps">
       <li>
@@ -58,7 +58,9 @@
           </div>
           <div class="field-group">
             <label for="fasta-text">FASTA text</label>
-            <textarea id="fasta-text" rows="8" spellcheck="false" placeholder=">isolate_001&#10;ACGTACGTACGT..."></textarea>
+            <!-- The greyed-out example is a PLACEHOLDER only; it is NOT a value. No sequence is loaded until you paste one or select a file. -->
+            <textarea id="fasta-text" rows="8" spellcheck="false" placeholder="Paste FASTA here… example: &gt;record_id&#10;ACGT…"></textarea>
+            <small class="placeholder-note">The greyed-out example is only a placeholder, not a sequence. <strong>No sequence is loaded until you paste one or select a file.</strong></small>
           </div>
           <div class="button-row">
             <button id="load-example" type="button" class="secondary-button small-button">Load example input (not a result)</button>
@@ -110,7 +112,7 @@
             <input id="resume-rid" type="text" maxlength="64" autocomplete="off" spellcheck="false" placeholder="NCBI RID">
             <button id="resume-rid-button" type="button" class="secondary-button small-button">Resume by RID</button>
           </div>
-          <p class="small">Status is checked at most once per minute (the server enforces this too). Checking does not fetch results until the job is complete.</p>
+          <p class="small">Status is checked at most once per minute (the server enforces this too). Checking does not fetch results until the job is complete. Only NCBI's canonical status for your RID is trusted; contradictory status evidence is shown as <code>status_conflict</code> and monitoring stops. No result is shown unless a real tabular report is retrieved.</p>
         </section>
       </li>
 
