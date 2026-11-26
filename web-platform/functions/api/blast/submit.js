@@ -4,11 +4,14 @@ import {
   BLAST_API_URL,
   BlastCryptoUnavailableError,
   auditBlastEgress,
+  buildPutDiagnosticDetail,
   buildPutParams,
+  classifyPutResponse,
   consentErrorResponse,
   consumeBlastConsent,
   cryptoUnavailableResponse,
   errorResponse,
+  fetchPutUpstream,
   finalizeBlastAudit,
   getRequest,
   hashInput,
@@ -20,11 +23,10 @@ import {
   mockRid,
   NCBI_SUBMIT_LIMIT,
   NCBI_SUBMIT_WINDOW_MS,
-  ncbiFetchText,
-  parsePutResponseDetailed,
   preflightResponse,
   recentRealSubmissionCount,
   resolveBlastConsent,
+  SUBMISSION_UNKNOWN_CODE,
   submissionRetryAfter,
   throttledResponse,
   validateDatabase,
@@ -179,40 +181,80 @@ export async function handleSubmit(request, env, { now = Date.now() } = {}) {
   // failure here still leaves an append-only record of the attempted action.
   // RTOE (estimated seconds to completion) is captured when NCBI returns it;
   // no sequence value is read, audited or returned. Nothing new is stored in D1.
+  // An ambiguous response is NEVER auto-retried: a job may already exist at
+  // NCBI, so only a valid RID can authorise a blast_requests insert.
   let rid = null;
   let rtoe = null;
   let failure = null;
+  let transport = null;
+  let parsed = null;
   if (mock) {
     rid = mockRid(inputHash);
   } else {
     try {
       const url = `${BLAST_API_URL}?${buildPutParams(fasta, env).toString()}`;
-      const detailed = parsePutResponseDetailed(await ncbiFetchText(url));
-      rid = detailed.rid;
-      rtoe = Number.isFinite(detailed.rtoe) ? detailed.rtoe : null;
-      if (!isValidRid(rid)) failure = "invalid_rid";
+      transport = await fetchPutUpstream(url);
+      parsed = classifyPutResponse(transport.body, {
+        httpStatus: transport.httpStatus,
+        contentType: transport.contentType,
+        errorCode: transport.errorCode
+      });
+      if (parsed.accepted) {
+        rid = parsed.rid;
+        rtoe = Number.isFinite(parsed.rtoe) ? parsed.rtoe : null;
+      } else {
+        // Non-2xx means the provider signalled an error. A 2xx with no valid
+        // RID is the honest ambiguous state: transmitted, no job id available.
+        failure = transport.ok ? SUBMISSION_UNKNOWN_CODE : "ncbi_error";
+      }
     } catch {
+      // Unexpected local failure: never invent a RID or store a job.
       failure = "ncbi_error";
+    }
+  }
+  const captureDiagnostics = Boolean(transport && parsed && (!parsed.accepted || parsed.ambiguous));
+  let diagnosticDetail = null;
+  if (captureDiagnostics) {
+    try {
+      diagnosticDetail = await buildPutDiagnosticDetail({
+        transport,
+        parsed,
+        attemptId: auditId,
+        at: createdAt
+      });
+    } catch {
+      // Diagnostics are best-effort; the pending audit row is already durable.
     }
   }
   try {
     await finalizeBlastAudit(db, auditId, {
       ...egressDetail,
       success: failure === null,
-      status: failure === null ? "succeeded" : "failed",
+      status: failure === null ? "succeeded" : (failure === SUBMISSION_UNKNOWN_CODE ? SUBMISSION_UNKNOWN_CODE : "failed"),
       error: failure,
       rid: failure === null ? rid : null,
-      rtoe: failure === null ? rtoe : null
+      rtoe: failure === null ? rtoe : null,
+      ...(diagnosticDetail ? { diagnostics: diagnosticDetail } : {})
     });
   } catch {
     // The pending audit row already holds the hash, target and byte counts.
   }
   if (failure) {
-    return errorResponse(
-      failure === "invalid_rid" ? "NCBI did not return a valid request ID." : "Could not submit the search to NCBI.",
-      502,
-      request
-    );
+    if (failure === SUBMISSION_UNKNOWN_CODE) {
+      return jsonResponse({
+        error: "NCBI did not return a request ID. The platform cannot confirm whether a job was created, so no job can be tracked and no result was invented. The single-use consent was consumed and no automatic retry was made. Diagnostic details were recorded for support.",
+        code: SUBMISSION_UNKNOWN_CODE,
+        transmitted: true,
+        rid: null,
+        diagnostics_available: Boolean(diagnosticDetail)
+      }, 502, request);
+    }
+    return jsonResponse({
+      error: "Could not submit the search to NCBI.",
+      code: "ncbi_error",
+      transmitted: transport ? transport.ok : false,
+      rid: null
+    }, 502, request);
   }
 
   const row = {
