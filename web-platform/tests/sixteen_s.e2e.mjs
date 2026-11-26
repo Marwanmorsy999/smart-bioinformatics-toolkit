@@ -6,6 +6,7 @@
 // skipped unless LIVE_NCBI=1 and STAGING_URL are explicitly supplied by the
 // owner; mock and live statuses are never merged.
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { mkdirSync } from "node:fs";
@@ -72,6 +73,31 @@ const RESULTS_FIXTURE = [
   "qseqid\tsacc\tstaxids\tsscinames\tpident\tlength\tqstart\tqend\tqlen\tevalue\tbitscore\tqcovs",
   "example_input_1\tMOCK000001\t999999\tSynthetic mock organism\t100.0\t32\t1\t32\t32\t1e-50\t64\t100"
 ].join("\n") + "\n";
+// The UI requests ?format=json to obtain provenance; plain requests still get
+// the labelled raw TSV. Both fixtures are synthetic and never presented as real.
+const RESULTS_ENVELOPE_FIXTURE = {
+  status: "complete",
+  state: "complete",
+  outcome: "mock",
+  terminal: true,
+  mock: true,
+  tsv: RESULTS_FIXTURE,
+  table: null,
+  message: "Synthetic mock data. This is not a real NCBI result.",
+  provenance: {
+    rid: SUBMIT_FIXTURE.rid,
+    database: ALLOWED_DATABASE,
+    program: ALLOWED_PROGRAM,
+    retrieved_at: "2026-11-25T12:01:00.000Z",
+    mock: true,
+    parser_schema: "qblast-strict-1",
+    rows_received: 3,
+    rows_parsed: 1,
+    rows_rejected: 0,
+    sha256: createHash("sha256").update(RESULTS_FIXTURE).digest("hex"),
+    warnings: ["SYNTHETIC MOCK DATA - not from NCBI and not usable for biological conclusions."]
+  }
+};
 const CATALOG_FIXTURE = {
   tools: listCatalog(), // real registry data; read-only
   catalog_version: TOOL_CATALOG_VERSION,
@@ -121,7 +147,15 @@ before(async () => {
   });
   await context.route("**/api/blast/results/**", async (route) => {
     fetchAttempts.push(route.request().url());
-    await route.fulfill({ status: 200, contentType: "text/plain", body: RESULTS_FIXTURE });
+    const wantsJson = new URL(route.request().url()).searchParams.get("format") === "json"
+      || /application\/json/i.test(route.request().headers()["accept"] ?? "");
+    if (wantsJson) {
+      await route.fulfill({
+        status: 200, contentType: "application/json", body: JSON.stringify(RESULTS_ENVELOPE_FIXTURE)
+      });
+    } else {
+      await route.fulfill({ status: 200, contentType: "text/plain", body: RESULTS_FIXTURE });
+    }
   });
   await context.route("**/api/tools/catalog", async (route) => {
     fetchAttempts.push(route.request().url());

@@ -2,13 +2,25 @@
 // Plain ES modules: no frameworks, no R2, no paid services, no secrets in code or logs.
 
 export const BLAST_API_URL = "https://blast.ncbi.nlm.nih.gov/Blast.cgi";
-export const ALLOWED_DATABASE = "16S_ribosomal_RNA";
+// NCBI's current BLAST form submits this value for "16S ribosomal RNA
+// sequences (Bacteria and Archaea)". The bare legacy name is not a valid
+// database on the provider (it produced a failed job with no alias/index).
+export const ALLOWED_DATABASE = "rRNA_typestrains/16S_ribosomal_RNA";
+export const DATABASE_LABEL = "16S ribosomal RNA sequences (Bacteria and Archaea)";
+export const LEGACY_DATABASE_LABEL = "16S_ribosomal_RNA";
 export const ALLOWED_PROGRAM = "blastn";
 export const MAX_FASTA_CHARS = 10000;
 export const POLL_INTERVAL_MS = 60000;
 export const HISTORY_LIMIT = 20;
 export const MOCK_RID_PREFIX = "MOCK";
 export const DEFAULT_CONSENT_TTL_SECONDS = 15 * 60;
+
+// Server-enforced global throttle for real NCBI CMD=Put submissions. It reuses
+// blast_requests.created_at and the existing request list; no new table/column.
+export const NCBI_SUBMIT_WINDOW_MS = 60 * 1000;
+export const NCBI_SUBMIT_LIMIT = 10;
+export const NCBI_FETCH_TIMEOUT_MS = 15 * 1000;
+export const QBLAST_PARSER_SCHEMA = "qblast-strict-1";
 
 // IUPAC nucleotide codes (DNA + RNA ambiguity symbols), case-insensitive.
 const SEQUENCE_ALPHABET = /^[ACGTURYSWKMBDHVN]+$/i;
@@ -117,7 +129,10 @@ export function validateFasta(input) {
 
 export function validateDatabase(value) {
   if (value !== ALLOWED_DATABASE) {
-    return { valid: false, error: `database must be exactly "${ALLOWED_DATABASE}".` };
+    return {
+      valid: false,
+      error: `database must be exactly "${ALLOWED_DATABASE}" (${DATABASE_LABEL}, previously named "${LEGACY_DATABASE_LABEL}").`
+    };
   }
   return { valid: true, error: null };
 }
@@ -374,13 +389,277 @@ export function parsePutResponse(text) {
   return null;
 }
 
+// ------------------------------------------------ strict QBlastInfo status
+// Only QBlastInfoBegin ... QBlastInfoEnd blocks from the canonical CMD=Get body
+// are authoritative. A FORMAT_OBJECT=SearchInfo page also contains a READY
+// block, but that READY describes the formatting request, not the search.
+
+export const QBLAST_STATES = Object.freeze({
+  QUEUED: "queued",
+  RUNNING: "running",
+  COMPLETE: "complete",
+  FAILED: "failed",
+  ERROR: "error",
+  UNAVAILABLE: "unavailable"
+});
+export const QBLAST_TERMINAL_STATES = new Set([
+  QBLAST_STATES.COMPLETE, QBLAST_STATES.FAILED, QBLAST_STATES.ERROR, QBLAST_STATES.UNAVAILABLE
+]);
+const QBLAST_STATUS_VALUES = new Set(["READY", "RUNNING", "WAITING", "QUEUED", "FAILED", "UNKNOWN"]);
+const PROVIDER_DATABASE_ERROR = /No alias or index file found/i;
+const SAFE_ERROR_CODES = new Set([
+  "timeout", "network_error", "http_error", "empty_response", "malformed_response", "format_status_only"
+]);
+
+export function extractQBlastBlocks(text) {
+  const body = String(text ?? "");
+  const blocks = [];
+  const pattern = /QBlastInfoBegin([\s\S]*?)QBlastInfoEnd/gi;
+  let match;
+  while ((match = pattern.exec(body)) !== null) blocks.push(match[1].trim());
+  return blocks;
+}
+
+function qblastValue(blocks, key) {
+  const pattern = new RegExp(`^\\s*${key}\\s*=\\s*([^\\r\\n]+)`, "im");
+  for (const block of blocks) {
+    const match = block.match(pattern);
+    if (match) return match[1].trim();
+  }
+  return null;
+}
+
+function cleanProviderText(value) {
+  return String(value ?? "")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/consent_[0-9a-f]+/gi, "[redacted]")
+    .replace(/\b[?&][^\s]{20,}/g, "[redacted]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 300);
+}
+
+export function extractProviderError(text) {
+  const body = String(text ?? "");
+  const direct = body.match(/(Error:\s*No alias or index file found[^<\r\n]*)/i)
+    || body.match(/<p class="usa-alert-text"[^>]*>([\s\S]{0,500}?)<\/p>/i);
+  return direct ? cleanProviderText(direct[1]) || null : null;
+}
+
+function normalizeTimestamp(at) {
+  if (at instanceof Date && !Number.isNaN(at.getTime())) return at.toISOString();
+  if (typeof at === "number" && Number.isFinite(at)) return new Date(at).toISOString();
+  if (typeof at === "string" && at.trim()) {
+    const parsed = Date.parse(at);
+    if (Number.isFinite(parsed)) return new Date(parsed).toISOString();
+  }
+  return new Date().toISOString();
+}
+
+// SAFE raw-status evidence: RID, timestamp, upstream HTTP status, canonical
+// QBlastInfo status, truncated provider error, hit flag and transport code.
+// Query sequence, HTML, consent tokens and credentials are never included.
+export function safeStatusEvidence({
+  rid = null,
+  at = null,
+  httpStatus = null,
+  qblastStatus = null,
+  providerError = null,
+  thereAreHits = null,
+  errorCode = null
+} = {}) {
+  const status = String(qblastStatus ?? "").toUpperCase();
+  const hits = String(thereAreHits ?? "").toLowerCase();
+  return Object.freeze({
+    rid: isValidRid(rid) ? rid : null,
+    timestamp: normalizeTimestamp(at),
+    http_status: Number.isInteger(httpStatus) && httpStatus >= 100 && httpStatus <= 599 ? httpStatus : null,
+    qblast_status: QBLAST_STATUS_VALUES.has(status) ? status : null,
+    // Re-extract rather than trusting an arbitrary string: only a provider
+    // error phrase is allowed into evidence, never surrounding HTML/secrets.
+    provider_error: providerError ? extractProviderError(providerError) : null,
+    there_are_hits: hits === "yes" || hits === "no" ? hits : null,
+    error_code: SAFE_ERROR_CODES.has(errorCode) ? errorCode : null
+  });
+}
+
+function statusResult({ state, reason, message, evidence }) {
+  return Object.freeze({ state, reason, message, evidence, terminal: QBLAST_TERMINAL_STATES.has(state) });
+}
+
+export function parseQBlastStatus(text, {
+  rid = null,
+  httpStatus = 200,
+  at = null,
+  errorCode = null,
+  timeout = false,
+  allowBareStatus = false
+} = {}) {
+  const body = typeof text === "string" ? text : "";
+  const transportCode = errorCode || (timeout ? "timeout" : null);
+  if (transportCode === "timeout" || transportCode === "network_error") {
+    const evidence = safeStatusEvidence({ rid, at, httpStatus, errorCode: transportCode });
+    return statusResult({
+      state: QBLAST_STATES.UNAVAILABLE,
+      reason: transportCode,
+      message: "NCBI could not be reached or timed out. The search state is unknown; no result was retrieved.",
+      evidence
+    });
+  }
+  if (!Number.isInteger(httpStatus) || httpStatus < 200 || httpStatus >= 300) {
+    const evidence = safeStatusEvidence({ rid, at, httpStatus, errorCode: "http_error" });
+    return statusResult({
+      state: QBLAST_STATES.UNAVAILABLE,
+      reason: "http_error",
+      message: `NCBI returned HTTP ${Number.isInteger(httpStatus) ? httpStatus : "unknown"}. The search state is unknown; no result was retrieved.`,
+      evidence
+    });
+  }
+  if (!body.trim()) {
+    const evidence = safeStatusEvidence({ rid, at, httpStatus, errorCode: "empty_response" });
+    return statusResult({
+      state: QBLAST_STATES.ERROR,
+      reason: "empty_response",
+      message: "NCBI returned an empty status response. The search state is unknown; no result was retrieved.",
+      evidence
+    });
+  }
+
+  let blocks = extractQBlastBlocks(body);
+  if (!blocks.length && allowBareStatus) {
+    const bare = body.match(/\bStatus\s*[=:]\s*([A-Za-z]+)/i);
+    if (bare) blocks = [`Status=${bare[1]}`];
+  }
+  if (!blocks.length) {
+    const evidence = safeStatusEvidence({ rid, at, httpStatus, errorCode: "malformed_response" });
+    return statusResult({
+      state: QBLAST_STATES.ERROR,
+      reason: "malformed_response",
+      message: "NCBI returned no QBlastInfo status block. The search state is unknown; no result was retrieved.",
+      evidence
+    });
+  }
+
+  const status = qblastValue(blocks, "Status");
+  const thereAreHits = qblastValue(blocks, "ThereAreHits");
+  const providerError = extractProviderError(body);
+  const evidence = safeStatusEvidence({ rid, at, httpStatus, qblastStatus: status, providerError, thereAreHits });
+  const normalized = String(status ?? "").toUpperCase();
+
+  // A FORMAT_OBJECT status page is not a search status page, even though it
+  // contains a QBlastInfo READY block and a stale "Searching" table cell.
+  if (normalized === "READY" && /Format Request Status|FORMAT_OBJECT\s*=\s*SearchInfo/i.test(body)) {
+    return statusResult({
+      state: QBLAST_STATES.UNAVAILABLE,
+      reason: "format_status_only",
+      message: "NCBI returned a formatting-request READY, not a search status. The search state is unknown; no result was retrieved.",
+      evidence: safeStatusEvidence({ rid, at, httpStatus, qblastStatus: status, providerError, thereAreHits, errorCode: "format_status_only" })
+    });
+  }
+  if (!QBLAST_STATUS_VALUES.has(normalized)) {
+    return statusResult({
+      state: QBLAST_STATES.ERROR,
+      reason: "malformed_response",
+      message: "NCBI returned an unrecognised QBlastInfo status. The search state is unknown; no result was retrieved.",
+      evidence: safeStatusEvidence({ rid, at, httpStatus, qblastStatus: status, providerError, thereAreHits, errorCode: "malformed_response" })
+    });
+  }
+
+  if (normalized === "READY") {
+    return statusResult({
+      state: QBLAST_STATES.COMPLETE,
+      reason: null,
+      message: "NCBI reports the search is complete. Results may now be requested.",
+      evidence
+    });
+  }
+  if (normalized === "FAILED" || normalized === "UNKNOWN") {
+    const databaseError = PROVIDER_DATABASE_ERROR.test(providerError || "") || PROVIDER_DATABASE_ERROR.test(body);
+    return statusResult({
+      state: QBLAST_STATES.FAILED,
+      reason: databaseError ? "provider_database_error" : (normalized === "UNKNOWN" ? "provider_unknown" : "provider_error"),
+      message: databaseError
+        ? "NCBI rejected the search before retrieving hits: the requested 16S database was not found on the provider. No results exist for this RID and none were fabricated."
+        : "NCBI reported a failed search. No results exist for this RID and none were fabricated.",
+      evidence
+    });
+  }
+  if (normalized === "RUNNING") {
+    return statusResult({
+      state: QBLAST_STATES.RUNNING,
+      reason: null,
+      message: "NCBI reports the search is still running. No results have been retrieved.",
+      evidence
+    });
+  }
+  return statusResult({
+    state: QBLAST_STATES.QUEUED,
+    reason: null,
+    message: "NCBI reports the search is queued or waiting. No results have been retrieved.",
+    evidence
+  });
+}
+
+// Backwards-compatible string view for older callers. It never authorises a
+// result retrieval: handlers use parseQBlastStatus above.
+const LEGACY_STATUS_MAP = {
+  [QBLAST_STATES.COMPLETE]: "complete",
+  [QBLAST_STATES.RUNNING]: "queued",
+  [QBLAST_STATES.QUEUED]: "queued",
+  [QBLAST_STATES.FAILED]: "error",
+  [QBLAST_STATES.ERROR]: "error",
+  [QBLAST_STATES.UNAVAILABLE]: "error"
+};
+
 export function parseStatusResponse(text) {
-  const match = String(text || "").match(/Status\s*[=:]\s*(Ready|Running|Waiting|Queued|Failed|Unknown)/i);
-  if (!match) return "queued";
-  const raw = match[1].toLowerCase();
-  if (raw === "ready") return "complete";
-  if (raw === "failed" || raw === "unknown") return "error";
-  return "queued";
+  return LEGACY_STATUS_MAP[parseQBlastStatus(text, { allowBareStatus: true }).state] ?? "error";
+}
+
+// Typed transport result for strict status/results parsing. Never throws and
+// never logs the URL: a CMD=Put URL contains the user's FASTA.
+export async function fetchUpstream(url, { fetchImpl, timeoutMs = NCBI_FETCH_TIMEOUT_MS } = {}) {
+  const doFetch = fetchImpl || globalThis.fetch;
+  if (typeof doFetch !== "function") {
+    return { ok: false, httpStatus: null, contentType: null, body: "", errorCode: "network_error" };
+  }
+  let timer = null;
+  let signal;
+  try {
+    if (typeof AbortController === "function") {
+      const controller = new AbortController();
+      signal = controller.signal;
+      timer = setTimeout(() => controller.abort(), timeoutMs);
+      if (typeof timer?.unref === "function") timer.unref();
+    }
+    const response = await doFetch(url, {
+      method: "GET",
+      headers: { "User-Agent": "smart-bioinformatics-toolkit" },
+      signal
+    });
+    const httpStatus = Number(response?.status) || 0;
+    const contentType = response?.headers?.get?.("content-type") ?? null;
+    if (httpStatus < 200 || httpStatus >= 300) {
+      return { ok: false, httpStatus, contentType, body: "", errorCode: "http_error" };
+    }
+    let body = "";
+    try {
+      body = await response.text();
+    } catch {
+      return { ok: false, httpStatus, contentType, body: "", errorCode: "network_error" };
+    }
+    return { ok: true, httpStatus, contentType, body, errorCode: null };
+  } catch (error) {
+    const message = String(error?.message ?? "");
+    const timeout = error?.name === "AbortError" || /timeout|abort/i.test(message);
+    return { ok: false, httpStatus: null, contentType: null, body: "", errorCode: timeout ? "timeout" : "network_error" };
+  } finally {
+    if (timer !== null) clearTimeout(timer);
+  }
 }
 
 // Keep only tabular comment/header/data lines if NCBI wraps the report in HTML.
@@ -476,4 +755,45 @@ export async function cacheResults(db, rid, resultTsv) {
 export async function listRecent(db, limit = HISTORY_LIMIT) {
   const result = await db.prepare(SQL.selectRecent).bind(limit).all();
   return result.results ?? [];
+}
+
+// --------------------------------------------------- real-submit throttle
+// blast_requests has no mock/real column, but mock RIDs carry MOCK_RID_PREFIX.
+// Only real submissions count toward the shared NCBI CMD=Put budget.
+
+function isRealRecentRow(row, cutoff) {
+  const created = Date.parse(row?.created_at);
+  return Number.isFinite(created)
+    && created >= cutoff
+    && !String(row?.rid ?? "").toUpperCase().startsWith(MOCK_RID_PREFIX);
+}
+
+export function recentRealSubmissionCount(rows, { now = Date.now(), windowMs = NCBI_SUBMIT_WINDOW_MS } = {}) {
+  const cutoff = now - windowMs;
+  return (Array.isArray(rows) ? rows : []).filter((row) => isRealRecentRow(row, cutoff)).length;
+}
+
+export function submissionRetryAfter(rows, {
+  now = Date.now(),
+  windowMs = NCBI_SUBMIT_WINDOW_MS,
+  limit = NCBI_SUBMIT_LIMIT
+} = {}) {
+  const cutoff = now - windowMs;
+  const inWindow = (Array.isArray(rows) ? rows : []).filter((row) => isRealRecentRow(row, cutoff));
+  if (inWindow.length < limit) return 0;
+  const oldest = Math.min(...inWindow.map((row) => Date.parse(row.created_at)));
+  return Math.max(1, Math.ceil((oldest + windowMs - now) / 1000));
+}
+
+export function throttledResponse(request, retryAfter, {
+  limit = NCBI_SUBMIT_LIMIT,
+  windowMs = NCBI_SUBMIT_WINDOW_MS
+} = {}) {
+  return jsonResponse({
+    error: "Global NCBI submission throttle reached. Nothing was sent to NCBI and the consent token was not consumed.",
+    code: "ncbi_submit_throttled",
+    retry_after_seconds: retryAfter,
+    limit,
+    window_seconds: Math.round(windowMs / 1000)
+  }, 429, request, { "Retry-After": String(retryAfter) });
 }

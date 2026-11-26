@@ -52,6 +52,10 @@
 .input-info ul, .plan-view ul, .taxonomy-view ul, .warnings-view ul { margin: 0 0 var(--space-2); padding-left: var(--space-5); }
 .input-info li, .plan-view li, .taxonomy-view li, .warnings-view li { margin-bottom: 2px; font-size: var(--fs-200); line-height: var(--lh-snug); overflow-wrap: anywhere; }
 .input-warning { margin: var(--space-3) 0 0; color: var(--caution); font-size: var(--fs-200); font-weight: var(--fw-semibold); }
+.provider-status { margin-top: var(--space-3); padding: var(--space-3) var(--space-4); background: var(--surface-2); border: var(--border-soft); border-radius: var(--radius-3); font-size: var(--fs-200); line-height: var(--lh-snug); overflow-wrap: anywhere; }
+.provider-status[hidden] { display: none; }
+.provider-status.failed { color: var(--caution); border-color: var(--caution-line); }
+.provider-error { margin: var(--space-2) 0 0; font-family: var(--font-mono); color: var(--ink-2); }
 
 .approval-box { margin-top: var(--space-4); padding: var(--space-4); background: var(--caution-bg); border: var(--border-width) solid var(--caution-line); border-radius: var(--radius-3); }
 .approval-box label { display: flex; gap: var(--space-3); align-items: flex-start; font-size: var(--fs-200); line-height: var(--lh-snug); }

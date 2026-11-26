@@ -52,8 +52,12 @@ test("validateFasta rejects unsafe or empty FASTA inputs", () => {
   assert.equal(validateFasta(">seq1\n\n").valid, false);
 });
 
+test("ALLOWED_DATABASE is the canonical NCBI 16S rRNA identifier", () => {
+  assert.equal(ALLOWED_DATABASE, "rRNA_typestrains/16S_ribosomal_RNA");
+});
+
 test("database and program must match exactly", () => {
-  assert.equal(validateDatabase("16S_ribosomal_RNA").valid, true);
+  assert.equal(validateDatabase("rRNA_typestrains/16S_ribosomal_RNA").valid, true);
   assert.equal(validateDatabase("nt").valid, false);
   assert.equal(validateDatabase("16S_ribosomal_rna").valid, false);
   assert.equal(validateProgram("blastn").valid, true);

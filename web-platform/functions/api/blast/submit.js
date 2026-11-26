@@ -10,16 +10,23 @@ import {
   cryptoUnavailableResponse,
   errorResponse,
   finalizeBlastAudit,
+  getRequest,
   hashInput,
   insertRequest,
   isMock,
   isValidRid,
   jsonResponse,
+  listRecent,
   mockRid,
+  NCBI_SUBMIT_LIMIT,
+  NCBI_SUBMIT_WINDOW_MS,
   ncbiFetchText,
   parsePutResponse,
   preflightResponse,
+  recentRealSubmissionCount,
   resolveBlastConsent,
+  submissionRetryAfter,
+  throttledResponse,
   validateDatabase,
   validateFasta,
   validateProgram
@@ -65,6 +72,50 @@ export async function handleSubmit(request, env, { now = Date.now() } = {}) {
   if (!db) return errorResponse("BLAST database binding is unavailable.", 503, request);
 
   const inputHash = await hashInput(fasta);
+  const mock = isMock(env);
+
+  // Resume-by-RID is a read-only path. When a browser refresh repeats a submit
+  // with a RID it already holds, return that job without another egress and
+  // without consuming the (still unused) consent token. The RID is untrusted:
+  // it is only honoured when the stored input hash matches this FASTA.
+  if (payload.rid !== undefined && payload.rid !== null && payload.rid !== "") {
+    if (!isValidRid(payload.rid)) return errorResponse("Invalid request ID.", 400, request);
+    let existing;
+    try {
+      existing = await getRequest(db, payload.rid);
+    } catch {
+      return errorResponse("BLAST database is unavailable.", 503, request);
+    }
+    if (!existing || existing.input_hash !== inputHash) {
+      return errorResponse("The request ID does not match this FASTA.", 409, request);
+    }
+    return jsonResponse({ rid: existing.rid, status: existing.status, resumed: true }, 200, request);
+  }
+
+  // Global throttle for real CMD=Put submissions only. It runs BEFORE consent
+  // resolution/claim so a rejected request never burns single-use consent.
+  // Mock mode is distinguishable server-side and does not contact NCBI.
+  // LIMITATION: this is a best-effort, non-atomic check over blast_requests;
+  // no migration or counter column was added. Concurrent or unsuccessful
+  // submissions can slip through, and with more than HISTORY_LIMIT submissions
+  // in the window the oldest visible row makes Retry-After conservative.
+  if (!mock) {
+    const numericWindow = Number(env?.NCBI_SUBMIT_WINDOW_MS);
+    const numericLimit = Number(env?.NCBI_SUBMIT_LIMIT);
+    const windowMs = Number.isFinite(numericWindow) && numericWindow > 0 ? numericWindow : NCBI_SUBMIT_WINDOW_MS;
+    const limit = Number.isInteger(numericLimit) && numericLimit > 0 ? numericLimit : NCBI_SUBMIT_LIMIT;
+    let recentRows;
+    try {
+      recentRows = await listRecent(db);
+    } catch {
+      return errorResponse("BLAST database is unavailable.", 503, request);
+    }
+    const count = recentRealSubmissionCount(recentRows, { now, windowMs });
+    if (count >= limit) {
+      const retryAfter = submissionRetryAfter(recentRows, { now, windowMs, limit });
+      return throttledResponse(request, retryAfter, { limit, windowMs });
+    }
+  }
 
   // Fail-closed consent gate: applies in mock mode too. A direct POST without a
   // valid, matching, unexpired and unused token never reaches this point's NCBI
@@ -96,7 +147,6 @@ export async function handleSubmit(request, env, { now = Date.now() } = {}) {
   }
 
   const createdAt = new Date(now).toISOString();
-  const mock = isMock(env);
   const egressDetail = {
     actor: "browser",
     action: "blast_egress",

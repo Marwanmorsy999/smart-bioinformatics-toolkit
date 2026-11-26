@@ -138,7 +138,7 @@ export function makeGetRequest(path, headers = {}) {
 
 export const VALID_PAYLOAD = {
   fasta: ">seq1 16S mock\nACGTACGTNRYSWKMBDHV\n>seq2\nTTTTacgt\n",
-  database: "16S_ribosomal_RNA",
+  database: "rRNA_typestrains/16S_ribosomal_RNA",
   program: "blastn"
 };
 

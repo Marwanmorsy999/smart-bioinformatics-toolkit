@@ -467,7 +467,7 @@ test("approval with external egress and consent issues a usable BLAST token", as
   const grant = approved.body.blast_consent;
   assert.match(grant.token, /^consent_[0-9a-f]{32}$/);
   assert.equal(grant.input_hash, await hashInput(FASTA));
-  assert.equal(grant.database, "16S_ribosomal_RNA");
+  assert.equal(grant.database, "rRNA_typestrains/16S_ribosomal_RNA");
   assert.equal(grant.program, "blastn");
   assert.equal(Date.parse(grant.expires_at) > NOW, true);
 

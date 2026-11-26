@@ -83,7 +83,7 @@
           <div id="approval-box" class="approval-box" hidden>
             <label for="approve-check">
               <input id="approve-check" type="checkbox">
-              <span>I have reviewed this exact plan. I approve the single step and consent to transmit the validated FASTA bytes to <strong>NCBI BLAST</strong> (https://blast.ncbi.nlm.nih.gov/Blast.cgi) using database <code>16S_ribosomal_RNA</code> and program <code>blastn</code>. I understand this consent is scoped to this input, short-lived and single-use.</span>
+              <span>I have reviewed this exact plan. I approve the single step and consent to transmit the validated FASTA bytes to <strong>NCBI BLAST</strong> (https://blast.ncbi.nlm.nih.gov/Blast.cgi) using database <code>rRNA_typestrains/16S_ribosomal_RNA</code> (16S ribosomal RNA sequences, Bacteria and Archaea; previously named <code>16S_ribosomal_RNA</code>) and program <code>blastn</code>. I understand this consent is scoped to this input, short-lived and single-use.</span>
             </label>
             <p class="small">Approval creates jobs and mints the consent token. Nothing is transmitted until you then press “Submit to NCBI”.</p>
             <button id="approve-plan" type="button" class="primary-button small-button" disabled>Approve plan &amp; issue consent</button>
@@ -100,6 +100,7 @@
             <span id="submit-note" class="small" role="status" aria-live="polite">One submission per 10 seconds is permitted by NCBI usage rules.</span>
           </div>
           <div id="rid-view" class="rid-view" role="status" aria-live="polite" hidden></div>
+          <div id="provider-status" class="provider-status" role="status" aria-live="polite" hidden></div>
           <div class="button-row">
             <button id="check-status" type="button" class="secondary-button small-button" disabled>Check status</button>
             <span id="status-countdown" class="small" aria-live="off"></span>

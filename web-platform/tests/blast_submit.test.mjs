@@ -48,7 +48,7 @@ test("valid mock submission returns rid/status and stores only a hash", async ()
   assert.equal(auditRow.timestamp, new Date(SUBMIT_AT).toISOString());
   const detail = JSON.parse(auditRow.detail_json);
   assert.equal(detail.input_hash, row.input_hash);
-  assert.equal(detail.database, "16S_ribosomal_RNA");
+  assert.equal(detail.database, "rRNA_typestrains/16S_ribosomal_RNA");
   assert.equal(detail.program, "blastn");
   assert.equal(detail.payload_bytes, new TextEncoder().encode(VALID_PAYLOAD.fasta).length);
   assert.equal(detail.hash_bytes, 32);
@@ -95,7 +95,7 @@ test("invalid FASTA, database and program return 400", async () => {
 
   const badDatabase = await submit({ ...VALID_PAYLOAD, database: "nt" }, env);
   assert.equal(badDatabase.response.status, 400);
-  assert.match((await badDatabase.response.json()).error, /16S_ribosomal_RNA/);
+  assert.match((await badDatabase.response.json()).error, /16S_ribosomal_RNA/); // label mentions the legacy name
 
   const badProgram = await submit({ ...VALID_PAYLOAD, program: "blastp" }, env);
   assert.equal(badProgram.response.status, 400);
@@ -243,7 +243,7 @@ test("a consented submit binds the exact SHA-256 of the transmitted FASTA", asyn
   const expectedHash = await hashInput(VALID_PAYLOAD.fasta);
   assert.equal(state.rows[0].input_hash, expectedHash);
   assert.equal(state.consents[0].input_hash, expectedHash);
-  assert.equal(state.consents[0].database, "16S_ribosomal_RNA");
+  assert.equal(state.consents[0].database, "rRNA_typestrains/16S_ribosomal_RNA");
   assert.equal(state.consents[0].program, "blastn");
   assert.equal(state.consents[0].granted, 1);
 });

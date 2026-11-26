@@ -9,7 +9,9 @@ import { analyzeTaxonomy } from "./taxonomy.js";
 const SUBMIT_THROTTLE_MS = 10 * 1000;
 const STATUS_INTERVAL_MS = 60 * 1000;
 const OPEN_STATUSES = new Set(["queued", "running", "waiting"]);
+const TERMINAL_STATUSES = new Set(["complete", "failed", "error", "unavailable", "no_hits"]);
 const RESULT_ENDPOINT = "/api/blast/results/";
+const RID_STORAGE_KEY = "m7_6_blast_rid";
 
 const byId = (id) => document.getElementById(id);
 const ui = {
@@ -28,6 +30,7 @@ const ui = {
   submit: byId("submit-blast"),
   submitNote: byId("submit-note"),
   rid: byId("rid-view"),
+  providerStatus: byId("provider-status"),
   resumeRid: byId("resume-rid"),
   resumeButton: byId("resume-rid-button"),
   checkStatus: byId("check-status"),
@@ -50,6 +53,7 @@ const state = {
   fasta: "", filename: "16s.fasta", byteSize: 0, inputHash: null, inputCheck: null,
   plan: null, planId: null, requestId: null, datasetId: null,
   consent: null, rid: null, status: null, mockRid: false,
+  statusMessage: null, providerError: null, provenance: null, noHits: false,
   lastSubmitAt: 0, lastStatusAt: 0, submittedAt: null, fetchedAt: null,
   tsv: null, parsed: null, analysis: null, taxonomy: null, mockResult: false,
   pollTimer: null, countdownTimer: null
@@ -88,6 +92,7 @@ function resetResults() {
   state.analysis = null;
   state.taxonomy = null;
   state.mockResult = false;
+  state.noHits = false;
   ui.results.hidden = true;
   ui.resultsEmpty.hidden = false;
   ui.banner.hidden = true;
@@ -196,7 +201,11 @@ function renderPlan(plan) {
 
 async function jsonOrThrow(response) {
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || `Request failed (HTTP ${response.status}).`);
+  if (!response.ok) {
+    const retry = response.status === 429 ? response.headers.get("Retry-After") : null;
+    const suffix = retry ? ` Retry in ${retry} s.` : "";
+    throw new Error(`${data.error || `Request failed (HTTP ${response.status}).`}${suffix}`);
+  }
   return data;
 }
 
@@ -319,6 +328,17 @@ function renderRid(rid, status) {
   if (state.mockRid) {
     ui.rid.append(element("p", "input-warning", "This RID has the mock prefix. Its results must be treated as synthetic, never as a real NCBI result."));
   }
+
+  ui.providerStatus.replaceChildren();
+  ui.providerStatus.hidden = false;
+  ui.providerStatus.className = `provider-status ${TERMINAL_STATUSES.has(status) && status !== "complete" ? "failed" : "pending"}`;
+  if (state.statusMessage) ui.providerStatus.append(element("p", "", state.statusMessage));
+  if (state.providerError) {
+    ui.providerStatus.append(element("p", "provider-error", `NCBI error (verbatim, truncated by the server): ${state.providerError}`));
+  }
+  if (status === "unavailable") {
+    ui.providerStatus.append(element("p", "small", "NCBI could not be reached or returned an unusable response. No result was substituted."));
+  }
 }
 
 ui.submit.addEventListener("click", async () => {
@@ -351,12 +371,19 @@ ui.submit.addEventListener("click", async () => {
     state.lastSubmitAt = Date.now();
     state.lastStatusAt = Date.now(); // be conservative: no immediate RID poll
     state.submittedAt = new Date().toISOString();
+    try {
+      sessionStorage.setItem(RID_STORAGE_KEY, state.rid);
+    } catch {
+      // Storage may be disabled; the visible RID remains available to copy.
+    }
     renderRid(state.rid, state.status);
     ui.checkStatus.disabled = true;
     resetResults();
     startCountdown();
     if (OPEN_STATUSES.has(state.status)) schedulePoll();
-    ui.submitNote.textContent = "Submitted. The single-use consent token has been consumed; one submission per 10 seconds is allowed.";
+    ui.submitNote.textContent = state.mockRid
+      ? "Mock submission stored: synthetic output only, not an NCBI result."
+      : "Submitted to NCBI. The single-use consent token has been consumed; submissions are globally throttled by the server.";
   } catch (error) {
     setError(error.message || "Submission failed. No RID was obtained.");
   } finally {
@@ -385,16 +412,23 @@ async function checkStatus(manual) {
       return;
     }
     const data = await jsonOrThrow(response);
-    state.status = data.status;
+    state.status = data.state ?? data.status;
+    state.statusMessage = data.message ?? null;
+    state.providerError = data.evidence?.provider_error ?? null;
     state.lastStatusAt = Date.now();
     renderRid(state.rid, state.status);
     if (state.status === "complete") {
       clearPollTimer();
       await fetchResults();
-    } else if (state.status === "error" || state.status === "failed") {
+    } else if (TERMINAL_STATUSES.has(state.status)) {
       clearPollTimer();
-      ui.resultsEmpty.textContent = "NCBI reported a failed job. No results were retrieved; no result is fabricated.";
-      setError("The remote provider reported a failed status. No results are available for this RID.");
+      state.noHits = state.status === "no_hits";
+      ui.resultsEmpty.textContent = state.noHits
+        ? "NCBI completed the search with no hits. No result table is shown and none was fabricated."
+        : `NCBI reported ${state.status}. No results were retrieved; no result is fabricated.`;
+      if (state.status !== "complete") {
+        setError(data.message || "The remote provider reported a terminal status. No results are available for this RID.");
+      }
     } else {
       schedulePoll();
     }
@@ -410,8 +444,7 @@ async function checkStatus(manual) {
 
 ui.checkStatus.addEventListener("click", () => checkStatus(true));
 
-ui.resumeButton.addEventListener("click", () => {
-  const value = String(ui.resumeRid.value ?? "").trim();
+function resumeFromRid(value) {
   if (!/^[A-Za-z0-9_-]{8,64}$/.test(value)) {
     setError("Enter a valid NCBI RID (8–64 letters, digits, hyphen or underscore). Nothing was submitted.");
     return;
@@ -420,6 +453,8 @@ ui.resumeButton.addEventListener("click", () => {
   resetResults();
   state.rid = value;
   state.status = "queued";
+  state.statusMessage = null;
+  state.providerError = null;
   state.lastStatusAt = 0;
   state.submittedAt = null;
   state.fetchedAt = null;
@@ -431,6 +466,10 @@ ui.resumeButton.addEventListener("click", () => {
   ui.checkStatus.disabled = false;
   setError("");
   checkStatus(true);
+}
+
+ui.resumeButton.addEventListener("click", () => {
+  resumeFromRid(String(ui.resumeRid.value ?? "").trim());
 });
 
 // ------------------------------------------------------------------ step 4
@@ -446,13 +485,50 @@ function detectSchema(tsv) {
 async function fetchResults() {
   if (!state.rid) return;
   try {
-    const response = await fetch(`${RESULT_ENDPOINT}${encodeURIComponent(state.rid)}`, {
-      method: "GET", headers: { Accept: "text/plain" }, credentials: "same-origin"
+    const response = await fetch(`${RESULT_ENDPOINT}${encodeURIComponent(state.rid)}?format=json`, {
+      method: "GET", headers: { Accept: "application/json" }, credentials: "same-origin"
     });
-    if (!response.ok) throw new Error((await response.text()).slice(0, 300) || `Results request failed (HTTP ${response.status}).`);
-    state.tsv = await response.text();
-    state.fetchedAt = new Date().toISOString();
-    state.mockResult = state.mockRid || /MOCK DATA|MOCK000001/i.test(state.tsv);
+    let envelope;
+    if (!response.ok) {
+      // Typed errors carry honest messages and safe provider evidence. Never
+      // show the raw body: it may be HTML or contain sensitive text.
+      let data = null;
+      try {
+        data = await response.json();
+      } catch {
+        data = null; // non-JSON body: use the safe fallback below
+      }
+      const typed = data && typeof data === "object" && !Array.isArray(data) ? data : null;
+      const providerError = typeof typed?.evidence?.provider_error === "string"
+        ? typed.evidence.provider_error : null;
+      const baseMessage = typeof typed?.message === "string" && typed.message.trim()
+        ? typed.message
+        : `Results request failed (HTTP ${response.status}). No result table was fabricated.`;
+      envelope = {
+        outcome: ["no_hits", "provider_failure", "unavailable"].includes(typed?.outcome)
+          ? typed.outcome : "unavailable",
+        message: providerError ? `${baseMessage} NCBI error: ${providerError}` : baseMessage,
+        mock: false
+      };
+    } else {
+      envelope = await response.json();
+    }
+    state.provenance = envelope.provenance ?? null;
+    if (envelope.outcome === "no_hits" || envelope.outcome === "provider_failure" || envelope.outcome === "unavailable") {
+      state.noHits = envelope.outcome === "no_hits";
+      clearPollTimer();
+      ui.resultsEmpty.hidden = false;
+      ui.resultsEmpty.textContent = envelope.message
+        || (state.noHits ? "NCBI completed with no hits; no table was fabricated." : "NCBI returned no usable report; no table was fabricated.");
+      ui.results.hidden = true;
+      ui.banner.hidden = true;
+      ui.downloadTsv.disabled = true;
+      ui.downloadJson.disabled = true;
+      return;
+    }
+    state.tsv = envelope.tsv ?? "";
+    state.fetchedAt = state.provenance?.retrieved_at ?? new Date().toISOString();
+    state.mockResult = state.mockRid || envelope.mock === true || /MOCK DATA|MOCK000001/i.test(state.tsv);
     const schema = detectSchema(state.tsv);
     state.parsed = parseBlast(state.tsv, schema);
     const queryIds = (state.inputCheck?.records ?? []).map((record) => record.id);
@@ -578,8 +654,15 @@ function renderResults() {
   field(ui.provenance, "Consent-bound input hash", state.consent?.input_hash);
   field(ui.provenance, "Submitted at", state.submittedAt);
   field(ui.provenance, "Results fetched at", state.fetchedAt);
-  field(ui.provenance, "Result source", `${RESULT_ENDPOINT}${state.rid}`);
+  field(ui.provenance, "Result source", `${RESULT_ENDPOINT}${state.rid}?format=json`);
   field(ui.provenance, "Mock mode", state.mockResult ? "SYNTHETIC — not real" : "no synthetic marker detected");
+  const proof = state.provenance ?? {};
+  field(ui.provenance, "Database", proof.database ?? "—");
+  field(ui.provenance, "Provider parser schema", proof.parser_schema ?? "—");
+  field(ui.provenance, "Raw SHA-256", proof.sha256 ?? "—");
+  field(ui.provenance, "Rows received / parsed / rejected",
+    `${proof.rows_received ?? "—"} / ${proof.rows_parsed ?? "—"} / ${proof.rows_rejected ?? "—"}`);
+  list(ui.provenance, "Retrieval warnings", proof.warnings);
   ui.downloadTsv.disabled = false;
   ui.downloadJson.disabled = false;
 }
@@ -608,6 +691,7 @@ ui.downloadJson.addEventListener("click", () => {
     parameters: state.plan?.steps?.[0]?.params ?? {},
     input_hash: state.consent?.input_hash ?? null,
     retrieved_at: state.fetchedAt,
+    provenance: state.provenance,
     parsed: state.parsed,
     analysis: state.analysis,
     taxonomy: state.taxonomy,
@@ -618,7 +702,17 @@ ui.downloadJson.addEventListener("click", () => {
   download(JSON.stringify(payload, null, 2), `${state.mockResult ? "mock-" : ""}ncbi-blast-${state.rid}.json`, "application/json");
 });
 
-// Initial state: no input, no request, no result, no network call.
+// Initial state: no input and no result. If this browser tab already submitted
+// a job, resume by RID (a status read) instead of creating a duplicate job.
 ui.downloadTsv.disabled = true;
 ui.downloadJson.disabled = true;
 refreshInput();
+try {
+  const savedRid = String(sessionStorage.getItem(RID_STORAGE_KEY) ?? "").trim();
+  if (savedRid && /^[A-Za-z0-9_-]{8,64}$/.test(savedRid)) {
+    ui.resumeRid.value = savedRid;
+    resumeFromRid(savedRid);
+  }
+} catch {
+  // Storage may be disabled; the manual resume controls still work.
+}
