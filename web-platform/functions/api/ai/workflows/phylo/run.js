@@ -567,6 +567,9 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
   let failed = null;
   const retrievalErrors = [];
   const retrievedFiles = [];
+  // In-memory only: real downloaded text used to compare artifact roles by
+  // content. Never serialized into the response.
+  const retrievedContentById = new Map();
   let mafftOutputs = [];
   let iqtreeOutputs = [];
   // In a fresh run the uploaded HDA is an INPUT, never a MAFFT output. In a
@@ -759,6 +762,7 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
         retrievalErrors.push({ dataset_id: item.id, name: item.name, reason: "content_unavailable" });
         continue;
       }
+      retrievedContentById.set(String(item.id), downloaded.content);
       const bytes = new TextEncoder().encode(downloaded.content).length;
       const checksum = await hashInput(downloaded.content);
       const isNhkArtifact = /\.nhx\b/i.test(String(item.name ?? "")) || /^nhx$/i.test(String(item.type ?? ""));
@@ -831,15 +835,22 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
     }
     // Label retained tree artifacts OUTSIDE the try: the fallback path must be
     // labelled too, so no tree is ever displayed without an explicit source.
-    if (displayedTreeSource) {
-      const displayedHda = displayedTreeSource === "iqtree_report_final_tree"
-        ? null : String(selected.tree?.id ?? "");
+    if (displayedTreeSource && treeText) {
+      // Roles come from ACTUAL downloaded content, never from a name guess.
+      const displayedTree = String(treeText).trim();
       for (const file of retrievedFiles) {
         if (file.kind !== "tree" && file.source_role !== "starting_tree_not_displayed") continue;
         const name = String(file.name ?? "");
-        const isStarting = /bionj|starting tree|initial tree|\.nhx\b/i.test(name)
-          || !displayedHda || String(file.dataset_id) !== displayedHda;
-        file.source_role = isStarting ? "starting_tree_not_displayed" : "displayed_tree";
+        const content = retrievedContentById.get(String(file.dataset_id));
+        if (typeof content === "string" && content.trim() === displayedTree) {
+          file.source_role = "displayed_tree";
+        } else if (/bionj|starting tree|initial tree|\.nhx\b/i.test(name)) {
+          file.source_role = "starting_tree_not_displayed";
+        } else if (/maxlikelihood|maximum likelihood|final tree/i.test(name)) {
+          file.source_role = "final_tree_artifact";
+        } else {
+          file.source_role = "starting_tree_not_displayed";
+        }
       }
     }
     if (!alignmentText) retrievalErrors.push({ reason: "no_valid_alignment_retrieved" });
