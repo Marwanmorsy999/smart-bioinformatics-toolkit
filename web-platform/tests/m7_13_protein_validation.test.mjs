@@ -172,8 +172,9 @@ test("FIXTURE: Route B requires a configured contact email and never fabricates 
   assert.equal(params.get("email"), "researcher@example.org");
   assert.equal(params.get("stype"), "p");
   assert.equal(params.get("sequence"), TP53);
-  assert.equal(params.get("goterms"), "on");
-  assert.equal(params.get("pathways"), "on");
+  // EBI's official submit() sends literal true/false booleans, not checkbox on/off.
+  assert.equal(params.get("goterms"), "true");
+  assert.equal(params.get("pathways"), "true");
   const malformed = await submitIprscan6({ email: "researcher@example.org", sequence: TP53,
     ctx: { fetch: stub(async () => new Response("ok\n")) } }).catch((error) => error);
   assert.equal(malformed.code, "iprscan6_invalid_job_id");
