@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="css/components.css">
   <link rel="stylesheet" href="css/app-views.css">
   <link rel="stylesheet" href="css/phylo.css">
+  <link rel="stylesheet" href="css/microbiome.css">
   <link rel="stylesheet" href="css/history.css">
 </head>
 <body>
@@ -29,6 +30,7 @@
       <a href="phylo.html">Phylogenetics</a>
       <a href="protein.html">Protein annotation</a>
       <a href="16s.html">16S</a>
+      <a href="microbiome.html">Microbiome</a>
       <a href="assistant.html">Assistant</a>
       <a href="history.html" aria-current="location">Research history</a>
       <a href="index.html#about">About</a>
@@ -60,6 +62,7 @@
             <button type="button" data-history-filter="16s" aria-pressed="false">16S identification</button>
             <button type="button" data-history-filter="phylo" aria-pressed="false">Phylogenetics</button>
             <button type="button" data-history-filter="protein" aria-pressed="false">Protein annotation</button>
+            <button type="button" data-history-filter="microbiome" aria-pressed="false">16S microbiome</button>
             <button type="button" data-history-filter="running" aria-pressed="false">Running</button>
             <button type="button" data-history-filter="failed" aria-pressed="false">Failed</button>
             <button type="button" data-history-filter="completed" aria-pressed="false">Completed</button>
@@ -121,6 +124,19 @@
             <h4>GO evidence and source releases</h4>
             <p id="history-protein-go"></p>
             <ul id="history-protein-downloads" class="phylo-downloads"></ul>
+          </div>
+
+          <div class="history-microbiome">
+            <h3>Restored 16S microbiome evidence (server recovery)</h3>
+            <p id="history-microbiome-status" class="panel-note">No microbiome run is selected.</p>
+            <h4>Original input and metadata</h4>
+            <pre id="history-microbiome-input" class="history-report-excerpt"></pre>
+            <h4>Composition and alpha diversity from stored tables</h4>
+            <div id="history-microbiome-composition" class="table-scroll"></div>
+            <p id="history-microbiome-alpha"></p>
+            <h4>PCoA from stored coordinates</h4>
+            <div id="history-microbiome-pcoa" class="chart-box"></div>
+            <ul id="history-microbiome-downloads" class="phylo-downloads"></ul>
           </div>
 
           <h3>Downloads from the original artifacts</h3>

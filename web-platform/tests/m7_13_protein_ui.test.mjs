@@ -196,7 +196,7 @@ test("LAYOUT: protein and history pages do not overflow at 768px", async () => {
     const overflow = await page.evaluate(() =>
       document.documentElement.scrollWidth - document.documentElement.clientWidth);
     assert.ok(overflow <= 1, `${url} overflow ${overflow}px`);
-    assert.equal(await page.locator("#primary-nav a").count(), 8);
+    assert.equal(await page.locator("#primary-nav a").count(), 9);
     await page.close();
     await local.close();
   }

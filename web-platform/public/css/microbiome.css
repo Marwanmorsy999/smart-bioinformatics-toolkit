@@ -1,0 +1,81 @@
+/* M7.14 microbiome workflow view. Additive stylesheet; all grids collapse to a
+   single column and every wide table scrolls inside its own box so the page
+   never overflows horizontally at 768px or below. */
+
+.microbiome-view .app-shell {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.microbiome-view .app-rail,
+.microbiome-view .app-content { display: grid; gap: 1rem; min-width: 0; }
+
+.microbiome-view .panel { min-width: 0; }
+.microbiome-view h3 { margin: 1rem 0 0.4rem; font-size: 1rem; }
+.microbiome-view .field-hint { font-size: 0.82rem; color: var(--ink-2, #4b5563); margin-top: 0.25rem; }
+
+.microbiome-view .table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.microbiome-view table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.microbiome-view th, .microbiome-view td {
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--line, #d9e0e5);
+  text-align: left;
+  white-space: nowrap;
+}
+.microbiome-view th { position: sticky; top: 0; background: var(--surface, #fff); }
+.microbiome-view td.number { text-align: right; font-variant-numeric: tabular-nums; }
+
+.microbiome-view .results-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: 1rem;
+  min-width: 0;
+}
+.microbiome-view .result-card { min-width: 0; }
+.microbiome-view .result-card.wide { grid-column: 1 / -1; }
+
+.microbiome-view .chart-box {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--line, #d9e0e5);
+  border-radius: 0.5rem;
+  padding: 0.5rem;
+}
+.microbiome-view .chart-box svg { display: block; max-width: 100%; height: auto; }
+.microbiome-view .bar-row { display: flex; align-items: center; gap: 0.4rem; margin: 0.3rem 0; min-width: 0; }
+.microbiome-view .bar-label { flex: 0 0 8rem; overflow-wrap: anywhere; font-size: 0.8rem; }
+.microbiome-view .bar-track { flex: 1 1 auto; min-width: 0; background: var(--surface-2, #eef2f4); border-radius: 0.25rem; height: 0.85rem; position: relative; }
+.microbiome-view .bar-fill { height: 100%; border-radius: 0.25rem; background: var(--accent-strong, #0b6b78); }
+.microbiome-view .bar-value { flex: 0 0 4.5rem; text-align: right; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+
+.microbiome-view .step-list { list-style: none; margin: 0.5rem 0; padding: 0; }
+.microbiome-view .step-list li {
+  display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: baseline;
+  padding: 0.4rem 0; border-bottom: 1px solid var(--line, #d9e0e5);
+}
+.microbiome-view .step-state { font-weight: 600; }
+.microbiome-view .step-state[data-state="succeeded"] { color: #146b3a; }
+.microbiome-view .step-state[data-state="failed"] { color: #a4262c; }
+.microbiome-view .run-id { font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+.microbiome-view .button-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
+.microbiome-view .download-list { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.microbiome-view .assistant-output { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 0.75rem; }
+.microbiome-view .is-invalid { color: #a4262c; }
+.microbiome-view .is-valid { color: #146b3a; }
+.microbiome-view .note-list { padding-left: 1.1rem; }
+
+@media (max-width: 860px) {
+  .microbiome-view .app-shell { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 480px) {
+  .microbiome-view .bar-label { flex-basis: 5.5rem; }
+  .microbiome-view .bar-value { flex-basis: 3.5rem; }
+}

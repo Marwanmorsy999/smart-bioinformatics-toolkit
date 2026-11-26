@@ -597,7 +597,7 @@ test("BROWSER: mobile layout stays usable and accessible", async () => {
   });
   assert.equal(layout.columns, 1, "single-column layout on mobile");
   assert.ok(layout.overflow <= 1, `no horizontal overflow (got ${layout.overflow}px)`);
-  assert.equal(await page.locator("#history-filters button").count(), 7);
+  assert.equal(await page.locator("#history-filters button").count(), 8);
   assert.deepEqual(errors, []);
   await page.close();
 });

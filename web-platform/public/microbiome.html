@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#eef2f4">
+  <meta name="description" content="First real multi-sample 16S microbiome workflow: live-discovered QIIME 2 / DADA2 tools, plan review and approval, honest per-sample counts, taxonomy, alpha diversity, Bray–Curtis and PCoA from retrieved tool artifacts.">
+  <title>Microbiome 16S workflow — Smart Bioinformatics AI</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/main.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/app-views.css">
+  <link rel="stylesheet" href="css/microbiome.css">
+</head>
+<body>
+  <a class="skip-link" href="#microbiome-main">Skip to main content</a>
+  <header class="topbar">
+    <a class="brand" href="index.html" aria-label="Smart Bioinformatics AI home">
+      <img class="brand-logo" src="brand/sbio-logo-primary.svg" alt="Smart Bioinformatics AI" width="245" height="28">
+    </a>
+    <button class="nav-toggle" type="button" aria-label="Open navigation" aria-controls="primary-nav" aria-expanded="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+    <nav id="primary-nav" class="top-nav" aria-label="Main navigation">
+      <a href="index.html#tools">Tools</a>
+      <a href="workspace.html">Research workspace</a>
+      <a href="phylo.html">Phylogenetics</a>
+      <a href="protein.html">Protein annotation</a>
+      <a href="16s.html">16S</a>
+      <a href="microbiome.html" aria-current="location">Microbiome</a>
+      <a href="assistant.html">Assistant</a>
+      <a href="history.html">Research history</a>
+      <a href="index.html#about">About</a>
+    </nav>
+    <span class="local-badge"><span class="status-dot" aria-hidden="true"></span> Galaxy execution</span>
+  </header>
+
+  <main id="microbiome-main" class="app-main microbiome-view" tabindex="-1">
+    <header class="view-head">
+      <div>
+        <h1>Multi-sample 16S microbiome workflow</h1>
+        <p class="section-kicker">Real Galaxy execution: reads and metadata are checked in the browser, tools and classifier options are discovered live, and every number shown comes from retrieved tool artifacts or real feature-table counts. Diversity and ordination are labelled by their computation source.</p>
+      </div>
+      <div class="research-strip" role="note">
+        <span class="privacy-icon" aria-hidden="true">i</span>
+        <p><strong>Research use only.</strong> Reads are uploaded to Galaxy only after you review and approve the plan. No significance claim is made; results need independent interpretation.</p>
+      </div>
+      <p class="ws-status-line" id="microbiome-status" role="status" aria-live="polite"></p>
+    </header>
+
+    <ol class="stage-rail" aria-label="Workflow sequence (not status)">
+      <li><span class="rail-index">01</span> Input</li>
+      <li><span class="rail-index">02</span> Reviewed plan</li>
+      <li><span class="rail-index">03</span> Approval</li>
+      <li><span class="rail-index">04</span> Progress</li>
+      <li><span class="rail-index">05</span> Results</li>
+    </ol>
+    <p class="stage-note">This rail is a sequence guide, not a status display. A stage is never shown complete until the server reports a stored provider job result.</p>
+
+    <div class="app-shell">
+      <aside class="app-rail" aria-label="Input and plan">
+        <section id="mb-input" class="panel" aria-labelledby="mb-input-title">
+          <div class="panel-head"><h2 id="mb-input-title">1. Provide reads and metadata</h2></div>
+          <p class="panel-note">Upload the multiplexed sequences FASTQ, its barcode FASTQ, and the QIIME 2 sample metadata TSV. Gzipped files are decompressed in this browser; the documented public dataset can be fetched by the Worker instead.</p>
+          <div class="field-group">
+            <label for="mb-public">Public dataset (one click)</label>
+            <select id="mb-public">
+              <option value="">Upload my own files</option>
+              <option value="moving-pictures-2026.10">Moving Pictures (official 2026.10 tutorial data)</option>
+            </select>
+            <p class="field-hint" id="mb-public-note">The Worker verifies the recorded SHA-256 checksums before using the public files. No job is submitted by selecting this option.</p>
+          </div>
+          <div id="mb-upload-fields">
+            <div class="field-group">
+              <label for="mb-reads">Sequences FASTQ (.fastq, .fq, .gz)</label>
+              <input id="mb-reads" type="file" accept=".fastq,.fq,.gz,.txt">
+            </div>
+            <div class="field-group">
+              <label for="mb-barcodes">Barcode FASTQ (.fastq, .fq, .gz)</label>
+              <input id="mb-barcodes" type="file" accept=".fastq,.fq,.gz,.txt">
+            </div>
+            <div class="field-group">
+              <label for="mb-metadata">Sample metadata TSV (.tsv, .txt)</label>
+              <input id="mb-metadata" type="file" accept=".tsv,.txt,.tab">
+            </div>
+          </div>
+          <div class="field-group">
+            <label for="mb-objective">Objective (optional)</label>
+            <input id="mb-objective" type="text" maxlength="1000" placeholder="e.g. Compare body-site communities in the Moving Pictures cohort">
+          </div>
+          <button type="button" id="mb-plan-button" class="primary-action">Review workflow plan</button>
+          <p class="panel-note" id="mb-plan-note">Reviewing a plan is read-only and submits no job.</p>
+        </section>
+
+        <section id="mb-plan" class="panel" aria-labelledby="mb-plan-title" hidden>
+          <div class="panel-head"><h2 id="mb-plan-title">2. Reviewed plan</h2></div>
+          <div id="mb-plan-summary"></div>
+          <h3>Exact tools and versions (live discovery)</h3>
+          <div id="mb-plan-tools" class="table-scroll"></div>
+          <h3>Sample overview and validation</h3>
+          <div id="mb-plan-validation" class="table-scroll"></div>
+          <h3>Quality-driven parameters</h3>
+          <div id="mb-plan-params"></div>
+          <h3>Classifier provenance</h3>
+          <div id="mb-plan-classifier"></div>
+          <button type="button" id="mb-approve-button" class="primary-action" disabled>Approve and submit one workflow</button>
+          <p class="panel-note" id="mb-approval-note">Approval submits exactly one dependent workflow. Refreshing or reopening reuses the stored run rather than resubmitting a completed stage.</p>
+        </section>
+      </aside>
+
+      <section class="app-content" aria-label="Progress and results">
+        <section id="mb-progress" class="panel" aria-labelledby="mb-progress-title" hidden>
+          <div class="panel-head"><h2 id="mb-progress-title">3. Genuine run progress</h2></div>
+          <p id="mb-run-id" class="run-id"></p>
+          <ol id="mb-step-list" class="step-list"></ol>
+          <div class="button-row">
+            <button type="button" id="mb-refresh-button">Refresh stored state (read-only)</button>
+            <button type="button" id="mb-result-button" disabled>Load stored result</button>
+          </div>
+          <p class="panel-note" id="mb-progress-note">Each refresh performs one bounded provider poll. No request holds a long polling loop.</p>
+        </section>
+
+        <section id="mb-results" class="panel" aria-labelledby="mb-results-title" hidden>
+          <div class="panel-head"><h2 id="mb-results-title">4. Results from retrieved artifacts</h2></div>
+          <p class="panel-note" id="mb-results-source"></p>
+          <div class="results-grid">
+            <section class="result-card" aria-labelledby="mb-qc-title">
+              <h3 id="mb-qc-title">Quality control</h3>
+              <div id="mb-qc" class="table-scroll"></div>
+            </section>
+            <section class="result-card" aria-labelledby="mb-asv-title">
+              <h3 id="mb-asv-title">ASVs / feature table</h3>
+              <div id="mb-asv"></div>
+            </section>
+            <section class="result-card" aria-labelledby="mb-taxonomy-title">
+              <h3 id="mb-taxonomy-title">Taxonomy composition</h3>
+              <div class="field-group">
+                <label for="mb-rank">Rank</label>
+                <select id="mb-rank"><option value="phylum">Phylum (computed by the workflow)</option></select>
+              </div>
+              <div id="mb-composition" class="table-scroll"></div>
+              <div id="mb-composition-chart" class="chart-box"></div>
+            </section>
+            <section class="result-card" aria-labelledby="mb-alpha-title">
+              <h3 id="mb-alpha-title">Alpha diversity</h3>
+              <div id="mb-alpha" class="table-scroll"></div>
+            </section>
+            <section class="result-card" aria-labelledby="mb-beta-title">
+              <h3 id="mb-beta-title">Bray–Curtis distances</h3>
+              <div id="mb-beta" class="table-scroll"></div>
+            </section>
+            <section class="result-card wide" aria-labelledby="mb-pcoa-title">
+              <h3 id="mb-pcoa-title">PCoA (real coordinates)</h3>
+              <div class="field-group">
+                <label for="mb-color-by">Colour points by metadata field</label>
+                <select id="mb-color-by"><option value="">No metadata colour</option></select>
+              </div>
+              <div id="mb-pcoa" class="chart-box"></div>
+              <p id="mb-ordination-note" class="panel-note"></p>
+            </section>
+          </div>
+          <h3>Integrity and limitations</h3>
+          <div id="mb-integrity"></div>
+          <div class="button-row">
+            <button type="button" id="mb-assistant-button">Ask the assistant to explain this result</button>
+          </div>
+          <div id="mb-assistant-output" class="assistant-output" hidden></div>
+          <h3>Exports (checksums and tool versions included)</h3>
+          <div id="mb-downloads" class="download-list"></div>
+          <p class="panel-note" id="mb-download-errors"></p>
+        </section>
+      </section>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-grid">
+      <div>
+        <div class="footer-brand">
+          <img class="footer-logo" src="brand/sbio-logo-dark.svg" alt="Smart Bioinformatics AI" width="245" height="28">
+        </div>
+        <p>A modular, browser-first research workspace for sequence checks. Inspect the inputs, keep the outputs, and read the caveats.</p>
+      </div>
+      <div>
+        <h2 class="footer-heading">Tools</h2>
+        <ul class="footer-links">
+          <li><a href="index.html#tools">FASTA validation</a></li>
+          <li><a href="16s.html">16S identification</a></li>
+          <li><a href="microbiome.html">Microbiome workflow</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2 class="footer-heading">Research</h2>
+        <ul class="footer-links">
+          <li><a href="phylo.html">Phylogenetics</a></li>
+          <li><a href="protein.html">Protein annotation</a></li>
+          <li><a href="history.html">Research history</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2 class="footer-heading">Documentation</h2>
+        <ul class="footer-links">
+          <li><a href="research-use.html">Research-use policy</a></li>
+          <li><a href="benchmark.html#bench-limits-title">Known limitations</a></li>
+        </ul>
+      </div>
+    </div>
+    <p class="footer-disclaimer">Research and educational use only. Results require independent scientific interpretation. <a href="research-use.html">Full research-use statement</a>.</p>
+    <div class="footer-bottom"><span>Smart Bioinformatics AI</span></div>
+  </footer>
+  <script src="js/nav.js"></script>
+  <script type="module" src="js/microbiome.js"></script>
+</body>
+</html>

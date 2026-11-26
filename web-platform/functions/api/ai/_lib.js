@@ -86,7 +86,15 @@ export const SQL = {
   getProteinRunsByMd5AndRoute: "SELECT * FROM protein_runs WHERE md5 = ? AND route = ? ORDER BY created_at ASC",
   getProteinRunByPublicId: "SELECT * FROM protein_runs WHERE public_id = ?",
   getProteinRunByJobId: "SELECT * FROM protein_runs WHERE provider_job_id = ?",
-  updateProteinRun: "UPDATE protein_runs SET state = ?, provider_job_id = ?, result_json = ?, completed_at = ? WHERE public_id = ?"
+  updateProteinRun: "UPDATE protein_runs SET state = ?, provider_job_id = ?, result_json = ?, completed_at = ? WHERE public_id = ?",
+
+  // M7.14 microbiome workflow. Additive: one index table keyed by the exact
+  // input/metadata hashes so a browser refresh never resubmits a completed
+  // stage. The AI jobs/artifacts tables stay the authoritative run record.
+  insertMicrobiomeRun: "INSERT INTO microbiome_runs (public_id, input_sha256, metadata_sha256, state, plan_id, run_id, state_json, result_json, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  getMicrobiomeRunByPublicId: "SELECT * FROM microbiome_runs WHERE public_id = ?",
+  getMicrobiomeRunsByInput: "SELECT * FROM microbiome_runs WHERE input_sha256 = ? AND metadata_sha256 = ? ORDER BY created_at ASC",
+  updateMicrobiomeRun: "UPDATE microbiome_runs SET state = ?, state_json = ?, result_json = ?, completed_at = ? WHERE public_id = ?"
 };
 
 export const SQL_META = {
@@ -136,6 +144,10 @@ export const SQL_META = {
   [SQL.getProteinRunByPublicId]: { op: "select", table: "protein_runs", where: ["public_id"] },
   [SQL.getProteinRunByJobId]: { op: "select", table: "protein_runs", where: ["provider_job_id"] },
   [SQL.updateProteinRun]: { op: "update", table: "protein_runs", where: ["public_id"], assignments: { state: 0, provider_job_id: 1, result_json: 2, completed_at: 3 } },
+  [SQL.insertMicrobiomeRun]: { op: "insert", table: "microbiome_runs", columns: ["public_id", "input_sha256", "metadata_sha256", "state", "plan_id", "run_id", "state_json", "result_json", "created_at", "completed_at"] },
+  [SQL.getMicrobiomeRunByPublicId]: { op: "select", table: "microbiome_runs", where: ["public_id"] },
+  [SQL.getMicrobiomeRunsByInput]: { op: "select", table: "microbiome_runs", where: ["input_sha256", "metadata_sha256"], orderBy: "created_at" },
+  [SQL.updateMicrobiomeRun]: { op: "update", table: "microbiome_runs", where: ["public_id"], assignments: { state: 0, state_json: 1, result_json: 2, completed_at: 3 } },
   // The approval gate issues a legacy BLAST consent token on the same D1
   // binding, so the fake D1 must understand these statements too. The real SQL
   // also checks expiry/grant/used_at inside the UPDATE; the generic fake models

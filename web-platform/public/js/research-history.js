@@ -8,6 +8,7 @@
 
 import { renderTree } from "./phylo-tree-view.js";
 import { renderProteinViewer } from "./protein-viewer.js";
+import { renderAlpha, renderComposition, renderPcoa } from "./microbiome-viewer.js";
 
 export const STORAGE_KEY = "sbio.research-history.v1";
 export const HONEST_LABEL = "Browser-local research history — this index lives in this browser and is not cross-device owner-account sync. The actual analysis and original files remain retrievable from the server-side AI-run record.";
@@ -57,7 +58,7 @@ export function sanitizeEntry(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const runId = safeId(raw.run_id);
   if (!runId || !RUN_ID_RE.test(runId)) return null;
-  const workflowType = ["phylo", "16s", "protein", "unknown"].includes(raw.workflow_type) ? raw.workflow_type : "unknown";
+  const workflowType = ["phylo", "16s", "protein", "microbiome", "unknown"].includes(raw.workflow_type) ? raw.workflow_type : "unknown";
   const status = STATUSES.has(raw.status) ? raw.status : "unknown";
   const resumeRaw = raw.resume && typeof raw.resume === "object" && !Array.isArray(raw.resume) ? raw.resume : {};
   return {
@@ -139,6 +140,7 @@ export function listEntries(entries, filter = "all") {
     case "16s": return sorted.filter((item) => item.workflow_type === "16s");
     case "phylo": return sorted.filter((item) => item.workflow_type === "phylo");
     case "protein": return sorted.filter((item) => item.workflow_type === "protein");
+    case "microbiome": return sorted.filter((item) => item.workflow_type === "microbiome");
     case "running": return sorted.filter((item) => item.status === "running");
     case "failed": return sorted.filter((item) => item.status === "failed");
     case "completed": return sorted.filter((item) => item.status === "completed");
@@ -239,6 +241,33 @@ export function captureProteinRun(body, options = {}, storage = storageOrNull())
   }, storage);
 }
 
+// M7.14: capture only after the run endpoint returned a genuine job_ id. The
+// analysis and original artifacts are always re-read from the server on reopen.
+export function captureMicrobiomeRun(body, options = {}, storage = storageOrNull()) {
+  const runId = [body?.reopen?.ai_run_id, body?.run_id].find((value) => AI_RUN_ID_RE.test(value));
+  if (!runId) return null;
+  const ids = sequenceIds(options.sample_ids ?? options.sequence_ids);
+  const statusValue = String(body?.status ?? "").toLowerCase();
+  let status = "unknown";
+  if (statusValue === "succeeded" || statusValue === "completed") status = "completed";
+  else if (statusValue === "running" || statusValue === "queued") status = "running";
+  else if (statusValue === "failed" || statusValue === "error") status = "failed";
+  const now = new Date().toISOString();
+  return upsertEntry({
+    run_id: runId,
+    workflow_type: "microbiome",
+    status,
+    title: titleFor("16S microbiome", options.objective, ids, runId),
+    sequence_ids: ids,
+    created_at: now,
+    completed_at: status === "completed" ? now : null,
+    history_id: safeId(body?.history_id),
+    plan_id: safeId(body?.plan_id ?? body?.reopen?.plan_id),
+    provider_job_ids: Object.values(body?.job_ids ?? {}).map((value) => safeId(value)).filter(Boolean).slice(0, 25),
+    resume: { provider_job_id: null, iqtree_provider_job_id: null, history_id: safeId(body?.history_id) }
+  }, storage);
+}
+
 export function classifyJobStatus(raw) {
   const value = String(raw ?? "").toLowerCase();
   if (/await|action_required|needs_(action|input)/.test(value)) return "Awaiting user action";
@@ -290,7 +319,13 @@ export function initResearchHistory() {
     proteinNote: $("history-protein-note"),
     proteinFeatures: $("history-protein-features"),
     proteinGo: $("history-protein-go"),
-    proteinDownloads: $("history-protein-downloads")
+    proteinDownloads: $("history-protein-downloads"),
+    microbiomeStatus: $("history-microbiome-status"),
+    microbiomeInput: $("history-microbiome-input"),
+    microbiomeComposition: $("history-microbiome-composition"),
+    microbiomeAlpha: $("history-microbiome-alpha"),
+    microbiomePcoa: $("history-microbiome-pcoa"),
+    microbiomeDownloads: $("history-microbiome-downloads")
   };
   let proteinView = null;
   let entries = [];
@@ -568,6 +603,50 @@ export function initResearchHistory() {
     }
   }
 
+  function renderMicrobiomeRecovery(recovery, entry) {
+    const data = recovery?.microbiome;
+    if (!data || data.reason) {
+      text(ui.microbiomeStatus, data?.reason ?? "No microbiome evidence was returned by the stored run; nothing was reconstructed.");
+      return;
+    }
+    const asv = data.asv ?? {};
+    text(ui.microbiomeStatus, `Workflow ${recovery.workflow_type} — run status ${data.original_execution_state?.run_status ?? recovery.status ?? "unknown"} — ` +
+      `${asv.feature_count ?? 0} ASV(s), ${asv.sample_count ?? 0} sample(s) read from stored artifacts. ` +
+      `Provider job ids: ${(data.original_execution_state?.provider_job_ids ?? []).join(", ") || "none recorded"}.`);
+    text(ui.microbiomeInput, data.input?.metadata_text
+      ? `Original metadata (${data.input.sample_count ?? data.input.sample_ids?.length ?? 0} samples):\n${data.input.metadata_text}`
+      : data.input?.sample_ids?.length ? `Recorded sample ids: ${data.input.sample_ids.join(", ")}`
+        : "No original metadata or sample list is stored; nothing was reconstructed.");
+    renderComposition(ui.microbiomeComposition, data.composition);
+    renderAlpha(ui.microbiomeAlpha, data.alpha);
+    renderPcoa(ui.microbiomePcoa, data.pcoa, [], { colorBy: "" });
+    if (ui.microbiomeDownloads) {
+      ui.microbiomeDownloads.replaceChildren();
+      for (const artifact of data.artifacts ?? []) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = `Download stored ${artifact.name} (${artifact.sha256?.slice(0, 12) ?? "no checksum"})`;
+        button.addEventListener("click", () => {
+          const source = (recovery?.artifacts ?? []).find((item) => item.name === artifact.name);
+          if (typeof source?.content !== "string") {
+            setError(`Download failed for ${artifact.name}: stored content is unavailable.`);
+            return;
+          }
+          appendLine(ui.checksums, `${artifact.name}: stored SHA-256 ${artifact.sha256 ?? "not available"}; ` +
+            `recomputed checksum match ${artifact.checksum_match === true ? "yes" : artifact.checksum_match === false ? "NO" : "not computed"}.`);
+          const url = URL.createObjectURL(new Blob([source.content], { type: source.mime || "text/plain;charset=utf-8" }));
+          objectUrls.push(url);
+          const anchor = document.createElement("a");
+          anchor.href = url; anchor.download = artifact.name; anchor.click();
+        });
+        const item = document.createElement("li");
+        item.append(button);
+        ui.microbiomeDownloads.append(item);
+      }
+      if (!(data.artifacts ?? []).length) appendLine(ui.microbiomeDownloads, "No microbiome artifacts are stored for this run.");
+    }
+  }
+
   async function openEntry(entry) {
     const clean = sanitizeEntry(entry);
     if (!clean) {
@@ -583,10 +662,12 @@ export function initResearchHistory() {
     treeView = null;
     proteinView = null;
     for (const node of [ui.jobs, ui.artifacts, ui.checksums, ui.downloads, ui.provider, ui.continuation,
-      ui.startingTrees, ui.proteinFeatures, ui.proteinDownloads, ui.proteinViewer]) {
+      ui.startingTrees, ui.proteinFeatures, ui.proteinDownloads, ui.proteinViewer,
+      ui.microbiomeDownloads, ui.microbiomeComposition, ui.microbiomePcoa]) {
       if (node) node.replaceChildren();
     }
-    for (const node of [ui.proteinStatus, ui.proteinInput, ui.proteinNote, ui.proteinGo]) text(node, "");
+    for (const node of [ui.proteinStatus, ui.proteinInput, ui.proteinNote, ui.proteinGo,
+      ui.microbiomeStatus, ui.microbiomeInput, ui.microbiomeAlpha]) text(node, "");
     text(ui.provenance, "");
     text(ui.alignment, "");
     text(ui.tree, "");
@@ -667,6 +748,8 @@ export function initResearchHistory() {
     renderDownloads({ recovery, entry: clean });
     if (clean.workflow_type === "protein") renderProteinRecovery(recovery, clean);
     else text(ui.proteinStatus, "This run is not a protein annotation run; no protein fields are reconstructed.");
+    if (clean.workflow_type === "microbiome") renderMicrobiomeRecovery(recovery, clean);
+    else text(ui.microbiomeStatus, "This run is not a microbiome run; no microbiome fields are reconstructed.");
     renderProviderSection(recovery, clean);
     renderContinuation(recovery, clean);
   }
@@ -692,7 +775,8 @@ export function initResearchHistory() {
 if (typeof window !== "undefined") {
   window.__researchHistory = {
     STORAGE_KEY, HONEST_LABEL, sanitizeEntry, readIndex, loadIndex, saveIndex,
-    upsertEntry, removeEntry, listEntries, capturePhyloRun, capture16sRun, captureProteinRun, classifyJobStatus
+    upsertEntry, removeEntry, listEntries, capturePhyloRun, capture16sRun, captureProteinRun,
+    captureMicrobiomeRun, classifyJobStatus
   };
   initResearchHistory();
 }

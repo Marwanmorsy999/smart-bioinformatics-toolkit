@@ -12,6 +12,9 @@ import { calculateStatistics } from "../../../public/js/statistics.js";
 import {
   PROTEIN_ASSISTANT_TOOL_IDS, executeProteinTool, getProteinToolDefinitions
 } from "./protein-tools.js";
+import {
+  MICROBIOME_ASSISTANT_TOOL_IDS, executeMicrobiomeTool, getMicrobiomeToolDefinitions
+} from "./microbiome-tools.js";
 
 export const ASSISTANT_TOOL_IDS = Object.freeze([
   "sequence-stats.validate",
@@ -24,6 +27,7 @@ export const ASSISTANT_TOOL_SOURCE =
 // M7.13 extends the same allowlisted loop with read-mostly protein evidence
 // tools; they are registered in the authoritative WORKER_TOOLS manifest.
 export { PROTEIN_ASSISTANT_TOOL_IDS, getProteinToolDefinitions, executeProteinTool };
+export { MICROBIOME_ASSISTANT_TOOL_IDS, getMicrobiomeToolDefinitions, executeMicrobiomeTool };
 
 const MAX_FASTA_CHARS = 65536;
 
@@ -46,7 +50,7 @@ function mergedParameters(tool) {
 
 export function getAssistantToolDefinitions() {
   const definitions = [];
-  for (const id of [...ASSISTANT_TOOL_IDS, ...PROTEIN_ASSISTANT_TOOL_IDS]) {
+  for (const id of [...ASSISTANT_TOOL_IDS, ...PROTEIN_ASSISTANT_TOOL_IDS, ...MICROBIOME_ASSISTANT_TOOL_IDS]) {
     const tool = getTool(id);
     if (!tool) continue; // registry drift: never fabricate a definition
     definitions.push({
@@ -133,6 +137,9 @@ export async function executeTool(name, args, deps = {}) {
   // chat provider or parallel assistant is introduced.
   if (PROTEIN_ASSISTANT_TOOL_IDS.includes(name)) {
     return executeProteinTool(name, args, deps);
+  }
+  if (MICROBIOME_ASSISTANT_TOOL_IDS.includes(name)) {
+    return executeMicrobiomeTool(name, args, deps);
   }
   if (!ASSISTANT_TOOL_IDS.includes(name)) return refusal(name);
   const tool = getTool(name);

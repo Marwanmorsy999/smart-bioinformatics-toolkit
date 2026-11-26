@@ -29,6 +29,11 @@ import {
   computeTreeMetrics,
   parseNewick
 } from "../../workflows/phylo/validators.js";
+import {
+  aggregateByRank, computeBrayCurtis, ordinationEvidence, parseAlphaDiversity,
+  parseDistanceMatrix, parseFeatureTable, parsePcoa, parseQcSummary,
+  parseRepSeqsFasta, parseTaxonomyTsv, validateFeatureTableIntegrity
+} from "../../workflows/microbiome/parsers.js";
 
 const PROTEIN_KINDS = new Set([
   "protein_input_fasta", "protein_annotation_json", "protein_provider_json",
@@ -82,6 +87,10 @@ function deriveWorkflowType(plan, jobs) {
     ...(Array.isArray(plan?.steps) ? plan.steps.map((step) => step?.tool_id) : []),
     ...jobs.map((job) => job?.tool_id)
   ].filter((value) => typeof value === "string").join(" ").toLowerCase();
+  // M7.14: stored microbiome tool ids and plan workflow_type are authoritative
+  // and are checked FIRST, before the legacy 16S BLAST classification.
+  if (/microbiome\.|microbiome-worker|dada2_denoise|demux_emp_single/.test(toolText)
+    || plan?.workflow_type === "microbiome") return "microbiome";
   // M7.13: stored protein tool ids and plan workflow_type are authoritative.
   if (/protein\.|protein-worker|protein_validate|protein_annotate|protein_run/.test(toolText)
     || plan?.workflow_type === "protein" || plan?.domain === "protein-annotation") return "protein";
@@ -123,7 +132,18 @@ function bestMatch(candidates, predicate, preferPattern) {
   return matches.find((item) => preferPattern?.test(String(item.name ?? ""))) ?? matches[0] ?? null;
 }
 
-const STORED_KINDS = new Set(["alignment", "tree", "report", "log", ...PROTEIN_KINDS]);
+const MICROBIOME_KINDS = new Set(["feature_table", "rep_seqs", "taxonomy", "qc", "alpha",
+  "distance_matrix", "pcoa", "visualization", "qza_artifact", "denoising_stats"]);
+const MICROBIOME_REASONS = Object.freeze({
+  noInput: "No stored microbiome plan input was found; the original metadata and sample list are null.",
+  noTable: "No stored feature-table artifact could be parsed; ASV counts and composition are null.",
+  noTaxonomy: "No stored taxonomy artifact could be parsed; composition keeps every feature unclassified.",
+  noDiversity: "No stored alpha/beta diversity artifact was found; diversity is null.",
+  noPcoa: "No stored PCoA coordinate artifact was found; no ordination points are drawn.",
+  noReport: "No stored microbiome report artifact was found; the report is null."
+});
+
+const STORED_KINDS = new Set(["alignment", "tree", "report", "log", ...PROTEIN_KINDS, ...MICROBIOME_KINDS]);
 
 // The stored `kind` written by the workflow is authoritative: real Galaxy
 // artifacts have extension-less names such as "MAFFT on dataset 1", which a
@@ -332,6 +352,92 @@ function buildProteinEvidence(artifacts, jobs, plan, reasons, storedResult = nul
   };
 }
 
+// M7.14 evidence: everything is reparsed from ORIGINAL stored artifact content.
+// Optional values stay null with an explicit reason; no statistic is recomputed
+// from memory and no scientific claim is added on reopen.
+function buildMicrobiomeEvidence(artifacts, jobs, plan, reasons, storedResult = null) {
+  const byKind = (kind) => artifacts.find((artifact) => artifact.derived_kind === kind
+    && typeof artifact.content === "string" && artifact.content.trim()) ?? null;
+  const storedInput = plan?.input && typeof plan.input === "object" ? plan.input : null;
+  if (!storedInput) reasons.push(MICROBIOME_REASONS.noInput);
+  const metadataText = cleanText(storedInput?.metadata_text, 200_000);
+  const tableText = byKind("feature_table")?.content ?? null;
+  const table = tableText ? parseFeatureTable(tableText) : null;
+  const repSeqText = byKind("rep_seqs")?.content ?? null;
+  const repSeqs = repSeqText ? parseRepSeqsFasta(repSeqText) : null;
+  const taxonomyText = byKind("taxonomy")?.content ?? null;
+  const taxonomy = taxonomyText ? parseTaxonomyTsv(taxonomyText) : null;
+  const alphaText = byKind("alpha")?.content ?? null;
+  const alpha = alphaText ? parseAlphaDiversity(alphaText) : null;
+  const distanceText = byKind("distance_matrix")?.content ?? null;
+  const distance = distanceText ? parseDistanceMatrix(distanceText) : null;
+  const pcoaText = byKind("pcoa")?.content ?? null;
+  const pcoa = pcoaText ? parsePcoa(pcoaText) : null;
+  const qcText = byKind("qc")?.content ?? null;
+  const qc = qcText ? parseQcSummary(qcText) : null;
+  if (!table?.available) reasons.push(MICROBIOME_REASONS.noTable);
+  if (!taxonomy?.available) reasons.push(MICROBIOME_REASONS.noTaxonomy);
+  if (!alpha?.available && !distance?.available) reasons.push(MICROBIOME_REASONS.noDiversity);
+  if (!pcoa?.available) reasons.push(MICROBIOME_REASONS.noPcoa);
+  const result = storedResult && typeof storedResult === "object" ? storedResult : null;
+  const report = result?.report && typeof result.report === "string"
+    ? result.report.slice(0, 100_000)
+    : (byKind("report")?.content ?? null);
+  if (!report) reasons.push(MICROBIOME_REASONS.noReport);
+  const composition = aggregateByRank(table, taxonomy, { rank: storedResult?.composition?.rank ?? "phylum" });
+  const effectiveDistance = distance?.available ? distance : computeBrayCurtis(table);
+  const providerJobIds = jobs.map((job) => job.provider_job_id).filter(Boolean);
+  return {
+    input: {
+      mode: storedInput?.mode ?? null,
+      source: storedInput?.source ?? null,
+      metadata_text: metadataText,
+      sample_ids: Array.isArray(storedInput?.sample_ids) ? storedInput.sample_ids.slice(0, 200) : [],
+      sample_count: storedInput?.sample_count ?? null,
+      filenames: storedInput?.filenames ?? null,
+      input_sha256: result?.input_sha256 ?? plan?.input?.input_sha256 ?? null,
+      metadata_sha256: result?.metadata_sha256 ?? null
+    },
+    params: storedInput && plan?.params ? plan.params : (result?.params ?? null),
+    qc: qc ?? result?.qc ?? null,
+    asv: table?.available ? {
+      available: true,
+      feature_count: table.feature_ids.length,
+      sample_count: table.sample_ids.length,
+      totals: table.totals,
+      rep_seq_count: repSeqs?.records?.length ?? null,
+      basis: "reparsed_from_original_stored_artifacts"
+    } : (result?.asv ?? null),
+    taxonomy: taxonomy?.available ? taxonomy : (result?.taxonomy ?? null),
+    composition: composition.available ? composition : (result?.composition ?? null),
+    alpha: alpha?.available ? alpha : (result?.alpha ?? null),
+    beta: effectiveDistance,
+    pcoa: pcoa?.available ? pcoa : (result?.pcoa ?? null),
+    ordination: ordinationEvidence(artifacts, pcoa?.available ? pcoa : (result?.pcoa ?? null),
+      { visualizationTool: result?.tools?.pcoa?.id ?? null }),
+    integrity: validateFeatureTableIntegrity({ table, repSeqs, taxonomy,
+      metadata: { sample_ids: storedInput?.sample_ids ?? [] } }),
+    releases: result?.classifier ?? (storedInput?.source?.checksums ?? null),
+    classifier: result?.classifier ?? null,
+    tools: result?.tools ?? null,
+    original_execution_state: {
+      run_status: result?.status ?? jobs.find((job) => job.step_id === "report")?.status ?? jobs[0]?.status ?? null,
+      provider_job_ids: providerJobIds,
+      state_basis: result ? "stored_microbiome_run_result_and_job_rows" : "stored_job_rows",
+      error: result?.error ?? null,
+      note: providerJobIds.length ? null : "No executed provider job is recorded for this run; none was invented."
+    },
+    report,
+    artifacts: artifacts.filter((artifact) => MICROBIOME_KINDS.has(artifact.derived_kind))
+      .map((artifact) => ({ name: artifact.name, derived_kind: artifact.derived_kind,
+        sha256: artifact.sha256, bytes: artifact.bytes, checksum_match: artifact.checksum_match,
+        classification_basis: artifact.classification_basis })),
+    basis: "original_stored_microbiome_run_artifacts",
+    evidence_only: true,
+    report_reason: report ? null : MICROBIOME_REASONS.noReport
+  };
+}
+
 export async function handleGetRecovery(request, env, runId) {
   const db = getDb(env);
   if (!db) return errorResponse("AI database binding is unavailable.", 503, request);
@@ -405,6 +511,14 @@ export async function handleGetRecovery(request, env, runId) {
         original_execution_state: null,
         reason: "This stored run is not a protein annotation run; no protein fields are reconstructed."
       };
+    const microbiome = workflowType === "microbiome"
+      ? buildMicrobiomeEvidence(artifacts, jobs, plan, reasons, parseJson(jobRow.result_json))
+      : {
+        input: null, qc: null, asv: null, taxonomy: null, composition: null, alpha: null,
+        beta: null, pcoa: null, ordination: null, releases: null, report: null,
+        original_execution_state: null,
+        reason: "This stored run is not a microbiome run; no microbiome fields are reconstructed."
+      };
 
     const datasetIds = [];
     for (const job of jobRows) {
@@ -426,8 +540,10 @@ export async function handleGetRecovery(request, env, runId) {
       input: {
         objective: cleanText(plan?.goal, 1000),
         dataset_ids: datasetIds,
-        sequence_identifiers: workflowType === "protein" ? protein.sequence_identifiers : phylo.sequence_identifiers,
-        sequence_identifier_basis: workflowType === "protein" ? protein.sequence_identifier_basis : phylo.sequence_identifier_basis,
+        sequence_identifiers: workflowType === "protein" ? protein.sequence_identifiers
+          : workflowType === "microbiome" ? (microbiome.input?.sample_ids ?? []) : phylo.sequence_identifiers,
+        sequence_identifier_basis: workflowType === "protein" ? protein.sequence_identifier_basis
+          : workflowType === "microbiome" ? "stored_microbiome_plan_sample_ids" : phylo.sequence_identifier_basis,
         source: plan ? "stored_plan_and_job_inputs" : null
       },
       params: {
@@ -445,6 +561,7 @@ export async function handleGetRecovery(request, env, runId) {
       validation_reason: storedValidation ? null : REASONS.noStoredValidation,
       phylo,
       protein,
+      microbiome,
       recovery_basis: "original_stored_ai_run_record",
       evidence_only: true,
       unavailable_reasons: reasons,

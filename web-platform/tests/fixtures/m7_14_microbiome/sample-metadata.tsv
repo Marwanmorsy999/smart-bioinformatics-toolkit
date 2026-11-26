@@ -1,0 +1,4 @@
+sample-id	barcode-sequence	body-site	year	month	day	subject	reported-antibiotic-usage	days-since-experiment-start
+sampleA	ACCGCACTT	tongue	2026	10	1	subject-01	no	0
+sampleB	GGACGGACG	stool	2026	10	1	subject-02	no	3
+sampleC	TTCGGTACG	plaque	2026	10	1	subject-03	yes	7

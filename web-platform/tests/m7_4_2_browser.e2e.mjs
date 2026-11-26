@@ -1,6 +1,6 @@
 // M7.4.2 full browser validation — real Chromium (Playwright), offline only.
 //
-// Scope: the ten public pages, the six-item shell/nav contract, brand assets,
+// Scope: the eleven public pages, the nine-item shell/nav contract, brand assets,
 // the Level-A/B disclaimer hierarchy, phylo copy honesty, the assistant's
 // fail-closed UI, 5-viewport overflow, keyboard access, reduced motion and
 // text-contrast arithmetic on the design tokens.
@@ -32,7 +32,8 @@ const PAGES = [
   { key: "benchmark", file: "benchmark.html" },
   { key: "research-use", file: "research-use.html" },
   { key: "assistant", file: "assistant.html" },
-  { key: "sixteen", file: "16s.html" }
+  { key: "sixteen", file: "16s.html" },
+  { key: "microbiome", file: "microbiome.html" }
 ];
 const VIEWPORTS = [
   { width: 1440, height: 900 },
@@ -43,12 +44,11 @@ const VIEWPORTS = [
 ];
 const DESKTOP = VIEWPORTS[0];
 const MOBILE = VIEWPORTS[3];
-// M7.13 adds the Protein annotation entry point to every topbar nav. The
-// existing Research history link was already present on all ten pages; this
-// stale expectation is refreshed to the real eight-item nav. All other shell
-// assertions are kept unchanged.
+// M7.13 added Protein annotation and M7.14 adds Microbiome to every topbar nav.
+// The stale expectation is refreshed to the real nine-item nav. All other
+// shell assertions are kept unchanged.
 const EXPECTED_NAV = ["Tools", "Research workspace", "Phylogenetics", "Protein annotation",
-  "16S", "Assistant", "Research history", "About"];
+  "16S", "Microbiome", "Assistant", "Research history", "About"];
 const SHORT_NOTICE = "Research and educational use only. Results require independent scientific interpretation.";
 // Source of truth for the Level-A statement is the M7.4.2 mission brief, which
 // supplies this exact sentence (also present verbatim at research-use.html:43).
@@ -136,7 +136,7 @@ async function open(key, viewport = DESKTOP) {
 }
 
 // ---------------------------------------------------------------- (1) shell
-test("(1) ten pages load with six-item nav, wordmark, favicon, title and short footer notice", async () => {
+test("(1) eleven pages load with nine-item nav, wordmark, favicon, title and short footer notice", async () => {
   const problems = [];
   for (const def of PAGES) {
     const page = await open(def.key);
@@ -159,7 +159,7 @@ test("(1) ten pages load with six-item nav, wordmark, favicon, title and short f
     });
     if (!info.title.includes("Smart Bioinformatics AI")) problems.push(`${def.key}: title lacks product name (${info.title})`);
     if (JSON.stringify(info.navLinks) !== JSON.stringify(EXPECTED_NAV)) problems.push(`${def.key}: nav = ${JSON.stringify(info.navLinks)}`);
-    if (info.navLinks.length !== 8 || info.navHrefs.length !== 8) problems.push(`${def.key}: nav is not exactly eight items`);
+    if (info.navLinks.length !== 9 || info.navHrefs.length !== 9) problems.push(`${def.key}: nav is not exactly nine items`);
     if (info.logoAlt !== "Smart Bioinformatics AI" || info.logoWidth === 0) problems.push(`${def.key}: header wordmark missing/broken (alt=${info.logoAlt}, w=${info.logoWidth})`);
     if (!/favicon\.svg$/.test(info.iconHref)) problems.push(`${def.key}: favicon link missing (${info.iconHref})`);
     if (!info.notice.includes(SHORT_NOTICE)) problems.push(`${def.key}: short footer notice missing (${info.notice})`);
