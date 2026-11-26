@@ -148,6 +148,7 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
   let resumedOutputUuid = null;
   let resumedAlignmentChecksum = null;
   let resolvedResumeHistoryId = null;
+  let effectiveResumeHistoryId = null;
   let resumedMafftRecord = null;
 
   function resumeError(message, errorCode, status = 409, extra = {}) {
@@ -182,12 +183,42 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
       return resumeError(`Provider job outputs could not be read: ${jobOutputs.error?.message ?? jobOutputs.error?.code ?? "unavailable"}`,
         "provider_job_outputs_unavailable", 502);
     }
+    // Dedupe READ-ONLY associations from /outputs and job details by identity.
+    const statusAssociations = status.output?.structured?.output_associations ?? [];
+    const seenAssociations = new Set();
+    const associations = [...(jobOutputs.outputs ?? []), ...statusAssociations].filter((item) => {
+      const keys = [item?.galaxyHdaId ?? item?.id, item?.galaxyDatasetUuid ?? item?.uuid,
+        item?.galaxyDatasetId ?? item?.dataset_id]
+        .filter((value) => value !== null && value !== undefined && String(value) !== "")
+        .map(String);
+      if (!keys.length) return true;
+      if (keys.some((key) => seenAssociations.has(key))) return false;
+      keys.forEach((key) => seenAssociations.add(key));
+      return true;
+    });
+
+    // A provider job's outputs may live in a DIFFERENT history from the uploaded
+    // input. Inspect every reported history (plus the caller's) exactly once.
+    const historyIdsToInspect = [];
+    const addHistoryId = (value) => {
+      const id = safeString(value, 200);
+      if (id && !historyIdsToInspect.includes(id) && historyIdsToInspect.length < 20) historyIdsToInspect.push(id);
+    };
+    addHistoryId(resumeHistoryId);
+    for (const item of associations) addHistoryId(item.history_id);
+    const historyCache = new Map();
+    for (const id of historyIdsToInspect) {
+      const result = await adapter.getArtifacts({ history_id: id }, ctx);
+      historyCache.set(id, result?.ok === true ? (result.artifacts ?? []) : []);
+    }
+    const allVerifiedArtifacts = [...new Map([...historyCache.values()].flat()
+      .filter((artifact) => artifact?.id)
+      .map((artifact) => [String(artifact.id), artifact])).values()];
+
     // The uploaded input dataset is NEVER an alignment output. Identify it by
-    // the uploaded filename and any history HDA carrying that name, then reject
-    // it from the candidate set by id/name.
-    const historyContents = await adapter.getArtifacts({ history_id: resumeHistoryId }, ctx);
+    // the uploaded filename and any verified HDA carrying that name.
     const inputNames = new Set([filename, sanitizeFilename(filename)].filter(Boolean));
-    const inputIds = new Set((historyContents.artifacts ?? [])
+    const inputIds = new Set(allVerifiedArtifacts
       .filter((item) => inputNames.has(String(item.name ?? "")))
       .map((item) => String(item.id)));
     const fastaExts = new Set(["fasta", "fa", "fna", "fas", "aln", "msa"]);
@@ -202,82 +233,70 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
       const dot = name.lastIndexOf(".");
       return dot > 0 ? name.slice(dot + 1).trim().toLowerCase() : "";
     };
-    const isUsableAssociation = (item) => {
-      const name = String(item.name ?? "");
-      const okState = ["ok", "success"].includes(String(item.state ?? "").toLowerCase());
-      const notInput = !inputIds.has(String(item.id)) && !inputNames.has(name);
-      return item.valid !== false && okState && fastaExts.has(fastaExtensionOf(item)) && notInput;
-    };
     const okState = (value) => ["ok", "success"].includes(String(value ?? "").toLowerCase());
     const notUploadedInput = (id, name) => !inputIds.has(String(id ?? "")) && !inputNames.has(String(name ?? ""));
-    const verifiedArtifacts = historyContents?.ok === true ? (historyContents.artifacts ?? []) : [];
+    // An association is usable only if it has a real HDA id, an ok/success
+    // state, a FASTA-like extension and is not the uploaded input.
+    const isUsableAssociation = (item) => item?.valid !== false && okState(item?.state)
+      && fastaExts.has(fastaExtensionOf(item))
+      && notUploadedInput(item?.id, item?.name);
 
-    // Both sources are READ-ONLY: /api/jobs/{id}/outputs and the job detail's
-    // `outputs` map parsed by getJobStatus. Dedupe by real identity; identity-less
-    // associations are kept only as diagnostics, never as fabricated candidates.
-    const statusAssociations = status.output?.structured?.output_associations ?? [];
-    const seenAssociations = new Set();
-    const associations = [...(jobOutputs.outputs ?? []), ...statusAssociations].filter((item) => {
-      const keys = [item?.galaxyHdaId ?? item?.id, item?.galaxyDatasetUuid ?? item?.uuid,
-        item?.galaxyDatasetId ?? item?.dataset_id]
-        .filter((value) => value !== null && value !== undefined && String(value) !== "")
-        .map(String);
-      if (!keys.length) return true;
-      if (keys.some((key) => seenAssociations.has(key))) return false;
-      keys.forEach((key) => seenAssociations.add(key));
-      return true;
-    });
-
-    // Direct, already-valid HDA associations keep the existing selection rules.
-    const directCandidates = associations.filter(isUsableAssociation).map((item) => ({
-      id: item.id,
-      uuid: item.uuid ?? null,
-      dataset_id: item.dataset_id ?? null,
-      name: item.name ?? null,
-      extension: item.extension ?? null,
-      state: item.state ?? null,
-      history_id: item.history_id ?? null,
-      resolved_from_history: false
-    }));
-
-    // Galaxy job outputs often carry ONLY a persistent UUID / dataset id (no
-    // HDA id), so normalizeOutputAssociation marks them invalid. Resolve that
-    // identity against VERIFIED history contents and apply the same safety
-    // gates; never fabricate an HDA id from an unresolved association.
-    const resolvedCandidates = [];
+    // Look up verified artifacts by HDA id and uuid ACROSS inspected histories.
+    // Membership follows the PROVIDER-reported history id, never the caller's.
+    const artifactByHda = new Map();
+    const artifactByUuid = new Map();
+    for (const artifact of allVerifiedArtifacts) {
+      if (artifact.id) artifactByHda.set(String(artifact.id), artifact);
+      if (artifact.uuid) artifactByUuid.set(String(artifact.uuid), artifact);
+    }
+    const candidates = [];
+    let historyMismatchSeen = false;
     for (const item of associations) {
-      if (isUsableAssociation(item)) continue;
+      const hda = String(item.galaxyHdaId ?? item.id ?? "").trim();
       const uuid = String(item.galaxyDatasetUuid ?? item.uuid ?? "").trim();
       const datasetId = String(item.galaxyDatasetId ?? item.dataset_id ?? "").trim();
-      if (!uuid && !datasetId) continue;
-      const match = verifiedArtifacts.find((artifact) => (
-        (uuid && String(artifact.uuid ?? "") === uuid)
-        || (datasetId && String(artifact.dataset_id ?? "") === datasetId)
-      ));
+      const match = (hda && artifactByHda.get(hda))
+        || (uuid && artifactByUuid.get(uuid))
+        || (datasetId && allVerifiedArtifacts.find((artifact) => String(artifact.dataset_id ?? "") === datasetId))
+        || null;
       if (!match || !match.id || match.deleted === true) continue;
-      if (match.history_id && String(match.history_id) !== String(resumeHistoryId)) continue;
+      // Trust the provider's history when it reports one; never force the
+      // caller-supplied upload history onto a job output.
+      const providerHistoryId = safeString(item.history_id, 200) || null;
+      if (providerHistoryId && match.history_id && String(match.history_id) !== providerHistoryId) {
+        historyMismatchSeen = true;
+        continue;
+      }
+      // Supplement missing display metadata from the verified artifact, but
+      // keep both the association's and the artifact's strict gates.
+      const assocState = String(item.state ?? "").trim().toLowerCase();
+      const assocExt = String(item.extension ?? item.file_ext ?? item.type ?? "")
+        .trim().replace(/^\./, "").toLowerCase();
+      if (assocState && !okState(assocState)) continue;
+      if (assocExt && !fastaExts.has(assocExt)) continue;
       if (!okState(match.state) || !fastaExts.has(fastaExtensionOf(match))) continue;
-      if (!notUploadedInput(match.id, match.name)) continue;
-      resolvedCandidates.push({
+      const name = String(item.name ?? match.name ?? "");
+      if (!notUploadedInput(match.id, name)) continue;
+      candidates.push({
         id: match.id,
-        // Preserve the ORIGINAL job-output UUID for provenance, not the
-        // history artifact's UUID when they differ.
+        // Preserve the ORIGINAL job-output UUID for provenance.
         uuid: uuid || match.uuid || null,
         dataset_id: datasetId || match.dataset_id || null,
-        name: match.name ?? null,
-        extension: match.type ?? match.extension ?? null,
-        state: match.state ?? null,
-        history_id: match.history_id ?? resumeHistoryId,
+        name,
+        extension: String(item.extension ?? match.type ?? match.extension ?? ""),
+        state: String(match.state ?? item.state ?? ""),
+        history_id: providerHistoryId || match.history_id || resumeHistoryId,
+        provider_history_id: providerHistoryId,
+        caller_history_id: resumeHistoryId,
         resolved_from_history: true
       });
     }
-    const candidates = [...directCandidates, ...resolvedCandidates];
-    const inHistory = candidates.filter((item) => !item.history_id || String(item.history_id) === String(resumeHistoryId));
+    const inHistory = candidates.filter((item) => !item.history_id || historyIdsToInspect.includes(String(item.history_id)));
     // Name matching is only a tie-breaker among extension-valid candidates.
     const alignmentName = (item) => /alignment|aligned|\bmsa\b|mafft/i.test(String(item.name ?? ""));
     const selected = inHistory.find(alignmentName) ?? inHistory[0] ?? null;
     if (!selected) {
-      const mismatch = candidates.length > 0;
+      const mismatch = candidates.length > 0 || historyMismatchSeen;
       // Honest, sanitized diagnostic for a genuinely unresolvable job: only
       // association identifiers/metadata and a verified-history count. Never
       // include credentials, URLs, FASTA content or raw provider error objects.
@@ -304,8 +323,9 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
             galaxy_dataset_uuid: uuid
           };
         }),
-        history_contents_count: verifiedArtifacts.length,
-        history_artifacts: verifiedArtifacts.map((artifact) => ({
+        inspected_history_ids: historyIdsToInspect.slice(0, 20),
+        history_contents_count: allVerifiedArtifacts.length,
+        history_artifacts: allVerifiedArtifacts.map((artifact) => ({
           id: safeString(artifact.id, 200) || null,
           name: safeString(artifact.name, 300) || null,
           state: safeString(artifact.state, 80) || null,
@@ -327,7 +347,8 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
     // Resolve to the REAL HDA id; the existing fixed resume path then uses it
     // for IQ-TREE and for display, with no second MAFFT submission.
     resumeId = selected.id;
-    resolvedResumeHistoryId = String(selected.history_id ?? resumeHistoryId);
+    effectiveResumeHistoryId = String(selected.provider_history_id ?? selected.history_id ?? resumeHistoryId);
+    resolvedResumeHistoryId = effectiveResumeHistoryId;
     resumedOutputUuid = selected.uuid ?? null;
   }
 
@@ -413,22 +434,26 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
       // contents of the history returned by the original run, then use the HDA
       // id for every dataset content/download route.
       if (!resumeHistoryId) throw new Error("resume requires the history_id returned by the original run");
-      const contents = await adapter.getArtifacts({ history_id: resumeHistoryId }, ctx);
+      // A resumed provider output can live in a DIFFERENT history from the
+      // uploaded input; use the provider-reported history when available.
+      const targetHistoryId = effectiveResumeHistoryId ?? resumeHistoryId;
+      const contents = await adapter.getArtifacts({ history_id: targetHistoryId }, ctx);
       const match = (contents.artifacts ?? []).find((item) => (
         item.id === resumeId || item.uuid === resumeId || item.dataset_id === resumeId || item.name === resumeId
       ));
       if (!match) throw new Error("resume output association unavailable: no HDA matching the reference in verified history contents");
-      if (match.history_id && String(match.history_id) !== String(resumeHistoryId)) {
+      if (match.history_id && String(match.history_id) !== String(targetHistoryId)) {
         throw new Error("resume output association unavailable: history membership mismatch");
       }
       readyId = match.id;
-      historyId = String(match.history_id ?? resumeHistoryId);
+      historyId = String(match.history_id ?? targetHistoryId);
       await recordStep("upload_input", "upload1", null, "succeeded", createdAt, nowIso(now), { resumed: true });
       await recordStep("galaxy_mafft", tools.mafft.id, resumeByJobId ? resumeProviderJobId : null, "succeeded", createdAt, nowIso(now),
         { resumed: true, dataset_id: readyId, history_id: historyId, tool_version: tools.mafft.version,
           tool_id: tools.mafft.id, discovery_mode: toolVersions.discovery_mode,
           provider_job_state: resumedJobState, output_uuid: resumedOutputUuid,
-          alignment_checksum: resumedAlignmentChecksum, resumed_from_provider_job: resumeByJobId });
+          alignment_checksum: resumedAlignmentChecksum, resumed_from_provider_job: resumeByJobId,
+          caller_history_id: resumeHistoryId, provider_history_id: effectiveResumeHistoryId });
       if (resumeByJobId) resumedMafftRecord = provenance[provenance.length - 1];
     } else {
       const upload = await adapter.submitJob({
@@ -653,6 +678,8 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
       output_uuid: resumedOutputUuid,
       alignment_checksum: resumedAlignmentChecksum,
       history_id: resolvedResumeHistoryId ?? historyId,
+      caller_history_id: resumeHistoryId,
+      provider_history_id: effectiveResumeHistoryId ?? resolvedResumeHistoryId ?? historyId,
       resumed_from_provider_job: true
     } : null,
     reopen: {
