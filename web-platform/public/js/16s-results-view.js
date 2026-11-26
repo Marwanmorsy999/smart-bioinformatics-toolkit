@@ -40,7 +40,7 @@ export function buildInterpretation(result, provenance = {}, options = {}) {
   const lines = [];
   const label = text(top.organism ?? top.title ?? (top.accession ? null : "an unlabelled record"), "an unlabelled record");
   const accession = top.accession ? ` (${top.accession})` : "";
-  lines.push(`The best reported hit is ${label}${accession}, with ${percent(top.identity)} identity and ${percent(top.query_coverage)} query coverage calculated from its alignment coordinates.`);
+  lines.push(`The best reported hit is ${label}${accession}, with ${percent(top.identity)} identity and ${percent(top.query_coverage)} hit-level query coverage (union of its HSP query intervals divided by the full query length; individual HSP spans are separate).`);
 
   const topLabels = hits.slice(0, 3).map((hit) => hit.organism ?? null);
   const present = topLabels.filter((value) => typeof value === "string" && value.trim());
@@ -58,7 +58,7 @@ export function buildInterpretation(result, provenance = {}, options = {}) {
   if (identityRange || coverageRange || bitsRange) {
     const parts = [];
     if (identityRange) parts.push(`identity ${identityRange}%`);
-    if (coverageRange) parts.push(`coordinate-derived coverage ${coverageRange}%`);
+    if (coverageRange) parts.push(`hit-level query-interval union coverage ${coverageRange}%`);
     if (bitsRange) parts.push(`bit score ${bitsRange}`);
     lines.push(`Across ${hits.length} reported hit(s): ${parts.join("; ")}.`);
   }
@@ -140,7 +140,7 @@ export function fullReport({ rid = null, result = null, provenance = null, param
     ...interpretation.map((line) => `  - ${line}`)
   ];
   if (hasStructuredHits(result)) {
-    lines.push("", "HIT SUMMARY (rank | accession | organism | identity | coverage | E-value | bit score)");
+    lines.push("", "HIT SUMMARY (rank | accession | organism | identity | hit coverage % = union of HSP query intervals / full query_len | E-value | bit score)");
     for (const hit of result.hits) {
       lines.push(`  ${hit.rank ?? "—"} | ${text(hit.accession)} | ${text(hit.organism ?? hit.title)} | ${text(hit.identity)} | ${text(hit.query_coverage)} | ${text(hit.evalue)} | ${text(hit.bitscore)}`);
     }

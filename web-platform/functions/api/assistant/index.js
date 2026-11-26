@@ -166,11 +166,12 @@ function classifyError(error) {
   if (status === 401 || status === 403 || /auth|unauthor|api_key|invalid_token/.test(code)) {
     return { reason: "auth_failed", code: "auth_failed", status: 502, auth_ok: false, type: "assistant_provider_auth_failed", message: "The provider rejected the configured credentials. No response was generated." };
   }
-  if (name === "AbortError") {
+  if (name === "AbortError" && error?.reason?.name !== "TimeoutError") {
     return { reason: "request_aborted", code: "request_aborted", status: 504, auth_ok: null, type: "assistant_provider_aborted", message: "The request was stopped. No response was generated." };
   }
-  if (name === "TimeoutError" || /timeout|timed_out/.test(code)) {
-    return { reason: "timeout", code: "provider_timeout", status: 504, auth_ok: null, type: "assistant_provider_timeout", message: "The provider did not respond in time. No response was generated." };
+  if (name === "TimeoutError" || error?.reason?.name === "TimeoutError" || /timeout|timed_out/.test(code)) {
+    // Honest timeout classification: a deadline abort is NOT a generic abort.
+    return { reason: "provider_timeout", code: "provider_timeout", status: 504, auth_ok: null, type: "assistant_provider_timeout", message: "The provider did not respond in time. No response was generated." };
   }
   if (code === "provider_unavailable" || code === "model_required") {
     return { reason: code, code, status: 503, auth_ok: null, type: UNAVAILABLE_TYPE, message: "The provider is unavailable. No response was generated." };

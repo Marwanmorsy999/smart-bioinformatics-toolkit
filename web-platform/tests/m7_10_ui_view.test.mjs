@@ -133,7 +133,10 @@ test("UI WIRING: banner is format-aware and cached labelling is response-derived
   // Terminal handling no longer keys off the request flag alone.
   assert.doesNotMatch(js, /if \(cached\) \{/);
   assert.match(js, /state\.cached = envelope\.cached === true \|\| state\.provenance\?\.cached === true/);
-  assert.match(js, /if \(state\.cached\) state\.fetchedAt = null/);
+  assert.match(js, /state\.fetchedAt = state\.provenance\?\.retrieved_at \?\? \(state\.cached \? null : new Date\(\)\.toISOString\(\)\)/);
+  assert.doesNotMatch(js, /if \(state\.cached\) state\.fetchedAt = null/, "cached reloads keep the original retrieval time");
+  assert.match(js, /union of its HSP query intervals/);
+  assert.match(js, /HSP span coverage \(this alignment only\)/);
 });
 
 test("OFFLINE HARNESS: e2e stubs assistant chat with an honestly labelled fixture", () => {

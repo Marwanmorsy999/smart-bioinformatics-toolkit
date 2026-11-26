@@ -41,8 +41,13 @@ export const SQL = {
   claimConsent: "UPDATE blast_consents SET used_at = ? WHERE expires_at > ? AND token = ? AND used_at IS NULL AND granted = 1 AND input_hash = ? AND database = ? AND program = ?",
   // Append-only audit of the actual egress, using the 0002 audit_events schema.
   insertBlastAudit: "INSERT INTO audit_events (public_id, actor, action, target, detail_json, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
-  updateBlastAudit: "UPDATE audit_events SET detail_json = ? WHERE public_id = ?"
+  updateBlastAudit: "UPDATE audit_events SET detail_json = ? WHERE public_id = ?",
+  // Earliest original-retrieval record for a RID. audit_events has no
+  // created_at column in the 0002 schema: its `timestamp` IS the creation time.
+  selectBlastRetrieval: "SELECT public_id, detail_json, timestamp FROM audit_events WHERE action = ? AND target = ? ORDER BY timestamp ASC LIMIT 1"
 };
+
+export const BLAST_RETRIEVAL_ACTION = "blast_result_retrieval";
 
 // A deliberately synthetic, clearly labelled result used only when MOCK_NCBI=1.
 // Matches the 12-column blastn_local_v1 schema understood by public/js/blast.js.
@@ -303,6 +308,46 @@ export async function auditBlastEgress(db, {
 
 export async function finalizeBlastAudit(db, publicId, detail) {
   await db.prepare(SQL.updateBlastAudit).bind(JSON.stringify(detail), publicId).run();
+}
+
+// Original retrieval time is persisted WITHOUT a schema migration by reusing
+// the append-only audit_events table: one row per RID, action=blast_result_retrieval
+// and target=RID. Only metadata is stored (RID, timestamp, hash, format); the
+// FASTA/TSV body and any credentials are never written to the audit record.
+export async function recordBlastRetrieval(db, { rid, retrievedAt, sha256, resultFormat, idFactory } = {}) {
+  return auditBlastEgress(db, {
+    actor: "system",
+    target: rid,
+    action: BLAST_RETRIEVAL_ACTION,
+    detail: {
+      rid,
+      retrieved_at: retrievedAt,
+      sha256,
+      result_format: resultFormat,
+      kind: "original_retrieval"
+    },
+    timestamp: retrievedAt,
+    idFactory
+  });
+}
+
+// Read-only: the first record wins. On a later cache update this still returns
+// the ORIGINAL retrieval time, never the current time.
+export async function earliestBlastRetrieval(db, rid) {
+  const result = await db.prepare(SQL.selectBlastRetrieval).bind(BLAST_RETRIEVAL_ACTION, rid).all();
+  const row = result.results?.[0];
+  if (!row) return null;
+  let detail = {};
+  try { detail = JSON.parse(row.detail_json ?? "{}"); } catch { return null; }
+  if (!detail || typeof detail !== "object" || Array.isArray(detail)) return null;
+  const retrievedAt = typeof detail.retrieved_at === "string" && detail.retrieved_at ? detail.retrieved_at : null;
+  if (!retrievedAt) return null;
+  return {
+    public_id: row.public_id,
+    retrieved_at: retrievedAt,
+    sha256: typeof detail.sha256 === "string" ? detail.sha256 : null,
+    result_format: typeof detail.result_format === "string" ? detail.result_format : null
+  };
 }
 
 function withIdentification(params, env) {

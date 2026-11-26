@@ -152,8 +152,8 @@
                   <caption>Best matches — values present in the retrieved structured report only</caption>
                   <thead><tr>
                     <th scope="col">Rank</th><th scope="col">Organism / accession</th>
-                    <th scope="col">Identity %</th><th scope="col">Coverage %</th>
-                    <th scope="col">E-value</th><th scope="col">Bit score</th><th scope="col">Alignment</th>
+                    <th scope="col">Identity %</th><th scope="col">Hit coverage % (union of HSP query intervals / full query length)</th>
+                    <th scope="col">E-value</th><th scope="col">Bit score</th><th scope="col">Alignment (per-HSP span shown separately)</th>
                   </tr></thead>
                   <tbody id="best-hits-body"></tbody>
                 </table>
@@ -164,7 +164,7 @@
                 <caption>Real BLAST hits — only fields present in the retrieved TSV are shown</caption>
                 <thead><tr>
                   <th scope="col">Query id</th><th scope="col">Accession</th><th scope="col">Description / organism</th>
-                  <th scope="col">Identity %</th><th scope="col">Coverage %</th><th scope="col">E-value</th><th scope="col">Bit score</th>
+                  <th scope="col">Identity %</th><th scope="col">Coverage % (TSV qcovs, or JSON2 hit union)</th><th scope="col">E-value</th><th scope="col">Bit score</th>
                 </tr></thead>
                 <tbody id="hits-body"></tbody>
               </table>

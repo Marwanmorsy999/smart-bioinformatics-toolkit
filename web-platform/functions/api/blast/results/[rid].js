@@ -2,9 +2,11 @@
 // is genuinely complete on a canonical CMD=Get body. A formatting-request
 // READY, a SearchInfo-only page or contradictory status evidence never unlocks
 // retrieval; only canonical complete does.
-// LIMITATION: provenance cannot be persisted in D1 without a new column; M7.6
-// adds no migration, so provenance is returned in the response (JSON with
-// ?format=json, or X-Blast-* headers on the plain-text response).
+// LIMITATION: blast_requests has no retrieval-timestamp column; M7.6 added no
+// migration, so provenance is returned in the response (JSON with ?format=json,
+// or X-Blast-* headers on the plain-text response). The ORIGINAL retrieval time
+// is persisted without a migration in the existing append-only audit_events
+// table, keyed by RID, and reused verbatim on ?cached=1 reloads.
 
 import {
   ALLOWED_DATABASE,
@@ -13,6 +15,7 @@ import {
   buildStatusParams,
   cacheResults,
   DATABASE_LABEL,
+  earliestBlastRetrieval,
   errorResponse,
   extractTabular,
   fetchUpstream,
@@ -26,6 +29,7 @@ import {
   parseQBlastStatus,
   preflightResponse,
   QBLAST_PARSER_SCHEMA,
+  recordBlastRetrieval,
   textResponse
 } from "../_lib.js";
 import { isJson2Report, parseBlastJson2, toDerivedTabular } from "../json2.js";
@@ -64,13 +68,45 @@ function looksLikeJson2(raw) {
   return body.startsWith("{") && !/QBlastInfoBegin|<!doctype|<html/i.test(body);
 }
 
-// Cached reload: NO NCBI fetch at all. The D1 schema has no retrieval timestamp
-// column, so retrieved_at is honestly null rather than the current time.
-async function cachedResultResponse(request, rid, raw, { structured = false, mock = false } = {}) {
+// Persist the ORIGINAL retrieval time once, in the existing audit_events table.
+// A later fresh retrieval (cache update) never replaces it: the earliest
+// record for the RID wins, and any body change is reported as a warning.
+async function rememberBlastRetrieval(db, rid, retrievedAt, sha256, resultFormat, warnings) {
+  let original = null;
+  try { original = await earliestBlastRetrieval(db, rid); } catch { original = null; }
+  if (original?.retrieved_at) {
+    warnings.push("A later cache update occurred for this RID; the original retrieval time from the first retrieval is preserved.");
+    if (original.sha256 && sha256 && original.sha256 !== sha256) {
+      warnings.push("The cached result body differs from the hash recorded at original retrieval.");
+    }
+    return original.retrieved_at;
+  }
+  try {
+    await recordBlastRetrieval(db, { rid, retrievedAt, sha256, resultFormat });
+  } catch {
+    warnings.push("The original retrieval time could not be recorded; a cached reload will report it as unknown.");
+  }
+  return retrievedAt;
+}
+
+// Cached reload: NO NCBI fetch at all. blast_requests has no retrieval
+// timestamp column, so the ORIGINAL time is read from the append-only
+// audit_events retrieval record (no migration). Legacy rows with no record
+// stay honestly unknown: retrieved_at is null, never the current time.
+async function cachedResultResponse(request, rid, raw, { structured = false, mock = false, db = null } = {}) {
   const rawText = String(raw ?? "");
   const synthetic = mock === true || /MOCK DATA|MOCK000001/.test(rawText);
   const sha256 = await hashInput(rawText);
-  const cachedWarning = "Cached result served from D1 without a fresh NCBI fetch; the original retrieval time is not available.";
+  let retrieval = null;
+  if (db && !synthetic) {
+    try { retrieval = await earliestBlastRetrieval(db, rid); } catch { retrieval = null; }
+  }
+  const cachedWarning = retrieval?.retrieved_at
+    ? "Cached result served from D1 without a fresh NCBI fetch; the original retrieval time comes from the append-only retrieval record."
+    : "Cached result served from D1 without a fresh NCBI fetch; retrieval time unknown (no original retrieval record).";
+  const updateWarning = retrieval?.sha256 && retrieval.sha256 !== sha256
+    ? "The cached result body differs from the hash recorded at original retrieval; a later cache update occurred. The original retrieval time is preserved."
+    : null;
 
   if (looksLikeJson2(rawText)) {
     const result = parseBlastJson2(rawText);
@@ -80,7 +116,7 @@ async function cachedResultResponse(request, rid, raw, { structured = false, moc
       // as hits just because rows were served from D1.
       const noHits = result.no_hits === true && !result.hits.length;
       const outcome = noHits ? "no_hits" : "hits";
-      const provenance = baseProvenance(rid, null, synthetic, {
+      const provenance = baseProvenance(rid, retrieval?.retrieved_at ?? null, synthetic, {
         outcome,
         cached: true,
         result_format: "json2",
@@ -90,6 +126,7 @@ async function cachedResultResponse(request, rid, raw, { structured = false, moc
         warnings: [
           ...result.warnings,
           cachedWarning,
+          ...(updateWarning ? [updateWarning] : []),
           ...(noHits ? ["NCBI reported ThereAreHits=no. No result rows were retrieved and none were synthesised."] : [])
         ]
       });
@@ -113,13 +150,13 @@ async function cachedResultResponse(request, rid, raw, { structured = false, moc
     }
   }
 
-  const provenance = baseProvenance(rid, null, synthetic, {
+  const provenance = baseProvenance(rid, retrieval?.retrieved_at ?? null, synthetic, {
     outcome: synthetic ? "mock" : "hits",
     cached: true,
     result_format: "tabular",
     sha256,
     ...countRows(rawText),
-    warnings: [cachedWarning]
+    warnings: [cachedWarning, ...(updateWarning ? [updateWarning] : [])]
   });
   if (wantsJson(request)) {
     return jsonResponse({
@@ -168,14 +205,16 @@ async function structuredHitsResponse(request, rid, env, { now, fetchImpl, parse
   }
 
   const tsv = toDerivedTabular(result);
+  const sha256 = await hashInput(raw);
   const provenance = baseProvenance(rid, retrievedAt, false, {
     outcome: "hits",
     result_format: "json2",
     derived_from: "json2",
-    sha256: await hashInput(raw),
+    sha256,
     ...countRows(tsv),
     warnings: [...result.warnings]
   });
+  provenance.retrieved_at = await rememberBlastRetrieval(db, rid, retrievedAt, sha256, "json2", provenance.warnings);
   if (provenance.rows_rejected > 0) {
     provenance.warnings.push(`${provenance.rows_rejected} derived line(s) were rejected.`);
   }
@@ -329,7 +368,8 @@ export async function handleResults(rid, request, env, { now = Date.now(), fetch
   if (options.cached && row.result_tsv) {
     return cachedResultResponse(request, safeRid, row.result_tsv, {
       structured: options.structured,
-      mock: mockEnv || mockRid
+      mock: mockEnv || mockRid,
+      db
     });
   }
 
@@ -432,12 +472,14 @@ export async function handleResults(rid, request, env, { now = Date.now(), fetch
   if (/\t/.test(raw.replace(/\r\n?/g, "\n").split("\n").filter((line) => line.includes("<")).join(""))) {
     warnings.push("The provider report contained markup; only tabular lines were retained.");
   }
+  const sha256 = await hashInput(raw);
   const provenance = baseProvenance(safeRid, retrievedAt, false, {
     outcome: "hits",
-    sha256: await hashInput(raw),
+    sha256,
     ...countRows(tsv),
     warnings
   });
+  provenance.retrieved_at = await rememberBlastRetrieval(db, safeRid, retrievedAt, sha256, "tabular", warnings);
   if (provenance.rows_rejected > 0) {
     provenance.warnings.push(`${provenance.rows_rejected} non-tabular line(s) were rejected.`);
   }

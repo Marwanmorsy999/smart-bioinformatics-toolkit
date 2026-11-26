@@ -82,7 +82,7 @@ test("FIXTURE: coverage is computed from coordinates and qcovs is only a cross-c
   assert.equal(reverse.query_coverage, 65); // (30-5+1)/40
   assert.equal(parsed.hits[1].query_coverage, 50); // (20-1+1)/40
   assert.equal(parsed.hits[2].query_coverage, 27.5); // (20-10+1)/40
-  assert.equal(parsed.hits[0].query_coverage, 100, "hit coverage is the max real HSP span");
+  assert.equal(parsed.hits[0].query_coverage, 100, "hit coverage is the union of real HSP query intervals");
   assert.equal(
     parsed.warnings.some((warning) => /qcovs \(70\).*coverage \(65\)/.test(warning)),
     true
@@ -157,7 +157,7 @@ test("FIXTURE: derived tabular view is labelled, compatible, and uses only parse
   assert.equal(tsv.includes("ACGTACGTACGTACGT"), false, "alignment strings are not duplicated into the summary");
 });
 
-test("FIXTURE: derived row uses the best-scoring HSP for every numeric column", () => {
+test("FIXTURE: derived row uses the best-scoring HSP for numeric columns except qcovs (hit union)", () => {
   const payload = {
     BlastOutput2: {
       report: {
@@ -183,8 +183,10 @@ test("FIXTURE: derived row uses the best-scoring HSP for every numeric column", 
   assert.match(derived, /best-scoring HSP/);
   const row = derived.trim().split("\n")[2].split("\t");
   // qseqid, sacc, staxids, sscinames, pident, length, qstart, qend, qlen, evalue, bitscore, qcovs
-  assert.deepEqual(row.slice(4), ["99", "40", "2", "31", "40", "1e-30", "150", "75"]);
-  assert.equal(parsed.hits[0].identity, 99, "the same best HSP feeds the hit summary");
+  // qcovs is the hit union [1,10] ∪ [2,31] = 31 bp of a 40 bp query = 77.5%.
+  assert.deepEqual(row.slice(4), ["99", "40", "2", "31", "40", "1e-30", "150", "77.5"]);
+  assert.equal(parsed.hits[0].identity, 99, "the same best HSP feeds the score summary");
   assert.equal(parsed.hits[0].bitscore, 150);
-  assert.equal(parsed.hits[0].query_coverage, 75);
+  assert.equal(parsed.hits[0].query_coverage, 77.5);
+  assert.equal(parsed.hits[0].hsps[1].query_coverage, 75, "per-HSP span stays 30/40 = 75%");
 });

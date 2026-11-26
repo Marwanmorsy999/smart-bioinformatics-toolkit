@@ -325,7 +325,9 @@ export function createAdapter(env = {}, deps = {}) {
     const toolChoice = normalizeToolChoice(request.tool_choice);
     if (toolChoice !== undefined) body.tool_choice = toolChoice;
     if (jsonMode) body.response_format = { type: "json_object" };
-    if (stream) body.stream = true;
+    // Explicit flag in BOTH directions: 9Router may default to SSE when the
+    // field is absent, which breaks JSON-expecting callers. Never omit it.
+    body.stream = stream === true;
     return { body, model };
   }
 
@@ -362,12 +364,62 @@ export function createAdapter(env = {}, deps = {}) {
     return usage;
   }
 
-  // Non-streaming chat used by the assistant tool loop. Errors are thrown so
-  // callers can fail closed with a typed response instead of a fabricated text.
+  // Defensive JSON-expecting response handling. Even with stream:false an
+  // upstream may answer with text/event-stream; parse genuine data frames into
+  // text/tool calls/usage instead of failing or inventing a reply.
+  async function jsonCompletion(response, model) {
+    let data;
+    try { data = await response.json(); }
+    catch {
+      throw new ProviderHttpError({
+        status: Number(response?.status) || 0,
+        code: "invalid_json",
+        message: "ninerouter returned an invalid JSON body",
+        retryable: false
+      });
+    }
+    return normalizeCompletion(unwrap({ body: data, response }), model);
+  }
+
+  async function sseCompletion(response, ctx, model, cleanup) {
+    const session = streamSession(response, cleanup, ctx, model);
+    try {
+      for await (const event of session.events()) {
+        // streamSession accumulates text, tool deltas, finish_reason and any
+        // usage chunk; no extra data is inferred from malformed frames.
+        if (event.kind === "error") break;
+      }
+    } finally {
+      if (typeof session.cleanup === "function") session.cleanup();
+    }
+    const out = session.summary();
+    return {
+      text: out.text,
+      tool_calls: out.tool_calls,
+      finish_reason: out.finish_reason,
+      usage: out.usage,
+      model: out.model ?? model,
+      delivery: "sse_fallback"
+    };
+  }
+
+  // Non-streaming chat used by the assistant tool loop and JSON-mode plan
+  // steps. Errors are thrown so callers can fail closed with a typed response
+  // instead of a fabricated text.
   async function chat(request = {}, ctx = {}) {
     const { body, model } = buildChatBody(request, { jsonMode: request.json_schema !== undefined });
-    const data = unwrap(await call("POST", "chat/completions", body, ctx, { attempts: 2 }));
-    return normalizeCompletion(data, model);
+    // Keep the response body unparsed until we know whether it is JSON or SSE.
+    // The deadline from call() stays active until cleanup() in the finally.
+    const { response, cleanup } = await call("POST", "chat/completions", body, ctx, {
+      attempts: 2, parse: "stream"
+    });
+    try {
+      const contentType = String(response?.headers?.get?.("Content-Type") ?? "");
+      if (/text\/event-stream/i.test(contentType)) return await sseCompletion(response, ctx, model, () => {});
+      return await jsonCompletion(response, model);
+    } finally {
+      cleanup();
+    }
   }
 
   // A live stream session. events() yields every parsed upstream event as soon
