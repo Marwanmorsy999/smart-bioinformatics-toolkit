@@ -23,7 +23,7 @@ import {
 } from "../common/contract.js";
 import {
   asArray, asObject, failure, jobIdFrom, joinUrl, makeId, makeNow,
-  normalizeCallArgs, normalizeTokenUsage, pick, readSse, requestJson, safeId, safeString
+  normalizeCallArgs, normalizeTokenUsage, pick, requestJson, safeId, safeString
 } from "../common/normalize.js";
 import { ProviderHttpError } from "../common/retry.js";
 
@@ -55,6 +55,112 @@ function timeoutMsFrom(env) {
   return Math.min(Math.max(seconds, 1), 300) * 1000;
 }
 
+const MESSAGE_ROLES = Object.freeze(["system", "user", "assistant", "tool"]);
+const MAX_MESSAGES = 20;
+const MAX_MESSAGE_CONTENT = 12000;
+const MAX_TOOL_DEFINITIONS = 32;
+
+function badRequest(code, message) {
+  return new ProviderHttpError({ status: 400, code, message, retryable: false });
+}
+
+function normalizeToolCalls(raw) {
+  return asArray(raw).map((item, index) => {
+    const source = asObject(item);
+    const fn = asObject(source.function);
+    return {
+      id: safeString(source.id, 200),
+      type: safeString(source.type, 40) || "function",
+      index: Number.isInteger(source.index) ? source.index : index,
+      function: {
+        name: safeString(fn.name, 200),
+        arguments: safeString(fn.arguments, 12000)
+      }
+    };
+  }).filter((call) => call.function.name);
+}
+
+// Accumulate OpenAI streaming tool-call deltas. Fragments arrive keyed by the
+// `index` field; nothing is invented when a provider omits an id or name.
+export function accumulateToolCall(target, delta) {
+  const source = asObject(delta);
+  const index = Number.isInteger(source.index) ? source.index : target.size;
+  const entry = target.get(index) ?? {
+    id: "", type: "function", index, function: { name: "", arguments: "" }
+  };
+  if (source.id) entry.id = safeString(source.id, 200);
+  if (source.type) entry.type = safeString(source.type, 40);
+  const fn = asObject(source.function);
+  if (fn.name) entry.function.name = safeString(fn.name, 200);
+  if (fn.arguments) entry.function.arguments = safeString(entry.function.arguments + fn.arguments, 12000);
+  target.set(index, entry);
+  return entry;
+}
+
+/**
+ * Parse an upstream SSE response into normalized events. Handles partial
+ * lines, `[DONE]`, malformed JSON, upstream error frames and client aborts.
+ * The caller owns response.body and MUST close the reader (the generator does
+ * this in its finally block) and call the request cleanup when finished.
+ */
+export async function* parseChatStream(response, signal) {
+  const reader = response?.body?.getReader?.();
+  if (!reader) {
+    throw new ProviderHttpError({
+      status: Number(response?.status) || 0,
+      code: "stream_unavailable",
+      message: "Provider stream is unavailable.",
+      retryable: false
+    });
+  }
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const toEvent = (rawLine) => {
+    const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+    if (!line.startsWith("data:")) return null; // comments / event / id frames
+    const data = line.slice(5).trim();
+    if (!data) return null;
+    if (data === "[DONE]") return { __done: true, raw: "[DONE]" };
+    let parsed;
+    try { parsed = JSON.parse(data); } catch { return { __invalid: true }; }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { __invalid: true };
+    if (parsed.error) {
+      const detail = asObject(parsed.error);
+      return {
+        __error: {
+          code: safeString(detail.code ?? detail.type ?? "provider_stream_error", 120),
+          message: safeString(detail.message ?? "Provider stream error.", 200)
+        }
+      };
+    }
+    return { ...parsed, raw: data };
+  };
+  try {
+    for (;;) {
+      if (signal?.aborted) {
+        const error = new Error("Provider request aborted.");
+        error.name = "AbortError";
+        throw error;
+      }
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let index;
+      while ((index = buffer.indexOf("\n")) !== -1) {
+        const event = toEvent(buffer.slice(0, index));
+        buffer = buffer.slice(index + 1);
+        if (event) yield event;
+      }
+    }
+    if (buffer.trim()) {
+      const event = toEvent(buffer);
+      if (event) yield event;
+    }
+  } finally {
+    try { await reader.cancel(); } catch { /* stream already closed */ }
+  }
+}
+
 export function createAdapter(env = {}, deps = {}) {
   const enabled = env?.NINEROUTER_ENABLED === "true";
   const baseUrl = safeString(env?.NINEROUTER_BASE_URL).trim();
@@ -65,6 +171,14 @@ export function createAdapter(env = {}, deps = {}) {
   const discoveredModels = [];
   const completed = new Map();
   const counters = { input_tokens: 0, output_tokens: 0, total_tokens: 0, requests: 0 };
+
+  // The operator-supplied base URL already carries the /v1 prefix in staging.
+  // Normalise it once so appending an endpoint can never double the prefix.
+  function apiUrl(path) {
+    const root = baseUrl.replace(/\/+$/, "");
+    const hasVersion = /(?:^|\/)v1$/.test(root);
+    return joinUrl(hasVersion ? root : `${root}/v1`, path);
+  }
 
   function availability() {
     if (!enabled) return AVAILABILITY.DISABLED;
@@ -90,7 +204,7 @@ export function createAdapter(env = {}, deps = {}) {
       sleep: ctx?.sleep ?? null
     };
     if (extra.parse) opts.parse = extra.parse;
-    return requestJson(PROVIDER, fetcher(ctx), joinUrl(baseUrl, path), { method, headers, body: payload }, opts);
+    return requestJson(PROVIDER, fetcher(ctx), apiUrl(path), { method, headers, body: payload }, opts);
   }
 
   function unwrap(result) {
@@ -126,7 +240,7 @@ export function createAdapter(env = {}, deps = {}) {
   }
 
   async function models(ctx) {
-    const body = unwrap(await call("GET", "/v1/models", undefined, ctx));
+    const body = unwrap(await call("GET", "models", undefined, ctx));
     const list = asArray(body.data ?? body.models ?? body).map(normalizeModel).filter((item) => item.id);
     discoveredModels.length = 0;
     discoveredModels.push(...list.map((item) => item.id));
@@ -140,12 +254,91 @@ export function createAdapter(env = {}, deps = {}) {
       || null;
   }
 
-  function messages(request) {
+  // Accept either the legacy {message, system} shape used by /api/providers/chat
+  // or an explicit OpenAI-style messages array (bounded and role-checked).
+  function normalizeMessages(request) {
+    const source = asObject(request);
     const list = [{ role: "system", content: SYSTEM_GUARD }];
-    const extraSystem = safeString(asObject(request).system, 4000);
+    const extraSystem = safeString(source.system, 4000);
     if (extraSystem) list.push({ role: "system", content: extraSystem });
-    list.push({ role: "user", content: safeString(asObject(request).message, 8000) });
+    const provided = asArray(source.messages);
+    if (provided.length) {
+      if (provided.length > MAX_MESSAGES) {
+        throw badRequest("messages_limit", `At most ${MAX_MESSAGES} messages are accepted.`);
+      }
+      for (const raw of provided) {
+        const item = asObject(raw);
+        const role = safeString(item.role, 40);
+        if (!MESSAGE_ROLES.includes(role)) throw badRequest("invalid_message_role", "Unsupported message role.");
+        if (typeof item.content !== "string" || item.content.length > MAX_MESSAGE_CONTENT) {
+          throw badRequest("invalid_message_content", "Message content must be text within the size limit.");
+        }
+        const normalized = { role, content: safeString(item.content, MAX_MESSAGE_CONTENT) };
+        if (role === "assistant" && item.tool_calls !== undefined) {
+          if (!Array.isArray(item.tool_calls)) throw badRequest("invalid_tool_calls", "tool_calls must be an array.");
+          normalized.tool_calls = normalizeToolCalls(item.tool_calls);
+        }
+        if (role === "tool" && item.tool_call_id !== undefined) {
+          normalized.tool_call_id = safeString(item.tool_call_id, 200);
+        }
+        list.push(normalized);
+      }
+    } else {
+      list.push({ role: "user", content: safeString(source.message, 8000) });
+    }
     return list;
+  }
+
+  function normalizeTools(value) {
+    if (value === undefined) return [];
+    if (!Array.isArray(value) || value.length > MAX_TOOL_DEFINITIONS) {
+      throw badRequest("invalid_tools", `tools must be an array of at most ${MAX_TOOL_DEFINITIONS} definitions.`);
+    }
+    return value.map((raw) => {
+      const item = asObject(raw);
+      const fn = asObject(item.function);
+      const name = safeString(fn.name, 200);
+      if (safeString(item.type, 40) !== "function" || !name) {
+        throw badRequest("invalid_tools", "Each tool must be a function definition with a name.");
+      }
+      const parameters = fn.parameters && typeof fn.parameters === "object" && !Array.isArray(fn.parameters)
+        ? fn.parameters : { type: "object", properties: {} };
+      return { type: "function", function: { name, description: safeString(fn.description, 2000), parameters } };
+    });
+  }
+
+  function normalizeToolChoice(value) {
+    if (value === undefined) return undefined;
+    if (typeof value === "string" && ["auto", "none", "required"].includes(value)) return value;
+    const item = asObject(value);
+    const name = safeString(asObject(item.function).name, 200);
+    if (safeString(item.type, 40) === "function" && name) return { type: "function", function: { name } };
+    throw badRequest("invalid_tool_choice", "tool_choice must be auto, none, required or a named function.");
+  }
+
+  function buildChatBody(request, { stream = false, jsonMode = false } = {}) {
+    const model = selectedModel(request);
+    if (!model) throw badRequest("model_required", "No model configured or discovered.");
+    const body = { model, messages: normalizeMessages(request) };
+    const tools = normalizeTools(request.tools);
+    if (tools.length) body.tools = tools;
+    const toolChoice = normalizeToolChoice(request.tool_choice);
+    if (toolChoice !== undefined) body.tool_choice = toolChoice;
+    if (jsonMode) body.response_format = { type: "json_object" };
+    if (stream) body.stream = true;
+    return { body, model };
+  }
+
+  function normalizeCompletion(data, fallbackModel) {
+    const choice = asObject(asArray(data.choices)[0]);
+    const message = asObject(choice.message);
+    return {
+      text: safeString(message.content, 20_000),
+      tool_calls: normalizeToolCalls(message.tool_calls),
+      finish_reason: safeString(choice.finish_reason, 80) || null,
+      usage: recordUsage(data, fallbackModel),
+      model: safeString(data.model, 300) || fallbackModel
+    };
   }
 
   function result(request, jobId, status, output = {}, extra = {}) {
@@ -169,40 +362,189 @@ export function createAdapter(env = {}, deps = {}) {
     return usage;
   }
 
-  async function streamChat(body, ctx) {
-    const { response, cleanup } = await call("POST", "/v1/chat/completions", { ...body, stream: true }, ctx, { parse: "stream", attempts: 2 });
-    let text = "";
-    let finishReason = null;
-    let usage;
-    let model = body.model;
-    try {
-      await readSse(response, (chunk) => {
-        if (chunk?.__done || chunk?.__invalid) return;
-        const choice = asArray(chunk.choices)[0];
-        if (choice) {
-          const delta = asObject(choice.delta);
-          if (typeof delta.content === "string") text += delta.content.slice(0, 20_000);
-          if (choice.finish_reason) finishReason = safeString(choice.finish_reason, 80);
+  // Non-streaming chat used by the assistant tool loop. Errors are thrown so
+  // callers can fail closed with a typed response instead of a fabricated text.
+  async function chat(request = {}, ctx = {}) {
+    const { body, model } = buildChatBody(request, { jsonMode: request.json_schema !== undefined });
+    const data = unwrap(await call("POST", "chat/completions", body, ctx, { attempts: 2 }));
+    return normalizeCompletion(data, model);
+  }
+
+  // A live stream session. events() yields every parsed upstream event as soon
+  // as it arrives; summary() exposes accumulated tool-call deltas,
+  // finish_reason and usage after iteration. Frames are never held back for
+  // delayed delivery: callers relay them while iterating.
+  function streamSession(response, cleanup, ctx = {}, fallbackModel = null) {
+    const state = {
+      toolDeltas: new Map(),
+      text: "",
+      finish_reason: null,
+      usage: undefined,
+      model: fallbackModel,
+      saw_done: false,
+      malformed_frames: 0
+    };
+
+    async function* events() {
+      for await (const event of parseChatStream(response, ctx?.signal ?? null)) {
+        if (event.__done) {
+          state.saw_done = true;
+          yield { kind: "done" };
+          continue;
         }
-        if (chunk.usage) {
-          usage = normalizeTokenUsage(chunk.usage, chunk.model ?? model);
-          if (usage) {
+        if (event.__invalid) {
+          state.malformed_frames += 1;
+          yield { kind: "invalid" };
+          continue;
+        }
+        if (event.__error) {
+          throw new ProviderHttpError({
+            status: 502, code: event.__error.code, message: "Provider stream error.", retryable: false
+          });
+        }
+        const choice = asArray(event.choices)[0];
+        const delta = choice ? asObject(choice.delta) : {};
+        const fragments = asArray(delta.tool_calls);
+        const text = typeof delta.content === "string" ? delta.content.slice(0, 20_000) : null;
+        if (text) state.text += text;
+        for (const fragment of fragments) accumulateToolCall(state.toolDeltas, asObject(fragment));
+        if (choice?.finish_reason) state.finish_reason = safeString(choice.finish_reason, 80);
+        if (event.usage) {
+          state.usage = normalizeTokenUsage(event.usage, event.model ?? state.model);
+          if (state.usage) {
             for (const key of ["input_tokens", "output_tokens", "total_tokens"]) {
-              if (Number.isFinite(usage[key])) counters[key] += usage[key];
+              if (Number.isFinite(state.usage[key])) counters[key] += state.usage[key];
             }
           }
         }
-        if (chunk.model) model = safeString(chunk.model, 300);
-      }, ctx?.signal ?? null);
-    } finally {
-      cleanup();
+        if (event.model) state.model = safeString(event.model, 300);
+        yield {
+          kind: "chunk",
+          raw: event.raw,
+          text,
+          has_tool_delta: fragments.length > 0,
+          finish_reason: state.finish_reason,
+          model: state.model,
+          usage: state.usage
+        };
+      }
     }
+
+    return {
+      response,
+      cleanup,
+      events,
+      summary() {
+        return {
+          text: state.text,
+          tool_calls: [...state.toolDeltas.values()].filter((call) => call.function.name),
+          finish_reason: state.finish_reason,
+          usage: state.usage,
+          model: state.model ?? null,
+          saw_done: state.saw_done,
+          malformed_frames: state.malformed_frames
+        };
+      }
+    };
+  }
+
+  async function openChatStream(request = {}, ctx = {}) {
+    const { body, model } = buildChatBody(request, { stream: true });
+    const { response, cleanup } = await call("POST", "chat/completions", body, ctx, { parse: "stream", attempts: 2 });
     counters.requests += 1;
-    return { text, structured: undefined, usage, finish_reason: finishReason, model };
+    return streamSession(response, cleanup, ctx, model);
+  }
+
+  function iterateChatStream(response, ctx = {}) {
+    return streamSession(response, () => {}, ctx).events();
+  }
+
+  // Legacy buffered reader kept for submitJob/consumeChatStream callers.
+  async function readChatStream(response, ctx = {}) {
+    const session = streamSession(response, () => {}, ctx);
+    const frames = [];
+    for await (const event of session.events()) {
+      if (event.kind === "chunk" && typeof event.raw === "string" && frames.length < 20_000) frames.push(event.raw);
+      else if (event.kind === "done" && frames.length < 20_000) frames.push("[DONE]");
+    }
+    return { ...session.summary(), frames };
+  }
+
+  async function streamChat(request = {}, ctx = {}) {
+    const session = await openChatStream(request, ctx);
+    try {
+      const frames = [];
+      for await (const event of session.events()) {
+        if (event.kind === "chunk" && typeof event.raw === "string" && frames.length < 20_000) frames.push(event.raw);
+        else if (event.kind === "done" && frames.length < 20_000) frames.push("[DONE]");
+      }
+      const out = session.summary();
+      return {
+        text: out.text,
+        structured: undefined,
+        usage: out.usage,
+        finish_reason: out.finish_reason,
+        tool_calls: out.tool_calls,
+        model: out.model,
+        frames
+      };
+    } finally {
+      session.cleanup();
+    }
   }
 
   const adapter = {
     id: () => PROVIDER,
+
+    // Configuration/status accessors deliberately expose no key and no URL.
+    config() {
+      return {
+        provider: PROVIDER,
+        enabled,
+        configured,
+        selected_model: configuredModel || discoveredModels[0] || null,
+        model_count: discoveredModels.length,
+        source: "environment"
+      };
+    },
+
+    async status(ctx = {}) {
+      const base = adapter.config();
+      if (!enabled || !configured) {
+        return { ...base, reachable: false, reason: enabled ? "missing_configuration" : "feature_flag_disabled" };
+      }
+      try {
+        const health = await adapter.healthCheck(ctx);
+        return {
+          ...base,
+          reachable: Boolean(health.ok),
+          reason: health.ok ? "ok" : (safeString(health.reason, 120) || "provider_unavailable"),
+          model_count: Math.max(base.model_count, Number(health.model_count) || 0)
+        };
+      } catch {
+        return { ...base, reachable: false, reason: "provider_unavailable" };
+      }
+    },
+
+    models(ctx = {}) { return models(ctx); },
+
+    chat(request = {}, ctx = {}) { return chat(request, ctx); },
+
+    // Live stream session: iterate session.events() to receive each upstream
+    // event immediately; session.summary() holds the accumulated tool calls,
+    // finish_reason and usage after iteration. cleanup() is mandatory.
+    openChatStream(request = {}, ctx = {}) { return openChatStream(request, ctx); },
+
+    // Async iterable over an already-open upstream SSE response.
+    streamEvents(response, ctx = {}) { return iterateChatStream(response, ctx); },
+
+    // Legacy shape: raw upstream SSE Response plus deadline cleanup.
+    async streamChatResponse(request = {}, ctx = {}) {
+      const session = await openChatStream(request, ctx);
+      return { response: session.response, cleanup: session.cleanup, model: session.summary().model };
+    },
+
+    consumeChatStream(response, ctx = {}) { return readChatStream(response, ctx); },
 
     async healthCheck(ctx = {}) {
       if (!enabled) return { provider: PROVIDER, ok: false, status: AVAILABILITY.DISABLED, reason: "feature_flag_disabled", at: makeNow(ctx) };
@@ -257,8 +599,9 @@ export function createAdapter(env = {}, deps = {}) {
 
     validateRequest(operation, request = {}) {
       const normalized = pick(asObject(request), [
-        "operation", "message", "system", "conversation_id", "model", "json_schema",
-        "inputs", "params", "job_id", "provider_job_id"
+        "operation", "message", "system", "messages", "tools", "tool_choice",
+        "conversation_id", "model", "json_schema", "inputs", "params",
+        "job_id", "provider_job_id"
       ]);
       normalized.operation = safeString(operation ?? normalized.operation, 80);
       normalized.message = safeString(normalized.message, 8000);
@@ -272,9 +615,14 @@ export function createAdapter(env = {}, deps = {}) {
         }
       }
       if (!ROUTER_OPERATIONS.includes(normalized.operation)) return bad("operation_not_supported");
-      if ([OPERATIONS.CHAT, OPERATIONS.CHAT_STREAM, OPERATIONS.PLAN, OPERATIONS.SUBMIT_JOB].includes(normalized.operation) && !normalized.message) return bad("message_required");
+      if ([OPERATIONS.CHAT, OPERATIONS.CHAT_STREAM, OPERATIONS.PLAN, OPERATIONS.SUBMIT_JOB].includes(normalized.operation)
+          && !normalized.message && !Array.isArray(normalized.messages)) return bad("message_required");
       if (normalized.operation === OPERATIONS.JOB_STATUS && !jobIdFrom(normalized)) return bad("job_id_required");
       if (normalized.json_schema !== undefined && typeof normalized.json_schema !== "object") return bad("json_schema_must_be_object");
+      if (normalized.messages !== undefined) {
+        try { normalizeMessages(normalized); }
+        catch (error) { return bad(safeString(error?.code, 120) || "invalid_messages"); }
+      }
       return { valid: true, error: null, normalized };
     },
 
@@ -301,22 +649,12 @@ export function createAdapter(env = {}, deps = {}) {
       try {
         const isPlan = payload.operation === OPERATIONS.PLAN;
         const isStream = payload.operation === OPERATIONS.CHAT_STREAM;
-        const body = { model, messages: messages(payload) };
-        if (isPlan) body.response_format = { type: "json_object" };
         let output;
         if (isStream) {
-          output = await streamChat(body, ctx);
+          output = await streamChat(payload, ctx);
         } else {
-          const data = unwrap(await call("POST", "/v1/chat/completions", body, ctx, { attempts: 2 }));
-          const choice = asArray(data.choices)[0];
-          const message = asObject(asObject(choice).message);
-          const text = safeString(message.content, 20_000);
-          output = {
-            text,
-            structured: isPlan && text ? JSON.parse(text) : undefined,
-            usage: recordUsage(data, model),
-            finish_reason: safeString(asObject(choice).finish_reason, 80) || null
-          };
+          output = await chat(payload, ctx);
+          if (isPlan && output.text) output.structured = JSON.parse(output.text);
         }
         const jobId = makeId(ctx, "router");
         const finalResult = result(payload, jobId, JOB_STATUS.SUCCEEDED, output, { submitted_at: submittedAt, ctx });

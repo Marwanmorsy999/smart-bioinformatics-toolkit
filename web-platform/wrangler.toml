@@ -40,7 +40,11 @@ assets = { directory = "./public", binding = "ASSETS", run_worker_first = true }
 # M7.2: Galaxy is the first enabled provider, staging only. Production stays off.
 GALAXY_ENABLED = "true"
 SMARTSBIO_ENABLED = "false"
-NINEROUTER_ENABLED = "false"
+# M7.9: the owner's existing 9Router is enabled on STAGING ONLY. The remote
+# base URL and API key are staging-only Worker secrets (never in this file,
+# never in source, never browser-accessible). Production stays off.
+NINEROUTER_ENABLED = "true"
+NINEROUTER_MODEL = "auto"
 
 # M7.1: staging now uses its OWN D1 database. Production keeps the original
 # binding below; staging and production must never share a row space.
