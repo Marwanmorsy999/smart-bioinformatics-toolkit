@@ -44,6 +44,9 @@ const REAL_IQTREE_REPORT = [
   "Guindon S, Dufayard JF, Lefort V et al. (2010) Model-based phylogenetic inference under maximum likelihood."
 ].join("\n");
 const NHX_HDA = "eeeeeeee5555ffff4444aaaa3333bbbb";
+// FIXTURE: the same genuine-shaped report with Windows CRLF line endings, as
+// delivered by Galaxy text datasets. The final tree is near the END.
+const CRLF_REPORT = REAL_IQTREE_REPORT.replace(/\n/g, "\r\n");
 // FIXTURE: same report, but the printed final tree is syntactically broken.
 // The Worker must fall back to the downloaded treefile and LABEL that fallback.
 const UNPARSEABLE_REPORT = REAL_IQTREE_REPORT.replace(/Tree in newick format: [^\n]*/,
@@ -872,6 +875,26 @@ test("FIXTURE: genuine report final ML tree wins over the BIONJ starting tree", 
   assert.equal(nhx.source_role, "starting_tree_not_displayed");
   assert.equal(body.retrieval.files.find((file) => file.dataset_id === NHX_HDA).source_role,
     "starting_tree_not_displayed");
+  assert.equal(stub.calls.filter((call) => call.method === "POST"
+    && call.url.includes("/api/tools") && !call.url.includes("/fetch")).length, 0, "zero tool submissions");
+});
+
+test("FIXTURE: CRLF report parses final tree, model and log-likelihood", async (t) => {
+  assert.equal(parseIqtreeReport(CRLF_REPORT).final_tree, FINAL_ML_TREE);
+  const { response, body, stub } = await runWorkflow(t, {
+    payload: { resume_provider_job_id: FIX.providerJobId, history_id: FIX.historyId,
+      resume_iqtree_provider_job_id: IQ_JOB_ID },
+    stubOptions: { alignmentContent: FULL_HEADER_FASTA, treeContent: BIONJ_START_TREE,
+      reportContent: CRLF_REPORT, iqtreeJobId: IQ_JOB_ID,
+      iqtreeJobOutputs: IQ_OUTPUTS, iqtreeOutputs: IQ_OUTPUTS }
+  });
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(body.tree_newick, FINAL_ML_TREE);
+  assert.equal(body.tree_source, "iqtree_report_final_tree");
+  assert.equal(body.resume_iqtree.final_tree_present, true);
+  assert.equal(body.resume_iqtree.model, "TPM3u+F+I");
+  assert.equal(body.resume_iqtree.log_likelihood, -2197.612);
+  assert.match(body.resume_iqtree.rooting_note, /UNROOTED/);
   assert.equal(stub.calls.filter((call) => call.method === "POST"
     && call.url.includes("/api/tools") && !call.url.includes("/fetch")).length, 0, "zero tool submissions");
 });
