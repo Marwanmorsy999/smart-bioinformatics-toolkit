@@ -4,13 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#eef2f4">
-  <meta name="description" content="Multi-step phylogenetics on Galaxy: proposed MAFFT → IQ-TREE workflow with plan review and consent. MAFFT submission/completion was evidenced once; full multi-step execution is unverified; workflow not production-ready.">
+  <meta name="description" content="Multi-sequence phylogenetics: proposed MAFFT alignment → IQ-TREE tree workflow with live-discovered tool versions, plan review and approval gate. A real remote path is wired through that approval flow; full multi-step execution is unverified here and the workflow is not production-ready.">
   <title>Phylogenetics workflow — Smart Bioinformatics AI</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="stylesheet" href="css/tokens.css">
   <link rel="stylesheet" href="css/main.css">
   <link rel="stylesheet" href="css/components.css">
   <link rel="stylesheet" href="css/app-views.css">
+  <link rel="stylesheet" href="css/phylo.css">
 </head>
 <body>
   <a class="skip-link" href="#phylo-main">Skip to main content</a>
@@ -37,7 +38,7 @@
     <header class="view-head">
       <div>
         <h1>Multi-step phylogenetics on Galaxy</h1>
-        <p class="section-kicker">Proposed cloud workflow: MAFFT alignment → IQ-TREE tree. MAFFT submission/completion was evidenced once; full multi-step execution is unverified; workflow not production-ready.</p>
+        <p class="section-kicker">Proposed cloud workflow: MAFFT alignment → IQ-TREE tree, discovered live at run time. The remote path is wired through the approval gate, but full multi-step execution is unverified here; treat every tree as research-use evidence, not publication-grade inference.</p>
       </div>
       <div class="research-strip" role="note">
         <span class="privacy-icon" aria-hidden="true">i</span>
@@ -59,16 +60,30 @@
       <aside class="app-rail" aria-label="Dataset and plan">
         <section id="phylo-input" class="panel" aria-labelledby="phylo-input-title">
           <div class="panel-head"><h2 id="phylo-input-title">1. Provide a multi-FASTA dataset</h2></div>
-          <p class="panel-note">The file stays in this page until you approve the plan. The exact step list appears next; no job is submitted by selecting a file.</p>
+          <p class="panel-note">The file stays in this page until you approve the plan. Paste FASTA or choose a file; a single sequence is an identification task, not phylogenetics.</p>
           <div class="field-group">
             <label for="phylo-file">FASTA file (.fasta / .fa / .fna / .txt)</label>
             <input id="phylo-file" type="file" accept=".fasta,.fa,.fna,.fas,.txt">
           </div>
           <div class="field-group">
+            <label for="phylo-fasta-text">Or paste multi-FASTA text</label>
+            <textarea id="phylo-fasta-text" rows="8" spellcheck="false" placeholder=">taxon_a&#10;ACGT...&#10;>taxon_b&#10;ACGT..."></textarea>
+          </div>
+          <div id="phylo-fasta-stats" class="phylo-validation" role="status" aria-live="polite">No sequences loaded yet. At least three distinct taxa are required; four or more are recommended.</div>
+          <p id="phylo-identify-link" hidden>For a single sequence, use <a href="16s.html">16S identification</a> instead.</p>
+          <div class="field-group">
+            <label for="phylo-query-taxon">Query taxon to highlight (optional)</label>
+            <input id="phylo-query-taxon" type="text" maxlength="200" placeholder="Exact FASTA ID">
+          </div>
+          <fieldset id="phylo-reference-fieldset" hidden>
+            <legend>Reference taxa to highlight (optional)</legend>
+            <div id="phylo-reference-select"></div>
+          </fieldset>
+          <div class="field-group">
             <label for="phylo-objective">Research objective</label>
             <textarea id="phylo-objective" rows="3" placeholder="e.g. Infer relationships among these homologous sequences"></textarea>
           </div>
-          <button id="phylo-plan" type="button" class="primary-link">Inspect proposed plan</button>
+          <button id="phylo-plan" type="button" class="primary-link" disabled>Inspect proposed plan</button>
         </section>
 
       </aside>
@@ -76,7 +91,7 @@
       <div class="app-detail phylo-detail-host">
         <section id="phylo-plan-view" class="panel" aria-live="polite" hidden>
           <div class="panel-head"><h2>2. Proposed execution plan</h2></div>
-          <p class="panel-note">Seven proposed steps. Review them before granting Galaxy consent.</p>
+          <p class="panel-note">Seven steps. Tool ids/versions below come from metadata-only live discovery; no bytes are uploaded by inspection. Nothing executes until you approve.</p>
           <ol id="phylo-plan-steps"></ol>
           <div class="consent-box">
             <p class="panel-note">Galaxy consent: approval uploads this dataset to Galaxy Europe for this workflow. Nothing is sent before you check the box and run.</p>
@@ -94,19 +109,36 @@
           <div class="panel-head"><h2>4. Results</h2></div>
           <p id="phylo-validation"></p>
 
+          <h3>Deterministic metrics</h3>
+          <table id="phylo-metrics" class="phylo-metrics"><tbody></tbody></table>
+
           <figure class="phylo-figure">
             <div id="phylo-tree" aria-label="Phylogenetic tree visualization"></div>
-            <figcaption>Phylogenetic tree — rendered from returned Newick text when a job supplies it.</figcaption>
+            <figcaption>Phylogenetic tree rendered from the Newick text returned by the completed run. No tree means no drawing.</figcaption>
           </figure>
 
           <figure class="phylo-figure">
-            <div class="alignment-placeholder">No alignment text has been returned by a completed job. Alignment output is retrieved with the Galaxy job datasets; nothing is shown here until real output is available.</div>
-            <figcaption>Multiple-sequence alignment — awaiting retrieved output</figcaption>
+            <div id="phylo-alignment" class="alignment-placeholder">No alignment text has been returned by a completed job. Nothing is shown here until real output is available.</div>
+            <figcaption>Multiple-sequence alignment — retrieved output only</figcaption>
           </figure>
 
+          <div>
+            <h3>Evidence-based interpretation</h3>
+            <p id="phylo-interpretation"></p>
+            <p id="phylo-ai-status" class="phylo-ai-note">AI-generated phrasing: not requested yet.</p>
+            <p id="phylo-ai-phrasing" class="phylo-ai-note" hidden></p>
+          </div>
+
           <h3>Downloads</h3>
-          <ul id="phylo-downloads" class="data-list"></ul>
-          <p><a id="phylo-report-link" href="#">Download reproducible report (HTML)</a></p>
+          <ul id="phylo-downloads" class="phylo-downloads"></ul>
+          <p><a id="phylo-report-link" href="#" hidden>Download job report (HTML)</a></p>
+
+          <h3>Reopen this run</h3>
+          <p id="phylo-reopen-detail">Run records are available after execution.</p>
+          <ul class="data-list">
+            <li><button id="phylo-reopen-ai" type="button" disabled>Reopen AI run record</button></li>
+            <li><button id="phylo-reopen-workspace" type="button" disabled>Reopen workspace run record</button></li>
+          </ul>
 
           <details>
             <summary>Full provenance</summary>
@@ -120,7 +152,7 @@
           </span>
           <div>
             <h3>No Galaxy job started</h3>
-            <p>Select a multi-FASTA file, inspect the proposed plan and approve it to submit a job. Progress and results appear here with their reported state; blocked or incomplete stages are never shown as succeeded.</p>
+            <p>Provide a multi-sequence FASTA, inspect the proposed plan and approve it to submit a job. Progress and results appear here with their reported state; blocked or incomplete stages are never shown as succeeded.</p>
           </div>
         </div>
       </div>

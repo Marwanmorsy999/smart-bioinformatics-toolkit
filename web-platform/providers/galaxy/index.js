@@ -643,6 +643,11 @@ export function createAdapter(env = {}, deps = {}) {
             && ["ok", "success"].includes(safeString(item.state, 80).toLowerCase()))
           .map((item) => ({
             id: safeString(item.id, 200),
+            // UUID and numeric dataset id are persistent identities, NOT HDA
+            // ids. They are exposed for association resolution only; download
+            // routes must keep using `id`.
+            uuid: safeString(item.uuid, 200) || null,
+            dataset_id: safeString(item.dataset_id, 200) || null,
             name: safeString(item.name, 300),
             type: safeString(item.extension ?? item.file_ext ?? item.type, 100),
             size: finite(item.file_size ?? item.size),

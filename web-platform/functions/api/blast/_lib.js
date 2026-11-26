@@ -427,44 +427,430 @@ export async function ncbiFetchText(url, { fetchImpl, delays = [0, 250, 500] } =
   throw lastError || new Error("NCBI request failed.");
 }
 
-export function parsePutResponse(text) {
-  const body = String(text || "");
-  const patterns = [
-    /name=["']RID["']\s+value=["']([A-Za-z0-9_-]+)["']/i,
-    /value=["']([A-Za-z0-9_-]+)["']\s+name=["']RID["']/i,
-    /\bRID\s*[=:]\s*([A-Za-z0-9_-]{6,})/i,
-    /Request ID[^A-Za-z0-9]{0,40}([A-Za-z0-9_-]{6,})/i
-  ];
-  for (const pattern of patterns) {
-    const match = body.match(pattern);
-    if (match) return match[1];
+// ------------------------------------------------------------- CMD=Put parsing
+// One classifier backs all three public helpers. `accepted` is reserved for a
+// SYNTACTICALLY VALID RID on a non-error (or unqualified) response. HTTP 200 by
+// itself is never success: a 2xx body with no RID is an ambiguous submission.
+// Every candidate value is collected first; a malformed candidate never maps
+// to a valid RID just because it contains a valid-looking substring.
+export const PUT_PARSE_CLASSIFICATIONS = Object.freeze({
+  ACCEPTED: "accepted",
+  MALFORMED_RID: "malformed_rid",
+  NO_RID: "no_rid",
+  EMPTY_BODY: "empty_body",
+  RATE_LIMITED: "rate_limited",
+  PROVIDER_ERROR_PAGE: "provider_error_page",
+  PROXY_ERROR_PAGE: "proxy_error_page",
+  HTTP_ERROR: "http_error",
+  UNEXPECTED_JSON: "unexpected_json",
+  UNEXPECTED_HTML: "unexpected_html",
+  TRANSPORT_ERROR: "transport_error"
+});
+
+export const PUT_PARSE_REASONS = Object.freeze({
+  VALID_RID: "valid_rid",
+  VALID_RID_MALFORMED_RTOE: "valid_rid_malformed_rtoe",
+  VALID_RID_WITH_PROVIDER_ERROR: "valid_rid_with_provider_error",
+  RID_PRESENT_MALFORMED: "rid_present_malformed",
+  EMPTY_BODY: "empty_body",
+  HTTP_429: "http_429",
+  HTTP_4XX: "http_4xx",
+  HTTP_5XX: "http_5xx",
+  NCBI_ERROR_PAGE: "ncbi_error_page",
+  PROXY_CDN_ERROR: "proxy_cdn_error",
+  UNEXPECTED_JSON: "unexpected_json",
+  UNEXPECTED_HTML: "unexpected_html",
+  QBLAST_BLOCK_WITHOUT_RID: "qblast_block_without_rid",
+  NO_RID_FOUND: "no_rid_found",
+  TIMEOUT: "timeout",
+  NETWORK_ERROR: "network_error"
+});
+
+// Small allowlist of response headers that may be copied into a diagnostic
+// record. `location` is deliberately excluded: it can carry a token or query.
+export const PUT_SAFE_RESPONSE_HEADERS = Object.freeze([
+  "content-type", "content-length", "date", "server", "via", "x-cache", "cf-ray", "retry-after", "x-request-id"
+]);
+export const PUT_DIAGNOSTIC_EXCERPT_CHARS = 200;
+export const SUBMISSION_UNKNOWN_CODE = "submission_unknown";
+const MAX_PUT_BODY_CHARS = 256 * 1024;
+// The legacy CMD=Put parse patterns only accepted RID-like tokens of 6+ chars.
+// Keep that bar here (without changing isValidRid / RID_PATTERN used elsewhere)
+// so a stray 1-character candidate can never be reported as a real job id.
+const MIN_PUT_RID_CHARS = 6;
+const NCBI_PUT_ERROR_PATTERN = /No alias or index file found|Error:\s*[^\r\n<]{1,200}|There was a problem with|could not be (?:processed|created)|invalid (?:database|program)|BLAST\s+(?:Error|Failed)/i;
+const PUT_RATE_LIMIT_PATTERN = /too many requests|rate limit(?:ed|ing)?|request limit exceeded|throttl(?:e|ed)|retry after/i;
+const PUT_PROXY_PATTERN = /bad gateway|service unavailable|gateway timeout|cloudflare|nginx|upstream (?:connect|timed out)|cf-error|error code:\s*1\d{3}/i;
+
+function normalizePutBody(text) {
+  return String(text ?? "").replace(/\0/g, "").replace(/\r\n?/g, "\n");
+}
+
+function decodePutEntities(value) {
+  return String(value ?? "")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#0*39;|&#x0*27;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&amp;/gi, "&");
+}
+
+function cleanPutValue(raw) {
+  let value = String(raw ?? "").trim();
+  value = value.replace(/<!--|-->/g, "").trim();
+  const quoted = value.match(/^(['"])([\s\S]*)\1$/);
+  if (quoted) value = quoted[2].trim();
+  return decodePutEntities(value).trim();
+}
+
+// A text view keeps QBlastInfo/RID lines (even inside HTML comments) but drops
+// markup so a table cell such as <td>Request ID</td><td>GF4K...</td> is readable.
+function stripPutMarkup(body) {
+  return String(body ?? "").replace(/<!--|-->/g, " ").replace(/<[^>]*>/g, " ");
+}
+
+function attributeValue(fragment, key) {
+  const quoted = new RegExp(`\\b${key}\\s*=\\s*(["'])([\\s\\S]*?)\\1`, "i").exec(fragment);
+  if (quoted) return quoted[2];
+  const bare = new RegExp(`\\b${key}\\s*=\\s*([^\\s>]+)`, "i").exec(fragment);
+  return bare ? bare[1] : null;
+}
+
+// Hidden form inputs plus the two legacy attribute orders (with or without an
+// enclosing <input> tag). Handles CRLF, extra attributes and single quotes.
+function putAttributeCandidates(body, key) {
+  const values = [];
+  const tagPattern = /<input\b[^>]*>/gi;
+  let tag;
+  while ((tag = tagPattern.exec(body)) !== null) {
+    const name = attributeValue(tag[0], "name");
+    if (name && new RegExp(`^${key}$`, "i").test(cleanPutValue(name))) {
+      const value = attributeValue(tag[0], "value");
+      if (value !== null) values.push(cleanPutValue(value));
+    }
+  }
+  const nameFirst = new RegExp(`\\bname\\s*=\\s*(["']?)${key}\\1[^>]*?\\bvalue\\s*=\\s*(["'])([\\s\\S]*?)\\2`, "gi");
+  const valueFirst = new RegExp(`\\bvalue\\s*=\\s*(["'])([\\s\\S]*?)\\1[^>]*?\\bname\\s*=\\s*(["']?)${key}\\3`, "gi");
+  let match;
+  while ((match = nameFirst.exec(body)) !== null) values.push(cleanPutValue(match[3]));
+  while ((match = valueFirst.exec(body)) !== null) values.push(cleanPutValue(match[2]));
+  return values;
+}
+
+// Documented QBlastInfoBegin/QBlastInfoEnd block; RID and RTOE are separate
+// lines inside it, usually wrapped in an HTML comment in real NCBI pages.
+function putBlockCandidates(body, key) {
+  const values = [];
+  const blockPattern = /QBlastInfoBegin([\s\S]*?)QBlastInfoEnd/gi;
+  let block;
+  while ((block = blockPattern.exec(body)) !== null) {
+    const line = block[1].match(new RegExp(`^\\s*${key}\\s*[=:]\\s*([^\\r\\n]*)`, "im"));
+    if (line) values.push(cleanPutValue(line[1]));
+  }
+  return values;
+}
+
+function putBareCandidates(text, key) {
+  const values = [];
+  const pattern = new RegExp(`\\b${key}\\s*[=:]\\s*([^\\s<>"'\\r\\n]+)`, "gi");
+  let match;
+  while ((match = pattern.exec(text)) !== null) values.push(cleanPutValue(match[1]));
+  return values;
+}
+
+function putRequestIdCandidates(text) {
+  const values = [];
+  const pattern = /Request\s*ID/gi;
+  let match;
+  while ((match = pattern.exec(text)) !== null) {
+    const rest = text.slice(match.index + match[0].length)
+      .replace(/^[\s>=:]*(?:<[^>]*>\s*)*/, "")
+      .match(/^([^\s<>"']+)/);
+    if (rest) values.push(cleanPutValue(rest[1]));
+  }
+  return values;
+}
+
+function finiteRtoe(candidates) {
+  for (const raw of candidates) {
+    if (!raw) continue;
+    const seconds = Number(raw);
+    if (Number.isFinite(seconds)) return seconds;
   }
   return null;
+}
+
+function isJsonShaped(body) {
+  const trimmed = String(body ?? "").trim();
+  return trimmed.startsWith("{") || trimmed.startsWith("[");
+}
+
+// Typed, bounded classification of a CMD=Put response. Options carry transport
+// context (httpStatus/contentType/errorCode) so a bare 2xx is never trusted.
+export function classifyPutResponse(text, options = {}) {
+  const body = normalizePutBody(text);
+  const view = stripPutMarkup(body);
+  const httpStatus = Number.isInteger(options.httpStatus) ? options.httpStatus : null;
+  const contentType = typeof options.contentType === "string" && options.contentType ? options.contentType : null;
+  const errorCode = typeof options.errorCode === "string" ? options.errorCode : null;
+
+  const ridCandidates = [
+    ...putAttributeCandidates(body, "RID"),
+    ...putBlockCandidates(body, "RID"),
+    ...putRequestIdCandidates(view),
+    ...putBareCandidates(view, "RID")
+  ];
+  const rid = ridCandidates.find((candidate) => isValidRid(candidate) && candidate.length >= MIN_PUT_RID_CHARS) ?? null;
+  const ridMalformed = rid === null && ridCandidates.length > 0;
+
+  const rtoeCandidates = [
+    ...putAttributeCandidates(body, "RTOE"),
+    ...putBlockCandidates(body, "RTOE"),
+    ...putBareCandidates(view, "RTOE")
+  ];
+  const rtoe = finiteRtoe(rtoeCandidates);
+  const rtoeMalformed = rtoe === null && rtoeCandidates.some((candidate) => candidate && !Number.isFinite(Number(candidate)));
+
+  const hasQBlastBlock = /QBlastInfoBegin[\s\S]*?QBlastInfoEnd/i.test(body);
+  const providerError = NCBI_PUT_ERROR_PATTERN.test(view);
+  const rateLimited = httpStatus === 429 || PUT_RATE_LIMIT_PATTERN.test(view);
+  const proxyError = (httpStatus >= 502 && httpStatus <= 504) || PUT_PROXY_PATTERN.test(view);
+  const httpOk = httpStatus === null || (httpStatus >= 200 && httpStatus < 300);
+  const transportError = errorCode === "timeout" || errorCode === "network_error";
+
+  let classification;
+  let reason;
+  if (rid && httpOk) {
+    classification = PUT_PARSE_CLASSIFICATIONS.ACCEPTED;
+    reason = rtoeMalformed
+      ? PUT_PARSE_REASONS.VALID_RID_MALFORMED_RTOE
+      : (providerError || rateLimited)
+        ? PUT_PARSE_REASONS.VALID_RID_WITH_PROVIDER_ERROR
+        : PUT_PARSE_REASONS.VALID_RID;
+  } else if (rid) {
+    // A RID inside an error response is NOT trusted: the provider itself
+    // signalled failure (or rate limiting), so no job is claimed.
+    classification = rateLimited ? PUT_PARSE_CLASSIFICATIONS.RATE_LIMITED
+      : proxyError ? PUT_PARSE_CLASSIFICATIONS.PROXY_ERROR_PAGE
+        : PUT_PARSE_CLASSIFICATIONS.HTTP_ERROR;
+    reason = rateLimited ? PUT_PARSE_REASONS.HTTP_429
+      : proxyError ? PUT_PARSE_REASONS.PROXY_CDN_ERROR
+        : (httpStatus >= 500 ? PUT_PARSE_REASONS.HTTP_5XX : PUT_PARSE_REASONS.HTTP_4XX);
+  } else if (transportError) {
+    classification = PUT_PARSE_CLASSIFICATIONS.TRANSPORT_ERROR;
+    reason = errorCode === "timeout" ? PUT_PARSE_REASONS.TIMEOUT : PUT_PARSE_REASONS.NETWORK_ERROR;
+  } else if (httpStatus !== null && !httpOk) {
+    classification = rateLimited ? PUT_PARSE_CLASSIFICATIONS.RATE_LIMITED
+      : proxyError ? PUT_PARSE_CLASSIFICATIONS.PROXY_ERROR_PAGE
+        : PUT_PARSE_CLASSIFICATIONS.HTTP_ERROR;
+    reason = rateLimited ? PUT_PARSE_REASONS.HTTP_429
+      : proxyError ? PUT_PARSE_REASONS.PROXY_CDN_ERROR
+        : (httpStatus >= 500 ? PUT_PARSE_REASONS.HTTP_5XX : PUT_PARSE_REASONS.HTTP_4XX);
+  } else if (rateLimited) {
+    classification = PUT_PARSE_CLASSIFICATIONS.RATE_LIMITED;
+    reason = PUT_PARSE_REASONS.HTTP_429;
+  } else if (proxyError) {
+    classification = PUT_PARSE_CLASSIFICATIONS.PROXY_ERROR_PAGE;
+    reason = PUT_PARSE_REASONS.PROXY_CDN_ERROR;
+  } else if (providerError) {
+    classification = PUT_PARSE_CLASSIFICATIONS.PROVIDER_ERROR_PAGE;
+    reason = PUT_PARSE_REASONS.NCBI_ERROR_PAGE;
+  } else if (ridMalformed) {
+    classification = PUT_PARSE_CLASSIFICATIONS.MALFORMED_RID;
+    reason = PUT_PARSE_REASONS.RID_PRESENT_MALFORMED;
+  } else if (!body.trim()) {
+    classification = PUT_PARSE_CLASSIFICATIONS.EMPTY_BODY;
+    reason = PUT_PARSE_REASONS.EMPTY_BODY;
+  } else if (isJsonShaped(body)) {
+    classification = PUT_PARSE_CLASSIFICATIONS.UNEXPECTED_JSON;
+    reason = PUT_PARSE_REASONS.UNEXPECTED_JSON;
+  } else if (hasQBlastBlock) {
+    classification = PUT_PARSE_CLASSIFICATIONS.NO_RID;
+    reason = PUT_PARSE_REASONS.QBLAST_BLOCK_WITHOUT_RID;
+  } else if (/<\s*(?:!doctype|html|body|p|div|input|table)\b/i.test(body)) {
+    classification = PUT_PARSE_CLASSIFICATIONS.UNEXPECTED_HTML;
+    reason = PUT_PARSE_REASONS.UNEXPECTED_HTML;
+  } else {
+    classification = PUT_PARSE_CLASSIFICATIONS.NO_RID;
+    reason = PUT_PARSE_REASONS.NO_RID_FOUND;
+  }
+
+  const accepted = classification === PUT_PARSE_CLASSIFICATIONS.ACCEPTED;
+  const ambiguous = rid
+    ? (!httpOk || providerError || rateLimited || rtoeMalformed)
+    : (ridMalformed || hasQBlastBlock);
+
+  return Object.freeze({
+    rid,
+    rtoe,
+    accepted,
+    classification,
+    reason,
+    ambiguous,
+    http_status: httpStatus,
+    content_type: contentType,
+    rid_candidate_count: ridCandidates.length,
+    rtoe_malformed: rtoeMalformed,
+    has_qblast_block: hasQBlastBlock
+  });
+}
+
+// Backwards-compatible helpers. They keep their historical shapes exactly:
+// parsePutResponse -> string|null, parsePutResponseDetailed -> {rid, rtoe}.
+export function parsePutResponse(text) {
+  return classifyPutResponse(text).rid;
 }
 
 // NCBI CMD=Put also returns RTOE: the estimated seconds until results are
 // ready (numeric). A missing or non-numeric RTOE is null, never invented.
 export function parseRtoe(text) {
-  const body = String(text ?? "");
-  const patterns = [
-    /name=["']RTOE["']\s+value=["']\s*(\d+(?:\.\d+)?)\s*["']/i,
-    /value=["']\s*(\d+(?:\.\d+)?)\s*["']\s+name=["']RTOE["']/i,
-    /\bRTOE\s*[=:]\s*(\d+(?:\.\d+)?)/i
-  ];
-  for (const pattern of patterns) {
-    const match = body.match(pattern);
-    if (match) {
-      const seconds = Number(match[1]);
-      return Number.isFinite(seconds) ? seconds : null;
-    }
-  }
-  return null;
+  return classifyPutResponse(text).rtoe;
 }
 
-// Detailed CMD=Put parsing. parsePutResponse above is unchanged; this returns
-// the RID plus RTOE. No sequence value is read or returned.
 export function parsePutResponseDetailed(text) {
-  return { rid: parsePutResponse(text), rtoe: parseRtoe(text) };
+  const { rid, rtoe } = classifyPutResponse(text);
+  return { rid, rtoe };
+}
+
+// --------------------------------------------------- bounded safe diagnostics
+// Nothing here stores a full URL, a FASTA value, a consent token or any key.
+export function safeUrlOriginPath(url) {
+  try {
+    const parsed = new URL(String(url));
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return null;
+  }
+}
+
+export function sanitizeDiagnosticText(value, { maxChars = PUT_DIAGNOSTIC_EXCERPT_CHARS } = {}) {
+  const decoded = decodePutEntities(String(value ?? ""));
+  const redacted = decoded
+    .replace(/\bconsent_[0-9a-f]+\b/gi, "[redacted]")
+    // Line-bounded but otherwise unbounded: a long secret tail must never
+    // survive inside the bounded excerpt just because it exceeded 120 chars.
+    .replace(/\b(api[_-]?key|access[_-]?key|secret|password|token|authorization|consent_token)\b\s*[:=]\s*[^\r\n,;&"<>]*/gi, "$1=[redacted]")
+    .replace(/\bBearer\s+[^\s,;&"'<>]+/gi, "Bearer [redacted]")
+    .replace(/\bQUERY\s*=\s*[^\s&<>]+/gi, "QUERY=[redacted]")
+    .replace(/[?&][A-Za-z0-9_%.-]{16,}(?:=[^\s&<>]*)?/g, "[redacted-param]")
+    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[redacted-email]")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/>[^\r\n<>]{1,120}/g, "[redacted-fasta-header]")
+    .replace(/\b[ACGTURYSWKMBDHVN]{12,}\b/gi, "[redacted-sequence]")
+    .replace(/\s+/g, " ")
+    .trim();
+  const limit = Number.isFinite(Number(maxChars)) ? Math.max(0, Number(maxChars)) : PUT_DIAGNOSTIC_EXCERPT_CHARS;
+  return redacted.slice(0, limit);
+}
+
+export function safePutResponseHeaders(headers) {
+  const result = {};
+  if (!headers || typeof headers.get !== "function") return result;
+  for (const name of PUT_SAFE_RESPONSE_HEADERS) {
+    let value;
+    try {
+      value = headers.get(name);
+    } catch {
+      continue;
+    }
+    if (value === null || value === undefined || value === "") continue;
+    result[name] = sanitizeDiagnosticText(value, { maxChars: 120 });
+  }
+  return result;
+}
+
+// ONE bounded CMD=Put attempt. Deliberately NO retry: an ambiguous submission
+// may already have created a job at NCBI, so a second Put is never automatic.
+// Unlike ncbiFetchText this retains status, headers and body even on failure,
+// which is what makes honest diagnostics possible.
+export async function fetchPutUpstream(url, { fetchImpl, timeoutMs = NCBI_FETCH_TIMEOUT_MS } = {}) {
+  const doFetch = fetchImpl || globalThis.fetch;
+  const urlOriginPath = safeUrlOriginPath(url);
+  if (typeof doFetch !== "function") {
+    return { ok: false, httpStatus: null, contentType: null, headers: {}, urlOriginPath, body: "", errorCode: "network_error" };
+  }
+  let timer = null;
+  let signal;
+  try {
+    if (typeof AbortController === "function") {
+      const controller = new AbortController();
+      signal = controller.signal;
+      timer = setTimeout(() => controller.abort(), timeoutMs);
+      if (typeof timer?.unref === "function") timer.unref();
+    }
+    const response = await doFetch(url, {
+      method: "GET",
+      headers: { "User-Agent": "smart-bioinformatics-toolkit" },
+      signal
+    });
+    const httpStatus = Number(response?.status) || 0;
+    const contentType = response?.headers?.get?.("content-type") ?? null;
+    const headers = safePutResponseHeaders(response?.headers);
+    let body = "";
+    try {
+      body = String(await response.text()).slice(0, MAX_PUT_BODY_CHARS);
+    } catch {
+      body = "";
+    }
+    const ok = httpStatus >= 200 && httpStatus < 300;
+    return {
+      ok,
+      httpStatus,
+      contentType,
+      headers,
+      urlOriginPath,
+      body,
+      errorCode: ok ? null : (httpStatus === 429 ? "http_429" : httpStatus >= 500 ? "http_5xx" : "http_4xx")
+    };
+  } catch (error) {
+    const message = String(error?.message ?? "");
+    const timeout = error?.name === "AbortError" || /timeout|abort/i.test(message);
+    return {
+      ok: false,
+      httpStatus: null,
+      contentType: null,
+      headers: {},
+      urlOriginPath,
+      body: "",
+      errorCode: timeout ? "timeout" : "network_error"
+    };
+  } finally {
+    if (timer !== null) clearTimeout(timer);
+  }
+}
+
+// Build the bounded detail object persisted through the EXISTING audit_events
+// detail_json column. No new table, column or storage provider is involved.
+export async function buildPutDiagnosticDetail({
+  transport = {},
+  parsed = {},
+  attemptId = null,
+  at = null
+} = {}) {
+  const body = String(transport.body ?? "");
+  const status = Number(transport.httpStatus);
+  const classification = typeof parsed.classification === "string" && parsed.classification
+    ? parsed.classification
+    : "unknown";
+  // Only a genuinely ambiguous 2xx-no-RID response is labelled ambiguous.
+  // Rate-limit, proxy/CDN and transport failures get a neutral, typed kind.
+  const diagnosticKind = parsed.ambiguous === true ? "cmd_put_ambiguous" : `cmd_put_${classification}`;
+  return Object.freeze({
+    diagnostic_kind: diagnosticKind,
+    submission_attempt_id: attemptId,
+    requested_at: normalizeTimestamp(at),
+    provider_http_status: Number.isInteger(status) && status >= 100 && status <= 599 ? status : null,
+    content_type: typeof transport.contentType === "string" ? sanitizeDiagnosticText(transport.contentType, { maxChars: 120 }) : null,
+    safe_response_headers: transport.headers && typeof transport.headers === "object" ? transport.headers : {},
+    final_url_origin_path: transport.urlOriginPath ?? null,
+    body_byte_length: new TextEncoder().encode(body).length,
+    body_sha256: await hashInput(body),
+    body_excerpt: sanitizeDiagnosticText(body),
+    parser_classification: parsed.classification ?? null,
+    parser_reason: parsed.reason ?? null,
+    ambiguous: Boolean(parsed.ambiguous),
+    auto_retried: false
+  });
 }
 
 // ------------------------------------------------ strict QBlastInfo status

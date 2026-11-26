@@ -44,7 +44,7 @@ export const WORKFLOWS = Object.freeze([
     execution_availability: Object.freeze({
       state: "partial-not-production-ready",
       production_ready: false,
-      note: "Evidence: docs/M7_3_PHYLOGENETICS_WORKFLOW_REPORT.md. A real MAFFT step executed once, but the full multi-step remote tree/retrieval/validation path is NOT verified. No live Galaxy call is made by this workspace API and no provider is newly activated in this milestone."
+      note: "Evidence: docs/M7_3_PHYLOGENETICS_WORKFLOW_REPORT.md. A real MAFFT step executed once. A real MAFFT → IQ-TREE remote path is executable through the existing /api/ai/workflows/phylo/run approval flow, with tool ids and versions discovered live from the Galaxy instance at run time (never hardcoded as the source of truth). This workspace catalog API makes no live Galaxy call and activates no new provider. The full multi-step end-to-end execution on staging is NOT verified in this milestone; the workflow is not production-ready."
     })
   })
 ]);
