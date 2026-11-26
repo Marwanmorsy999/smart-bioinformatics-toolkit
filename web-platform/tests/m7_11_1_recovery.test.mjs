@@ -54,7 +54,7 @@ function json(body, status = 200) {
 // Fixture Galaxy server: status, read-only job outputs, IQ-TREE submission,
 // history contents and dataset text. A MAFFT POST is deliberately NOT routed:
 // if any test triggers one, the assertion on toolPosts below fails loudly.
-function makeRecoveryStub({ jobState = "ok", outputs = DEFAULT_OUTPUTS,
+function makeRecoveryStub({ jobState = "ok", outputs = DEFAULT_OUTPUTS, jobOutputs = null,
   alignmentContent = ALIGNMENT, treeContent = TREE } = {}) {
   const calls = [];
   const schemaFor = (id) => ({
@@ -103,7 +103,8 @@ function makeRecoveryStub({ jobState = "ok", outputs = DEFAULT_OUTPUTS,
     if (url.includes(`/api/jobs/${FIX.providerJobId}/outputs`)) return json(outputs);
     if (url.includes("/api/jobs/")) {
       const id = url.slice(url.lastIndexOf("/") + 1);
-      return json({ id, state: jobState, history_id: FIX.historyId });
+      return json({ id, state: jobState, history_id: FIX.historyId,
+        ...(jobOutputs ? { outputs: jobOutputs } : {}) });
     }
     if (url.includes("io_details=true")) {
       const decoded = decodeURIComponent(url);
@@ -445,6 +446,54 @@ test("FIXTURE resume by provider job id: UUID-only output resolves to the verifi
   assert.equal(toolPosts.length, 1, JSON.stringify(toolPosts));
   assert.match(toolPosts[0].body.tool_id, /iqtree/i);
   assert.doesNotMatch(JSON.stringify(toolPosts), /mafft/i, "no MAFFT submission");
+});
+
+test("FIXTURE resume by provider job id: job-detail outputAlignment recovers the real FASTA HDA", async (t) => {
+  // FIXTURE: /api/jobs/{id}/outputs has only an identity-less association, but
+  // GET /api/jobs/{id} exposes outputs.outputAlignment with a real HDA id.
+  const outputs = { unknown: { name: "unrecognized", state: "ok" } };
+  const jobOutputs = { outputAlignment: { id: FIX.mafftHda, uuid: FIX.mafftUuid,
+    dataset_id: "102", name: "MAFFT on data 1", state: "ok",
+    extension: "fasta", history_id: FIX.historyId } };
+  const { response, body, stub } = await runWorkflow(t, {
+    payload: { resume_provider_job_id: FIX.providerJobId, history_id: FIX.historyId },
+    stubOptions: { outputs, jobOutputs }
+  });
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(body.workflow_completed, true);
+  assert.equal(body.resume.resumed_from_provider_job, true);
+  assert.equal(body.resume.alignment_hda_id, FIX.mafftHda);
+  assert.equal(body.resume.output_uuid, FIX.mafftUuid);
+  const mafftStep = body.provenance.find((step) => step.step_id === "galaxy_mafft");
+  assert.equal(mafftStep.provider_job_id, FIX.providerJobId);
+  assert.equal(mafftStep.dataset_id, FIX.mafftHda);
+  const iqtreeStep = body.provenance.find((step) => step.step_id === "galaxy_iqtree");
+  assert.equal(iqtreeStep.input_dataset_id, FIX.mafftHda, "IQ-TREE gets the HDA from job details");
+  const toolPosts = stub.calls.filter((call) => call.method === "POST"
+    && call.url.includes("/api/tools") && !call.url.includes("/fetch"));
+  assert.equal(toolPosts.length, 1, JSON.stringify(toolPosts));
+  assert.match(toolPosts[0].body.tool_id, /iqtree/i);
+  assert.doesNotMatch(JSON.stringify(toolPosts), /mafft/i, "no MAFFT POST");
+  assert.equal(stub.calls.some((call) => call.url.includes(`/api/jobs/${FIX.providerJobId}/outputs`)), true);
+});
+
+test("FIXTURE no_usable_alignment_output diagnostic exposes bounded output-name keys", async (t) => {
+  const outputs = { orphan: { name: "unrecognized", state: "ok" } };
+  const jobOutputs = { outputAlignment: { name: "still unrecognized", state: "ok" } };
+  const { response, body, stub } = await runWorkflow(t, {
+    payload: { resume_provider_job_id: FIX.providerJobId, history_id: FIX.historyId },
+    stubOptions: { outputs, jobOutputs }
+  });
+  assert.equal(response.status, 409);
+  assert.equal(body.error_code, "no_usable_alignment_output");
+  assert.deepEqual(body.job_output_keys, ["orphan"]);
+  assert.deepEqual(body.job_detail_output_keys, ["outputAlignment"]);
+  assert.equal(body.recovery_version, "m7111-uuid-resolution");
+  assert.ok(Array.isArray(body.history_artifacts) && body.history_artifacts.length > 0);
+  assert.ok(Array.isArray(body.output_associations));
+  const serialized = JSON.stringify(body) + JSON.stringify(stub.calls);
+  assert.doesNotMatch(serialized, /stub-secret|X-API-Key|ACGTACGTACG|CMD=Put|rid=/i);
+  assert.equal(stub.calls.filter((call) => call.method === "POST").length, 0, "no submission");
 });
 
 test("FIXTURE no_usable_alignment_output diagnostic exposes verified artifacts and recovery marker", async (t) => {

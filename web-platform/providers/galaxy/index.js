@@ -356,6 +356,48 @@ export function createAdapter(env = {}, deps = {}) {
     return result;
   }
 
+  // Normalize a Galaxy job's `outputs` map (or array) into safe association
+  // descriptors. Used by both getJobStatus and the read-only getJobOutputs
+  // fallback; never includes credentials, URLs or dataset content.
+  function normalizeJobOutputAssociations(rawOutputs, historyId = null) {
+    return parseJobOutputs(rawOutputs ?? {}, { historyId }).map((item) => ({
+      id: item.galaxyHdaId,
+      hda_id: item.galaxyHdaId,
+      uuid: item.galaxyDatasetUuid,
+      dataset_id: item.galaxyDatasetId,
+      galaxyHdaId: item.galaxyHdaId,
+      galaxyDatasetId: item.galaxyDatasetId,
+      galaxyDatasetUuid: item.galaxyDatasetUuid,
+      name: item.name ?? null,
+      state: item.state ?? null,
+      extension: item.extension ?? null,
+      history_id: item.historyId || null,
+      valid: item.valid,
+      error: item.error ?? null
+    }));
+  }
+
+  // Keys only (no values), bounded for diagnostics.
+  function outputKeys(rawOutputs) {
+    const source = rawOutputs && typeof rawOutputs === "object" ? rawOutputs : {};
+    return Object.keys(source).map((key) => safeString(key, 200)).filter(Boolean).slice(0, 50);
+  }
+
+  function mergeAssociations(...lists) {
+    const seen = new Set();
+    return lists.flat().filter((item) => {
+      const keys = [item?.galaxyHdaId ?? item?.id, item?.galaxyDatasetUuid ?? item?.uuid,
+        item?.galaxyDatasetId ?? item?.dataset_id]
+        .filter((value) => value !== null && value !== undefined && String(value) !== "")
+        .map(String);
+      // Association-less diagnostics are kept; only real identities dedupe.
+      if (!keys.length) return true;
+      if (keys.some((key) => seen.has(key))) return false;
+      keys.forEach((key) => seen.add(key));
+      return true;
+    });
+  }
+
   function jobResult(jobId, state, historyId, extra = {}) {
     return {
       provider: PROVIDER,
@@ -594,6 +636,11 @@ export function createAdapter(env = {}, deps = {}) {
         const raw = asObject(body);
         const result = jobResult(raw.id ?? jobId, raw.state, raw.history_id);
         result.output.structured.progress = finite(raw.progress) ?? null;
+        // Job details commonly expose the real output HDA in `outputs` even
+        // when /api/jobs/{id}/outputs does not. Read-only, keys only for logs.
+        const detailHistoryId = safeString(raw.history_id, 200) || null;
+        result.output.structured.output_associations = normalizeJobOutputAssociations(raw.outputs, detailHistoryId);
+        result.output.structured.raw_output_keys = outputKeys(raw.outputs);
         result.at = at;
         return result;
       } catch (error) {
@@ -619,38 +666,42 @@ export function createAdapter(env = {}, deps = {}) {
         const reason = availability();
         return { ...failure(PROVIDER, Object.assign(new Error(reason), {
           code: "provider_unavailable", status: 503, retryable: false
-        }), at), provider: PROVIDER, provider_job_id: jobId || null, ok: false, outputs: [], at, reason };
+        }), at), provider: PROVIDER, provider_job_id: jobId || null, ok: false, outputs: [],
+        output_keys: [], job_detail_output_keys: null, at, reason };
       }
       if (!jobId) {
         return { ...failure(PROVIDER, Object.assign(new Error("job_id_required"), {
           code: "validation_error", status: 400, retryable: false
-        }), at), provider: PROVIDER, provider_job_id: null, ok: false, outputs: [], at };
+        }), at), provider: PROVIDER, provider_job_id: null, ok: false, outputs: [],
+        output_keys: [], job_detail_output_keys: null, at };
       }
       try {
         const { body } = await call("GET", `/api/jobs/${encodeURIComponent(jobId)}/outputs`, undefined, ctx);
         const root = asObject(body);
         const historyId = safeString(root.history_id, 200) || null;
-        const outputs = parseJobOutputs(body, { historyId }).map((item) => ({
-          id: item.galaxyHdaId,
-          hda_id: item.galaxyHdaId,
-          uuid: item.galaxyDatasetUuid,
-          dataset_id: item.galaxyDatasetId,
-          // Keep the normalized identity fields intact: a job output may carry
-          // only a persistent UUID / dataset id (no HDA id), which callers must
-          // resolve against verified history contents. No key or URL is added.
-          galaxyHdaId: item.galaxyHdaId,
-          galaxyDatasetId: item.galaxyDatasetId,
-          galaxyDatasetUuid: item.galaxyDatasetUuid,
-          name: item.name ?? null,
-          state: item.state ?? null,
-          extension: item.extension ?? null,
-          history_id: item.historyId || null,
-          valid: item.valid,
-          error: item.error ?? null
-        }));
-        return { provider: PROVIDER, provider_job_id: jobId, ok: true, outputs, at };
+        const outputs = normalizeJobOutputAssociations(body, historyId);
+        const outputKeysFound = outputKeys(body);
+        let jobDetailOutputKeys = null;
+        // Fallback: /outputs can yield only identity-less associations. Job
+        // details normally carry outputs.outputAlignment with a real HDA id.
+        const hasIdentity = (item) => Boolean(item?.valid && (item.id || item.uuid || item.dataset_id));
+        if (!outputs.some(hasIdentity)) {
+          try {
+            const { body: jobBody } = await call("GET", `/api/jobs/${encodeURIComponent(jobId)}`, undefined, ctx);
+            const detail = asObject(jobBody);
+            const detailHistoryId = safeString(detail.history_id, 200) || historyId || null;
+            const detailAssociations = normalizeJobOutputAssociations(detail.outputs, detailHistoryId);
+            jobDetailOutputKeys = outputKeys(detail.outputs);
+            return { provider: PROVIDER, provider_job_id: jobId, ok: true,
+              outputs: mergeAssociations(outputs, detailAssociations),
+              output_keys: outputKeysFound, job_detail_output_keys: jobDetailOutputKeys, at };
+          } catch { /* keep the identity-less /outputs associations */ }
+        }
+        return { provider: PROVIDER, provider_job_id: jobId, ok: true, outputs,
+          output_keys: outputKeysFound, job_detail_output_keys: jobDetailOutputKeys, at };
       } catch (error) {
-        return { ...failure(PROVIDER, error, at), provider: PROVIDER, provider_job_id: jobId, ok: false, outputs: [], at };
+        return { ...failure(PROVIDER, error, at), provider: PROVIDER, provider_job_id: jobId,
+          ok: false, outputs: [], output_keys: [], job_detail_output_keys: null, at };
       }
     },
 
