@@ -43,12 +43,14 @@
 .resume-row label { flex: 1 1 100%; color: var(--ink-2); font-size: var(--fs-300); }
 .resume-row input { flex: 1 1 220px; min-width: 0; font-family: var(--font-mono); }
 
-.input-info, .plan-view, .consent-view, .rid-view, .results-banner, .query-details, .taxonomy-view,
-.warnings-view, .provenance-view { margin-top: var(--space-4); padding: var(--space-4); background: var(--surface-2); border: var(--border-soft); border-radius: var(--radius-3); }
-.input-info[hidden], .plan-view[hidden], .consent-view[hidden], .rid-view[hidden],
-.results-banner[hidden], .results[hidden], .approval-box[hidden], .flow-error[hidden] { display: none; }
-.input-info h3, .plan-view h3, .consent-view h3, .rid-view h3,
-.query-details h3, .taxonomy-view h3, .warnings-view h3, .provenance-view h3 { margin: 0 0 var(--space-3); font-size: var(--fs-500); }
+.input-info, .plan-view, .plan-explanation, .consent-view, .rid-view, .results-banner, .query-details, .taxonomy-view,
+.warnings-view, .provenance-view, .search-overview, .interpretation-view, .best-match-view { margin-top: var(--space-4); padding: var(--space-4); background: var(--surface-2); border: var(--border-soft); border-radius: var(--radius-3); }
+.input-info[hidden], .plan-view[hidden], .plan-explanation[hidden], .consent-view[hidden], .rid-view[hidden],
+.results-banner[hidden], .results[hidden], .approval-box[hidden], .flow-error[hidden],
+.search-overview[hidden], .interpretation-view[hidden], .best-match-view[hidden] { display: none; }
+.input-info h3, .plan-view h3, .plan-explanation h3, .consent-view h3, .rid-view h3,
+.query-details h3, .taxonomy-view h3, .warnings-view h3, .provenance-view h3,
+.search-overview h3, .interpretation-view h3, .best-match-view h3 { margin: 0 0 var(--space-3); font-size: var(--fs-500); }
 .input-info h4, .plan-view h4, .taxonomy-view h4 { margin: var(--space-3) 0 var(--space-1); font-size: var(--fs-300); color: var(--ink-2); }
 .kv-row { display: grid; grid-template-columns: minmax(150px, 220px) minmax(0, 1fr); gap: var(--space-2); padding: var(--space-1) 0; border-bottom: var(--border-soft); font-size: var(--fs-200); }
 .kv-key { font-weight: var(--fw-semibold); color: var(--ink-2); }
@@ -83,6 +85,26 @@
 .query-detail { padding: var(--space-2) 0; border-bottom: var(--border-soft); }
 .query-detail summary { cursor: pointer; font-size: var(--fs-200); font-weight: var(--fw-semibold); }
 .verdict-card { margin-top: var(--space-2); padding: var(--space-3); background: var(--surface); border: var(--border-soft); border-radius: var(--radius-2); }
+/* Plan: the deterministic plan and the optional AI explanation sit beside
+   each other. The explanation is always labelled and never replaces the plan. */
+.plan-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: var(--space-4); align-items: start; }
+.plan-columns > [hidden] { display: none; }
+.plan-explanation p { font-size: var(--fs-200); line-height: var(--lh-body); margin: 0 0 var(--space-2); overflow-wrap: anywhere; }
+.plan-explanation .kv-key { font-size: var(--fs-200); }
+
+/* Structured-results presentation: evidence only, no invented metrics. */
+.search-overview h3, .interpretation-view h3, .best-match-view h3 { margin-bottom: var(--space-2); }
+.interpretation-view p { font-size: var(--fs-200); line-height: var(--lh-body); margin: 0 0 var(--space-2); color: var(--ink-2); }
+#best-hits-table { width: 100%; border-collapse: collapse; font-size: var(--fs-200); }
+#best-hits-table caption { padding: var(--space-2) var(--space-3); text-align: left; color: var(--muted); font-size: var(--fs-200); }
+#best-hits-table th, #best-hits-table td { padding: var(--space-2) var(--space-3); text-align: left; border-bottom: var(--border-soft); vertical-align: top; }
+#best-hits-table th { background: var(--surface-2); color: var(--ink-2); font-weight: var(--fw-bold); }
+#best-hits-table td { overflow-wrap: anywhere; }
+#best-hits-table a { color: var(--accent-strong); text-decoration: underline; }
+.alignment-detail { max-width: 360px; }
+.alignment-detail summary { cursor: pointer; font-weight: var(--fw-semibold); }
+.alignment-block { margin: var(--space-2) 0 0; padding: var(--space-2); overflow-x: auto; background: var(--surface); border: var(--border-soft); border-radius: var(--radius-2); font: var(--fs-200)/var(--lh-snug) var(--font-mono); white-space: pre; }
+
 .flow-error { margin-top: var(--space-4); padding: var(--space-3); color: var(--danger); background: var(--danger-bg); border: var(--border-width) solid var(--danger-line); border-radius: var(--radius-2); font-size: var(--fs-200); }
 .sixteen-main button:disabled { opacity: .5; cursor: not-allowed; }
 .sixteen-main button:disabled:hover { background: var(--surface); border-color: var(--line-strong); color: var(--ink-2); }

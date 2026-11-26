@@ -334,12 +334,20 @@ export function buildStatusParams(rid, env) {
   return withIdentification(params, env);
 }
 
-export function buildResultsParams(rid, env) {
+// CMD=Get results retrieval. The default stays the verified 12-column tabular
+// report (byte-for-byte unchanged). `format: "json2"` selects the officially
+// supported FORMAT_TYPE=JSON2 report and deliberately omits ALIGNMENT_VIEW,
+// which is only meaningful for the tabular Text report.
+export function buildResultsParams(rid, env, { format } = {}) {
   const params = new URLSearchParams();
   params.set("CMD", "Get");
   params.set("RID", rid);
-  params.set("FORMAT_TYPE", "Text");
-  params.set("ALIGNMENT_VIEW", "Tabular");
+  if (format === "json2") {
+    params.set("FORMAT_TYPE", "JSON2");
+  } else {
+    params.set("FORMAT_TYPE", "Text");
+    params.set("ALIGNMENT_VIEW", "Tabular");
+  }
   return withIdentification(params, env);
 }
 
