@@ -289,7 +289,7 @@ function schedulePoll() {
 
 function startCountdown() {
   if (state.countdownTimer !== null) clearInterval(state.countdownTimer);
-  state.countdownTimer = setInterval(() => {
+  const update = () => {
     const waitSubmit = Math.max(0, SUBMIT_THROTTLE_MS - (Date.now() - state.lastSubmitAt));
     const waitStatus = Math.max(0, STATUS_INTERVAL_MS - (Date.now() - state.lastStatusAt));
     if (state.rid) {
@@ -302,7 +302,9 @@ function startCountdown() {
         ? `Submission throttle: ${Math.ceil(waitSubmit / 1000)} s.`
         : "";
     }
-  }, 1000);
+  };
+  update();
+  state.countdownTimer = setInterval(update, 1000);
 }
 
 function renderRid(rid, status) {
@@ -397,9 +399,10 @@ async function checkStatus(manual) {
   } catch (error) {
     setError(error.message || "Could not check status. No results were fetched.");
   } finally {
-    if (state.rid && OPEN_STATUSES.has(state.status)) {
-      ui.checkStatus.disabled = Date.now() - state.lastStatusAt < STATUS_INTERVAL_MS;
-    }
+    // A completed or failed job must never be polled again.
+    ui.checkStatus.disabled = !state.rid
+      || !OPEN_STATUSES.has(state.status)
+      || (Date.now() - state.lastStatusAt) < STATUS_INTERVAL_MS;
   }
 }
 
@@ -407,9 +410,9 @@ ui.checkStatus.addEventListener("click", () => checkStatus(true));
 
 // ------------------------------------------------------------------ step 4
 function detectSchema(tsv) {
-  const header = tsv.split(/\r?\n/).find((line) => line.startsWith("#") || line.includes("\t"));
-  if (header && /\tsacc\t/.test(header) && /\tsscinames\t/.test(header)) return "blastn_local_v1";
-  const data = tsv.split(/\r?\n/).filter((line) => line.trim() && !line.startsWith("#"));
+  const lines = tsv.split(/\r?\n/);
+  if (lines.some((line) => /\tsacc\t/.test(line) && /\tsscinames\t/.test(line))) return "blastn_local_v1";
+  const data = lines.filter((line) => line.trim() && !line.startsWith("#") && !line.startsWith("qseqid"));
   if (!data.length) return "auto";
   const columns = data[0].split("\t").length;
   return columns === 11 ? "extended" : "standard";
@@ -453,7 +456,7 @@ function renderResults() {
   ui.banner.hidden = false;
   ui.banner.className = `results-banner ${state.mockResult ? "synthetic" : "real"}`;
   ui.banner.textContent = state.mockResult
-    ? "SYNTHETIC MOCK DATA — the operator enabled mock mode. This is NOT a real NCBI result and must not be used for biological conclusions."
+    ? "SYNTHETIC / MOCK DATA — a mock marker was detected in the RID or report. This is NOT a real NCBI result and must not be used for biological conclusions."
     : "Real tabular result retrieved from NCBI through /api/blast/results/:rid. Independent interpretation is required.";
 
   const parsed = state.parsed;
