@@ -106,10 +106,22 @@ function bestMatch(candidates, predicate, preferPattern) {
   return matches.find((item) => preferPattern?.test(String(item.name ?? ""))) ?? matches[0] ?? null;
 }
 
+const STORED_KINDS = new Set(["alignment", "tree", "report", "log"]);
+
+// The stored `kind` written by the workflow is authoritative: real Galaxy
+// artifacts have extension-less names such as "MAFFT on dataset 1", which a
+// filename classifier cannot recognise. Fall back to the filename only when
+// no recognised stored kind exists, and always record which basis was used.
+function classifyStoredArtifact(artifact) {
+  const stored = typeof artifact?.kind === "string" ? artifact.kind.trim().toLowerCase() : "";
+  if (STORED_KINDS.has(stored)) return { derived_kind: stored, classification_basis: "stored_kind" };
+  return { derived_kind: classifyPhyloArtifact(artifact).kind, classification_basis: "filename" };
+}
+
 function buildPhyloEvidence(artifacts, reasons) {
   const classified = artifacts.map((artifact) => ({
     ...artifact,
-    derived_kind: classifyPhyloArtifact(artifact).kind
+    ...classifyStoredArtifact(artifact)
   }));
 
   const alignment = bestMatch(classified, (item) => item.derived_kind === "alignment", /mafft|align|aligned/i);
@@ -120,7 +132,9 @@ function buildPhyloEvidence(artifacts, reasons) {
     if (item.derived_kind !== "report") return false;
     return parseIqtreeReport(item.content).available;
   });
-  const report = bestMatch(reportCandidates, () => true, /iqtree/i);
+  // Genuine names are extension-less ("IQ-TREE on dataset 1: Report and Final
+  // Tree"); accept the hyphenated spelling as well as the compact one.
+  const report = bestMatch(reportCandidates, () => true, /iq[\s-]?tree/i);
   const reportText = typeof report?.content === "string" && report.content.trim() ? report.content : null;
   if (!reportText) reasons.push(REASONS.noReport);
   const parsedReport = reportText ? parseIqtreeReport(reportText) : null;
@@ -129,6 +143,7 @@ function buildPhyloEvidence(artifacts, reasons) {
   const startingTrees = treeCandidates
     .filter((item) => /bionj|starting/i.test(String(item.name ?? "")))
     .map((item) => ({ name: item.name, sha256: item.sha256, bytes: item.bytes,
+      derived_kind: item.derived_kind, classification_basis: item.classification_basis,
       source_role: "starting_tree_not_displayed", reason: REASONS.startingTreeNotDisplayed }));
   const finalTree = parsedReport?.final_tree ?? null;
   const displayCandidates = treeCandidates.filter((item) => !/bionj|starting/i.test(String(item.name ?? "")));
@@ -186,15 +201,18 @@ function buildPhyloEvidence(artifacts, reasons) {
 
   return {
     alignment_text: alignmentText,
-    alignment_artifact: alignment ? { name: alignment.name, sha256: alignment.sha256, bytes: alignment.bytes } : null,
+    alignment_artifact: alignment ? { name: alignment.name, sha256: alignment.sha256, bytes: alignment.bytes,
+      derived_kind: alignment.derived_kind, classification_basis: alignment.classification_basis } : null,
     tree_newick: chosen?.text ?? null,
     tree_source: treeSource,
     tree_artifact: chosen?.artifact
-      ? { name: chosen.artifact.name, sha256: chosen.artifact.sha256, bytes: chosen.artifact.bytes } : null,
+      ? { name: chosen.artifact.name, sha256: chosen.artifact.sha256, bytes: chosen.artifact.bytes,
+        derived_kind: chosen.artifact.derived_kind, classification_basis: chosen.artifact.classification_basis } : null,
     starting_trees: startingTrees,
     iqtree_report: reportText,
     iqtree_report_excerpt: reportText ? iqtreeReportExcerpt(reportText) : null,
-    iqtree_report_artifact: report ? { name: report.name, sha256: report.sha256, bytes: report.bytes } : null,
+    iqtree_report_artifact: report ? { name: report.name, sha256: report.sha256, bytes: report.bytes,
+      derived_kind: report.derived_kind, classification_basis: report.classification_basis } : null,
     report_fields: {
       model: parsedReport?.model ?? null,
       log_likelihood: parsedReport?.log_likelihood ?? null,
@@ -253,7 +271,7 @@ export async function handleGetRecovery(request, env, runId) {
           reasons.push(`${dto.name}: ${REASONS.checksumUnavailable}`);
         }
       }
-      artifacts.push({ ...dto, derived_kind: classifyPhyloArtifact(dto).kind, checksum_match: checksumMatch });
+      artifacts.push({ ...dto, ...classifyStoredArtifact(dto), checksum_match: checksumMatch });
     }
 
     const plan = planRow ? parseJson(planRow.plan_json) : null;

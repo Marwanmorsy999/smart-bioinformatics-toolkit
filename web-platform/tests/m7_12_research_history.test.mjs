@@ -77,6 +77,61 @@ function artifactRows() {
   ];
 }
 
+// FIXTURE shaped exactly like the LIVE staging run's stored artifacts: Galaxy
+// dataset names have NO filename extensions, so only the stored `kind` can
+// classify them. Content is synthetic test text, not live scientific output.
+const LIVE_NAMES = Object.freeze({
+  alignment: "MAFFT on dataset 1",
+  report: "IQ-TREE on dataset 1: Report and Final Tree",
+  mlTree: "MaxLikelihood Tree",
+  bionjTree: "BIONJ Tree"
+});
+const LIVE_HEADERS = [
+  ">NR_115348.1 Francisella tularensis subsp. holarctica OSU18",
+  ">NR_074666.1 Francisella tularensis subsp. tularensis SCHU S4",
+  ">NR_074665.1 Francisella novicida U112",
+  ">NR_043278.1 Francisella philomiragia noatunensis",
+  ">NR_029362.1 Francisella tularensis subsp. holarctica LVS"
+];
+// FIXTURE: five equal-length records of 1526 columns, matching the live
+// alignment shape (the sequence bodies are NOT the real bases).
+const LIVE_ALIGNMENT = LIVE_HEADERS
+  .map((header) => `${header}\n${"ACGTACGTAC".repeat(153).slice(0, 1526)}`)
+  .join("\n");
+// FIXTURE: the final ML tree is far into a 34KB-shaped report, as in the live
+// run; parseIqtreeReport must receive the FULL stored content, not a prefix.
+const LIVE_REPORT = [
+  "Model selection done by AIC.",
+  "Best-fit model according to AIC: TPM3u+F+I",
+  "",
+  "Model             LogL         AIC          BIC",
+  "TPM3u+F+I      -2197.6120     4411.224     4430.118",
+  "",
+  "x".repeat(30000),
+  "Tree in newick format:",
+  "",
+  FINAL_TREE,
+  "NOTE: Tree is UNROOTED although outgroup taxon 'NR_115348.1' is drawn at root",
+  "UFboot: 1000 replicates; SH-aLRT: 1000 replicates"
+].join("\n");
+
+function liveShapedArtifactRows() {
+  return [
+    { public_id: "art_0000000000000011", run_id: RUN_ID, name: LIVE_NAMES.alignment, kind: "alignment",
+      storage_ref: null, sha256: sha256(LIVE_ALIGNMENT), bytes: bytes(LIVE_ALIGNMENT), mime: "text/plain",
+      content: LIVE_ALIGNMENT, created_at: CREATED_AT },
+    { public_id: "art_0000000000000012", run_id: RUN_ID, name: LIVE_NAMES.report, kind: "report",
+      storage_ref: null, sha256: sha256(LIVE_REPORT), bytes: bytes(LIVE_REPORT), mime: "text/plain",
+      content: LIVE_REPORT, created_at: CREATED_AT },
+    { public_id: "art_0000000000000013", run_id: RUN_ID, name: LIVE_NAMES.mlTree, kind: "tree",
+      storage_ref: null, sha256: sha256(FINAL_TREE), bytes: bytes(FINAL_TREE), mime: "text/plain",
+      content: FINAL_TREE, created_at: CREATED_AT },
+    { public_id: "art_0000000000000014", run_id: RUN_ID, name: LIVE_NAMES.bionjTree, kind: "tree",
+      storage_ref: null, sha256: sha256(STARTING_TREE), bytes: bytes(STARTING_TREE), mime: "text/plain",
+      content: STARTING_TREE, created_at: CREATED_AT }
+  ];
+}
+
 function jobRows() {
   const stepIds = ["upload_input", "galaxy_mafft", "galaxy_iqtree", "retrieve_outputs",
     "validate_alignment", "validate_tree", "generate_report"];
@@ -95,14 +150,14 @@ function jobRows() {
   })).map((row, index) => index === 0 ? { ...row, public_id: RUN_ID } : row);
 }
 
-function storedRunFixture({ withArtifacts = true, plan = true } = {}) {
+function storedRunFixture({ withArtifacts = true, plan = true, artifacts = null } = {}) {
   const initial = {
     plans: plan ? [{ public_id: PLAN_ID, request_id: "req_0000000000000001", version: 1,
       plan_json: JSON.stringify({ goal: "Infer relationships among five Francisella 16S sequences", steps: [
         { id: "step_1", tool_id: MAFFT_ID, order: 1 }, { id: "step_2", tool_id: IQTREE_ID, order: 2 }
       ] }), created_at: CREATED_AT }] : [],
     jobs: jobRows(),
-    artifacts: withArtifacts ? artifactRows() : []
+    artifacts: artifacts ?? (withArtifacts ? artifactRows() : [])
   };
   const { db, state } = createFakeD1AI(initial);
   return { db, state, env: mockAIEnv(db) };
@@ -211,6 +266,65 @@ test("SERVER: genuine-shaped stored run is recovered as evidence, with recompute
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("SERVER: live-shaped extension-less artifacts are classified from stored kind (no filename guessing)", async () => {
+  const { env, state } = storedRunFixture({ artifacts: liveShapedArtifactRows() });
+  const originalFetch = globalThis.fetch;
+  let toolPosts = 0;
+  globalThis.fetch = async (_input, init = {}) => {
+    if (String(init.method ?? "GET").toUpperCase() !== "GET") toolPosts += 1;
+    throw new Error("recovery must not submit or call a tool");
+  };
+  try {
+    const response = await handleGetRecovery(new Request(`https://test.example/api/ai/runs/${RUN_ID}/recovery`), env, RUN_ID);
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    const byName = (name) => body.artifacts.find((artifact) => artifact.name === name);
+
+    // The authoritative stored kind wins over the extension-less filename.
+    assert.deepEqual(Object.values(LIVE_NAMES).map((name) => byName(name).derived_kind),
+      ["alignment", "report", "tree", "tree"]);
+    assert.ok(body.artifacts.every((artifact) => artifact.classification_basis === "stored_kind"));
+    assert.equal(body.artifacts.some((artifact) => artifact.derived_kind === "other"), false);
+    assert.equal(byName(LIVE_NAMES.alignment).derived_kind, "alignment");
+    assert.equal(byName(LIVE_NAMES.report).derived_kind, "report");
+    assert.equal(byName(LIVE_NAMES.mlTree).derived_kind, "tree");
+    assert.equal(byName(LIVE_NAMES.bionjTree).derived_kind, "tree");
+
+    assert.equal(body.phylo.alignment_text, LIVE_ALIGNMENT);
+    assert.equal(body.phylo.alignment_text.split(/^>/m).length - 1, 5, "five FASTA headers");
+    assert.equal(body.phylo.alignment_artifact.name, LIVE_NAMES.alignment);
+    assert.equal(body.phylo.alignment_artifact.classification_basis, "stored_kind");
+    assert.equal(body.phylo.tree_newick, FINAL_TREE);
+    assert.notEqual(body.phylo.tree_newick, STARTING_TREE);
+    assert.equal(body.phylo.tree_artifact.name, LIVE_NAMES.mlTree);
+    assert.equal(body.phylo.metrics.tree.tip_count, 5);
+    assert.equal(body.phylo.iqtree_report, LIVE_REPORT, "full stored report reaches the parser and the payload");
+    assert.equal(body.phylo.iqtree_report_artifact.name, LIVE_NAMES.report);
+    assert.ok(body.phylo.iqtree_report_excerpt, "report excerpt is present");
+    assert.match(body.phylo.iqtree_report_excerpt, /Tree in newick format/);
+    assert.equal(body.phylo.metrics.alignment.sequence_count, 5);
+    assert.equal(body.phylo.metrics.alignment.alignment_length, 1526);
+    assert.equal(body.phylo.metrics.basis, "recomputed_from_original_stored_artifacts");
+    assert.ok(body.artifacts.every((artifact) => artifact.checksum_match === true));
+    assert.deepEqual(body.phylo.starting_trees.map((tree) => tree.name), [LIVE_NAMES.bionjTree]);
+    assert.equal(body.phylo.starting_trees[0].source_role, "starting_tree_not_displayed");
+    assert.equal(toolPosts, 0);
+    assert.ok(state.calls.every((call) => call.kind === "all"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  // Unrecognised/missing kind falls back to the filename, and says so.
+  const fallbackRows = liveShapedArtifactRows().map((row) => row.name === LIVE_NAMES.alignment
+    ? { ...row, name: "MAFFT alignment.fasta", kind: "unrecognised" } : row);
+  const fallback = storedRunFixture({ artifacts: fallbackRows });
+  const fallbackResponse = await handleGetRecovery(new Request(`https://test.example/api/ai/runs/${RUN_ID}/recovery`), fallback.env, RUN_ID);
+  const fallbackBody = await fallbackResponse.json();
+  const fallbackArtifact = fallbackBody.artifacts.find((artifact) => artifact.name === "MAFFT alignment.fasta");
+  assert.equal(fallbackArtifact.classification_basis, "filename");
+  assert.equal(fallbackArtifact.derived_kind, "alignment");
 });
 
 test("SERVER: checksum mismatches, invalid/missing runs and absent fields are reported honestly", async () => {
