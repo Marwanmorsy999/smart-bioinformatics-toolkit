@@ -24,6 +24,12 @@ const TERMINAL_STATUSES = new Set(["complete", "failed", "error", "unavailable",
 // `status_conflict` enum stays in the API and a concise details area, never in
 // ordinary copy.
 const STATUS_CONFLICT_COPY = "NCBI may occasionally return inconsistent status information. When this happens, monitoring stops and the request is held for verification. No scientific result is shown until the platform retrieves and validates a real results file.";
+// Ambiguous submission: NCBI did not return a valid RID. Deliberately honest —
+// no raw provider error, no job id, no retry button and no invented result.
+const SUBMISSION_UNKNOWN_COPY = "NCBI did not return a request ID. The platform cannot confirm whether a job was created, so there is no request to monitor and no result was invented. The one-time consent was consumed and no automatic retry was made.";
+const SUBMISSION_UNKNOWN_DIAGNOSTICS_COPY = " Diagnostic details were recorded for support; contact support with your submission time if follow-up is needed.";
+const SUBMISSION_UNKNOWN_NOTE = "Status unknown — no request ID is available, nothing is being monitored. Review the input and obtain a fresh approval before trying again; no blind retry was performed.";
+const SUBMISSION_UNKNOWN_DIAGNOSTICS_NOTE = " Diagnostics were recorded for support.";
 const RESULT_ENDPOINT = "/api/blast/results/";
 const RID_STORAGE_KEY = "m7_6_blast_rid";
 
@@ -535,7 +541,7 @@ ui.submit.addEventListener("click", async () => {
   }
   ui.submit.disabled = true;
   try {
-    const data = await jsonOrThrow(await fetch("/api/blast/submit", {
+    const submitResponse = await fetch("/api/blast/submit", {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       credentials: "same-origin",
@@ -545,7 +551,27 @@ ui.submit.addEventListener("click", async () => {
         program: state.consent.program,
         consent_token: state.consent.token
       })
-    }));
+    });
+    const data = await submitResponse.json().catch(() => ({}));
+    if (!submitResponse.ok) {
+      if (data?.code === "submission_unknown") {
+        // Typed ambiguous state: do not surface the raw provider error, do not
+        // offer a blind retry, and do not leave a RID in sessionStorage. Claim
+        // diagnostics only when the server confirms they were recorded.
+        const diagnosticsAvailable = data?.diagnostics_available === true;
+        const copy = diagnosticsAvailable
+          ? SUBMISSION_UNKNOWN_COPY + SUBMISSION_UNKNOWN_DIAGNOSTICS_COPY
+          : SUBMISSION_UNKNOWN_COPY;
+        const note = diagnosticsAvailable
+          ? SUBMISSION_UNKNOWN_NOTE + SUBMISSION_UNKNOWN_DIAGNOSTICS_NOTE
+          : SUBMISSION_UNKNOWN_NOTE;
+        setError(copy);
+        ui.submitNote.textContent = note;
+        return;
+      }
+      const retry = submitResponse.status === 429 ? submitResponse.headers.get("Retry-After") : null;
+      throw new Error(`${data.error || `Request failed (HTTP ${submitResponse.status}).`}${retry ? ` Retry in ${retry} s.` : ""}`);
+    }
     state.rid = data.rid;
     state.status = data.status ?? "queued";
     // RTOE: provider-estimated seconds to completion; only a finite number.
