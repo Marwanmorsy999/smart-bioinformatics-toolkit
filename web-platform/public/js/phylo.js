@@ -280,7 +280,7 @@ function renderProgress(provenance = []) {
   }
 }
 
-function renderMetrics(metrics, labelNormalization = null) {
+function renderMetrics(metrics, labelNormalization = null, treeSource = null) {
   const table = $("phylo-metrics");
   table.replaceChildren();
   const body = document.createElement("tbody");
@@ -314,6 +314,7 @@ function renderMetrics(metrics, labelNormalization = null) {
   add("Rooting status", tree?.rooting?.status);
   add("Rooting basis", tree?.rooting?.basis);
   add("Taxon label mapping", labelNormalization);
+  add("Tree source", treeSource);
   table.append(body);
 }
 
@@ -331,6 +332,12 @@ function renderInterpretation(body) {
     else parts.push("All branch lengths are finite, non-negative and present, so branch-length-aware layout is used.");
     parts.push(`Rooting: ${tree.rooting?.status ?? "unknown"}. ${tree.rooting?.basis ?? ""} No outgroup was invented.`);
   }
+  if (body.tree_source) parts.push(`Displayed tree source: ${body.tree_source}.`);
+  if ((body.tree_artifacts ?? []).length > 1) {
+    parts.push(`Tree-related artifacts retained separately: ${body.tree_artifacts.map((item) => item.name).join(", ")}.`);
+  }
+  const reportNote = body.resume_iqtree?.rooting_note;
+  if (reportNote) parts.push(`Report note (verbatim): ${reportNote}`);
   if ((body.metrics?.warnings ?? []).length) {
     parts.push(`Warnings: ${body.metrics.warnings.join(", ")}. These are retained as evidence, not silently corrected.`);
   }
@@ -462,7 +469,7 @@ $("phylo-run").addEventListener("click", async () => {
       ? `Run ${body.run_id}: outputs validated with warnings ${(body.validation.warnings ?? []).join(", ")}.`
       : `Run ${body.run_id}: workflow outputs validated (alignment and tree checks passed).`;
   $("phylo-results").hidden = false;
-  renderMetrics(body.metrics, body.validation?.label_normalization);
+  renderMetrics(body.metrics, body.validation?.label_normalization, body.tree_source);
   renderInterpretation(body);
   $("phylo-provenance").textContent = JSON.stringify(body.provenance ?? [], null, 2);
   $("phylo-validation").textContent = `Alignment: ${body.validation?.alignment?.valid ? "PASS" : "FAIL"}; Tree: ${body.validation?.tree?.valid ? "PASS" : "FAIL"}. Retrieval: ${(body.validation?.retrieval_errors ?? []).length} issue(s) recorded.`;

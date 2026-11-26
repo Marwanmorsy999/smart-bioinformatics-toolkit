@@ -210,7 +210,12 @@ test("FIXTURE UI: negative ML length warning draws a cladogram and reports hones
     metrics: { ...RUN_RESPONSE.metrics, warnings: ["tree_negative_branch_lengths"],
       tree: { ...RUN_RESPONSE.metrics.tree, branch_length_valid: true,
         branch_length_nonnegative: false, usable_for_length_layout: false,
-        branch_lengths: { invalid_count: 0, negative_count: 1 } } }
+        branch_lengths: { invalid_count: 0, negative_count: 1 } } },
+    tree_source: "iqtree_report_final_tree",
+    tree_artifacts: [
+      { name: "IQ-TREE treefile", checksum: "a".repeat(64) },
+      { name: "starting tree.nhx", checksum: "b".repeat(64) }
+    ]
   };
   const { page, errors } = await openPage(withWarning);
   await loadFasta(page, FASTA);
@@ -223,6 +228,8 @@ test("FIXTURE UI: negative ML length warning draws a cladogram and reports hones
   assert.match(await page.locator(".phylo-layout-mode").innerText(), /cladogram/i);
   assert.match(await page.locator("#phylo-metrics").innerText(), /Negative branch lengths[\s\S]*1/);
   assert.match(await page.locator("#phylo-interpretation").innerText(), /negative/i);
+  assert.match(await page.locator("#phylo-metrics").innerText(), /Tree source[\s\S]*iqtree_report_final_tree/);
+  assert.match(await page.locator("#phylo-interpretation").innerText(), /retained separately[\s\S]*starting tree\.nhx/);
   assert.equal(await page.locator("#phylo-tree svg .phylo-tip").count(), 3);
   assert.deepEqual(errors, []);
   await page.close();

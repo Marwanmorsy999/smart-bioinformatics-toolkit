@@ -64,30 +64,47 @@ export function classifyPhyloArtifact(artifact = {}) {
 // returned comes from the supplied text; absent fields stay null, never guessed.
 export function parseIqtreeReport(text) {
   const source = String(text ?? "");
-  const empty = { model: null, log_likelihood: null, support: null, support_settings: [], available: false };
+  const empty = { model: null, log_likelihood: null, support: null, support_settings: [],
+    final_tree: null, rooting_note: null, available: false };
   if (!source.trim()) return empty;
   const capture = (pattern) => {
     const match = source.match(pattern);
     return match ? match[1].trim() : null;
   };
-  // Real IQ-TREE reports use several phrasings, e.g.
-  // "Best-fit model according to BIC: TPM3u+F+I" and plain "Model: TPM3u+F+I".
-  const model = capture(/(?:^|\n)[^\n]*?(?:Best-fit model|Model of substitution|Substitution model|Model)(?:[^\n:]{0,80})?\s*:\s*([^\r\n]+)/i);
-  const likelihoodText = capture(/Log-likelihood\s*:\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)/i);
+  // Prefer the real "Best-fit model according to AIC/BIC:" line, then a plain
+  // "Model:" line. Anchoring to the line start prevents a citation/author line
+  // that merely mentions a model from ever being captured.
+  const bestFit = capture(/(?:^|\n)[ \t]*Best-fit model according to (?:AIC|BIC)[^\n:]*:[ \t]*([^\r\n]+)/i);
+  const plainModel = capture(/(?:^|\n)[ \t]*Model[ \t]*:[ \t]*([^\r\n]+)/i);
+  const substitutionModel = capture(/(?:^|\n)[ \t]*Model of substitution[ \t]*:[ \t]*([^\r\n]+)/i);
+  const model = bestFit ?? plainModel ?? substitutionModel;
+  let likelihoodText = capture(/Log-likelihood[ \t]*:[ \t]*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)/i);
+  // No explicit line: use the selected model's own row in the model score
+  // table (e.g. "TPM3u+F+I  -2197.612 ..."). Never guess a column otherwise.
+  if (likelihoodText === null && model) {
+    const escaped = model.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    likelihoodText = capture(new RegExp(`(?:^|\\n)[ \\t]*${escaped}[ \\t]+([-+]?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][-+]?\\d+)?)`, "i"));
+  }
   const likelihood = likelihoodText === null ? null : Number(likelihoodText);
-  const support = capture(/((?:^|\n)[^\n]*?(?:UFboot|SH-aLRT|bootstrap support|support values)[^\r\n]*)/i);
+  const support = capture(/((?:^|\n)[^\n]*?(?:UFboot|SH-aLRT|bootstrap|replicates)[^\r\n]*)/i);
   // Real support settings from the file only; no defaults are invented.
   const supportSettings = source.split(/\r?\n/)
-    .filter((line) => /(UFboot|SH-aLRT|bootstrap|replicates|support)/i.test(line))
+    .filter((line) => /(UFboot|SH-aLRT|bootstrap|replicates)/i.test(line))
     .slice(0, 5)
     .map((line) => safeString(line, 200))
     .filter(Boolean);
+  // The FINAL ML tree is printed in the report; a separately downloaded .nhx
+  // can be the BIONJ starting tree and must not silently replace it.
+  const finalTree = capture(/(?:^|\n)[ \t]*Tree in newick format[ \t]*:[ \t]*([^\r\n]+)/i);
+  const rootingNote = capture(/((?:^|\n)[^\n]*?NOTE:[^\r\n]*UNROOTED[^\r\n]*)/i);
   return {
     model: model ? model.slice(0, 200) : null,
     log_likelihood: likelihood !== null && Number.isFinite(likelihood) ? likelihood : null,
     support: support ? support.slice(0, 300) : null,
     support_settings: supportSettings,
-    available: Boolean(model || support || supportSettings.length
+    final_tree: finalTree ? finalTree.slice(0, 2000) : null,
+    rooting_note: rootingNote ? rootingNote.slice(0, 300) : null,
+    available: Boolean(model || support || supportSettings.length || finalTree || rootingNote
       || (likelihood !== null && Number.isFinite(likelihood)))
   };
 }
@@ -196,8 +213,10 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
   let iqtreeResumeState = null;
   let recoveredIqtree = null;
   let recoveredIqtreeRecord = null;
-  let recoveredIqtreeReport = { model: null, log_likelihood: null, support: null, support_settings: [], available: false };
+  let recoveredIqtreeReport = { model: null, log_likelihood: null, support: null, support_settings: [],
+    final_tree: null, rooting_note: null, available: false };
   let recoveredIqtreeExcerpt = null;
+  let displayedTreeSource = null;
 
   function resumeError(message, errorCode, status = 409, extra = {}) {
     return jsonResponse({
@@ -680,6 +699,15 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
     }
     const selectedIds = new Set([selected.alignment?.id, selected.tree?.id, selected.report?.id,
       ...selected.logs.map((item) => item.id)].filter(Boolean));
+    if (recoveredIqtree) {
+      // A separately stored .nhx (e.g. the BIONJ starting tree) is evidence in
+      // its own right; keep and label it even when the report holds the final tree.
+      for (const item of outputArtifacts) {
+        if (/\.nhx\b/i.test(String(item.name ?? "")) || /^nhx$/i.test(String(item.type ?? ""))) {
+          selectedIds.add(item.id);
+        }
+      }
+    }
     let ordinal = 0;
     for (const item of outputArtifacts) {
       if (!selectedIds.has(item.id)) continue;
@@ -697,14 +725,17 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
         continue;
       }
       const bytes = new TextEncoder().encode(downloaded.content).length;
+      const checksum = await hashInput(downloaded.content);
+      const isNhkArtifact = /\.nhx\b/i.test(String(item.name ?? "")) || /^nhx$/i.test(String(item.type ?? ""));
       retrievedFiles.push({ dataset_id: item.id, hda_id: item.id, name: item.name, kind,
         extension: item.type ?? null, retrieved_at: retrievedAt, retrieval_order: ordinal,
-        tool_version: toolVersion, source_step: sourceStep, bytes });
+        tool_version: toolVersion, source_step: sourceStep, bytes, checksum,
+        ...(isNhkArtifact ? { source_role: "starting_tree_not_displayed" } : {}) });
       // Artifact rows are keyed to the AI job id so the existing
-      // GET /api/ai/runs/:jobId endpoint can reopen them.
+      // GET /api/ai/runs/:jobId endpoint can reopen them. Each real artifact
+      // keeps its own name and checksum, including the BIONJ .nhx file.
       await insertRow(db, SQL.insertArtifact, [makeId("art", idFactory), jobIds.galaxy_iqtree ?? runId, item.name, kind,
-        `galaxy:${item.id}`, await hashInput(downloaded.content), bytes,
-        "text/plain", downloaded.content, retrievedAt]);
+        `galaxy:${item.id}`, checksum, bytes, "text/plain", downloaded.content, retrievedAt]);
 
       if (kind === "alignment" && item.id === selected.alignment?.id) {
         const check = validateAlignment(downloaded.content);
@@ -734,8 +765,39 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
           recoveredIqtreeRecord.log_likelihood = recoveredIqtreeReport.log_likelihood;
           recoveredIqtreeRecord.support = recoveredIqtreeReport.support;
           recoveredIqtreeRecord.support_settings = recoveredIqtreeReport.support_settings;
+          recoveredIqtreeRecord.final_tree = recoveredIqtreeReport.final_tree;
+          recoveredIqtreeRecord.rooting_note = recoveredIqtreeReport.rooting_note;
         }
+        retrievedFiles[retrievedFiles.length - 1].report_fields = {
+          model: recoveredIqtreeReport.model,
+          log_likelihood: recoveredIqtreeReport.log_likelihood,
+          final_tree_present: Boolean(recoveredIqtreeReport.final_tree)
+        };
         recoveredIqtreeExcerpt = iqtreeReportExcerpt(downloaded.content);
+      }
+    }
+    // The report's exact final ML tree wins over a starting-tree artifact; it
+    // is used ONLY if it is parseable. Otherwise the downloaded treefile stays
+    // the displayed tree with an explicit source label.
+    if (recoveredIqtreeReport.final_tree) {
+      try {
+        parseNewick(recoveredIqtreeReport.final_tree);
+        treeText = recoveredIqtreeReport.final_tree;
+        displayedTreeSource = "iqtree_report_final_tree";
+      } catch (e) {
+        retrievalErrors.push({ reason: `iqtree_report_final_tree_unparseable: ${e?.message ?? e}; displayed tree falls back to the downloaded treefile` });
+        displayedTreeSource = treeText ? "downloaded_treefile" : null;
+      }
+    } else if (treeText) {
+      displayedTreeSource = "downloaded_treefile";
+    }
+    // Label starting-tree artifacts OUTSIDE the try: the fallback path must be
+    // labelled too, so no tree is ever displayed without an explicit source.
+    if (displayedTreeSource) {
+      for (const file of retrievedFiles) {
+        if (file.kind === "tree" || file.source_role === "starting_tree_not_displayed") {
+          file.source_role = "starting_tree_not_displayed";
+        }
       }
     }
     if (!alignmentText) retrievalErrors.push({ reason: "no_valid_alignment_retrieved" });
@@ -744,6 +806,7 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
       retrievalStartedAt, nowIso(now),
       { dataset_ids: (finalArtifacts.artifacts ?? []).map((item) => item.id),
         files: retrievedFiles, tool_versions: toolVersions, errors: retrievalErrors,
+        tree_source: displayedTreeSource,
         classification: "name_extension_and_output_mapping" });
   } catch (e) {
     failed = e?.message ?? String(e);
@@ -825,6 +888,12 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
     validation, provenance, execution_mode: envExecutionMode(env),
     error: failed,
     tree_newick: treeText, alignment_text: alignmentText,
+    tree_source: displayedTreeSource,
+    tree_artifacts: retrievedFiles
+      .filter((file) => file.kind === "tree" || file.name?.toLowerCase?.().endsWith(".nhx")
+        || file.source_role === "starting_tree_not_displayed")
+      .map((file) => ({ dataset_id: file.dataset_id, name: file.name, extension: file.extension,
+        checksum: file.checksum, bytes: file.bytes, source_role: file.source_role ?? "downloaded_treefile" })),
     metrics: { alignment: alignment.metrics ?? null, tree: tree.metrics ?? null, warnings },
     retrieval: { started_at: retrievalStartedAt,
       files: retrievedFiles, errors: retrievalErrors,
@@ -852,6 +921,9 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
       log_likelihood: recoveredIqtreeReport.log_likelihood,
       support: recoveredIqtreeReport.support,
       support_settings: recoveredIqtreeReport.support_settings,
+      final_tree_present: Boolean(recoveredIqtreeReport.final_tree),
+      rooting_note: recoveredIqtreeReport.rooting_note,
+      tree_source: displayedTreeSource,
       iqtree_report_excerpt: recoveredIqtreeExcerpt,
       resumed_from_provider_job: true
     } : null,
