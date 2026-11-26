@@ -364,7 +364,8 @@ test("FIXTURE resume by provider job id: no_usable_alignment_output returns a sa
   assert.equal(body.provider_job_state, "ok");
   assert.equal(Array.isArray(body.output_associations), true);
   assert.equal(body.output_associations.length, 3);
-  const expectedKeys = ["dataset_id", "extension", "history_id", "id", "name", "state", "usable", "uuid"];
+  const expectedKeys = ["dataset_id", "error", "extension", "galaxy_dataset_id", "galaxy_dataset_uuid",
+    "galaxy_hda_id", "history_id", "id", "name", "state", "usable", "uuid"];
   for (const entry of body.output_associations) {
     assert.deepEqual(Object.keys(entry).sort(), expectedKeys, JSON.stringify(entry));
     assert.equal(typeof entry.usable, "boolean");
@@ -380,6 +381,35 @@ test("FIXTURE resume by provider job id: no_usable_alignment_output returns a sa
   const serialized = JSON.stringify(body) + JSON.stringify(stub.calls);
   assert.doesNotMatch(serialized, /stub-secret|X-API-Key/i);
   assert.doesNotMatch(serialized, /ACGTACGTACG|CMD=Put|rid=/i);
+  assert.doesNotMatch(JSON.stringify(body), /"error":\{/, "no raw error object is exposed");
+  assert.equal(stub.calls.filter((call) => call.method === "POST").length, 0, "no submission");
+});
+
+test("FIXTURE resume by provider job id: invalid HDA association exposes safe persistent identity", async (t) => {
+  // FIXTURE: no HDA `id`, so normalizeOutputAssociation marks the association
+  // invalid; its UUID/dataset_id and error reason must still be diagnosable.
+  const outputs = {
+    broken: { uuid: FIX.mafftUuid, dataset_id: "102", name: "MAFFT on data 1",
+      state: "ok", extension: "fasta", history_id: FIX.historyId }
+  };
+  const { response, body, stub } = await runWorkflow(t, {
+    payload: { resume_provider_job_id: FIX.providerJobId, history_id: FIX.historyId },
+    stubOptions: { outputs }
+  });
+  assert.equal(response.status, 409);
+  assert.equal(body.error_code, "no_usable_alignment_output");
+  assert.equal(body.output_associations.length, 1);
+  const entry = body.output_associations[0];
+  assert.equal(entry.error, "missing_or_invalid_hda_id");
+  assert.equal(entry.uuid, FIX.mafftUuid, "normalized UUID fallback is exposed");
+  assert.equal(entry.galaxy_dataset_uuid, FIX.mafftUuid);
+  assert.equal(entry.dataset_id, "102", "normalized dataset id fallback is exposed");
+  assert.equal(entry.galaxy_dataset_id, "102");
+  assert.equal(entry.galaxy_hda_id, null);
+  assert.equal(entry.usable, false);
+  assert.equal(body.history_contents_count, 5);
+  const serialized = JSON.stringify(body) + JSON.stringify(stub.calls);
+  assert.doesNotMatch(serialized, /stub-secret|X-API-Key|ACGTACGTACG|CMD=Put|rid=/i);
   assert.doesNotMatch(JSON.stringify(body), /"error":\{/, "no raw error object is exposed");
   assert.equal(stub.calls.filter((call) => call.method === "POST").length, 0, "no submission");
 });
