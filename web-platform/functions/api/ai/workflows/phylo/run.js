@@ -218,17 +218,29 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
       // Honest, sanitized diagnostic for a genuinely unresolvable job: only
       // association identifiers/metadata and a verified-history count. Never
       // include credentials, URLs, FASTA content or raw provider error objects.
+      // The normalized association's own reason and persistent identities are
+      // included even when it has no usable HDA id, so the operator can resolve
+      // the dataset against the verified history contents.
       const diagnostic = mismatch ? {} : {
-        output_associations: (jobOutputs.outputs ?? []).map((item) => ({
-          id: safeString(item.id, 200) || null,
-          uuid: safeString(item.uuid, 200) || null,
-          dataset_id: safeString(item.dataset_id, 200) || null,
-          name: safeString(item.name, 300) || null,
-          extension: safeString(item.extension, 100) || null,
-          state: safeString(item.state, 80) || null,
-          history_id: safeString(item.history_id, 200) || null,
-          usable: isUsableAssociation(item)
-        })),
+        output_associations: (jobOutputs.outputs ?? []).map((item) => {
+          const hdaId = safeString(item.galaxyHdaId ?? item.hda_id ?? item.id, 200) || null;
+          const datasetId = safeString(item.galaxyDatasetId ?? item.dataset_id, 200) || null;
+          const uuid = safeString(item.galaxyDatasetUuid ?? item.uuid, 200) || null;
+          return {
+            id: hdaId,
+            uuid,
+            dataset_id: datasetId,
+            name: safeString(item.name, 300) || null,
+            extension: safeString(item.extension, 100) || null,
+            state: safeString(item.state, 80) || null,
+            history_id: safeString(item.history_id, 200) || null,
+            usable: isUsableAssociation(item),
+            error: safeString(item.error, 200) || null,
+            galaxy_hda_id: hdaId,
+            galaxy_dataset_id: datasetId,
+            galaxy_dataset_uuid: uuid
+          };
+        }),
         history_contents_count: historyContents?.ok === true ? (historyContents.artifacts ?? []).length : null
       };
       return resumeError(
