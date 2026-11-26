@@ -21,7 +21,10 @@ const UNEQUAL_INPUT = ">taxon_a\nACGTACGTACG\n>taxon_b\nACGTACGTTCGAATC\n>taxon_
 const ALIGNMENT = ">taxon_a\nACGT-ACGTACG\n>taxon_b\nACGTACGTTCGT\n>taxon_c\nACGTTCGTACGT\n";
 const TREE = "(taxon_a:0.1,(taxon_b:0.2,taxon_c:0.3)95/87:0.4);\n";
 // FIXTURE: a genuine-shaped IQ-TREE report with real values to parse.
-const IQ_REPORT = "Model of substitution: GTR+F+R3\nLog-likelihood: -1234.5678\nUFboot: 1000 replicates\n";
+const IQ_REPORT = "Model of substitution: GTR+F+R3\nLog-likelihood: -1234.5678\nUFboot: 1000 replicates\nSH-aLRT test: 1000 replicates\n";
+// FIXTURE: full FASTA headers vs accession-only Newick tips from the real run.
+const FULL_HEADER_FASTA = ">NR_115348.1 Francisella tularensis subsp. holarctica OSU18\nACGTACGTACGT\n>NR_074666.1 Francisella tularensis subsp. tularensis SCHU S4\nACGTACGTTCGT\n>NR_074665.1 Francisella novicida U112\nACGTTCGTACGT\n>NR_043278.1 Francisella philomiragia noatunensis\nACGTTCGTTCGA\n>NR_029362.1 Francisella tularensis subsp. holarctica LVS\nACGTAAGTACGT\n";
+const ACCESSION_TREE = "((NR_115348.1:-0.0070265625,NR_074666.1:0.0070275627):0.016762465,(NR_074665.1:0.0093274489,NR_043278.1:0.057175286):0.0095989406,NR_029362.1:0.13487706);\n";
 
 const FIX = Object.freeze({
   historyId: "11ac94870d0bb33adfdcc31d5164dd84",
@@ -681,8 +684,12 @@ test("FIXTURE: completed IQ-TREE job is recovered read-only with zero tool submi
     provider_job_id: IQ_JOB_ID, provider_job_state: "ok",
     output_ids: [FIX.treeHda, FIX.reportHda, FIX.logHda],
     history_ids: [FIX.historyId], model: "GTR+F+R3", log_likelihood: -1234.5678,
-    support: iqStep.support, resumed_from_provider_job: true
+    support: iqStep.support, support_settings: iqStep.support_settings,
+    iqtree_report_excerpt: body.resume_iqtree.iqtree_report_excerpt,
+    resumed_from_provider_job: true
   });
+  assert.match(body.resume_iqtree.iqtree_report_excerpt, /Log-likelihood/);
+  assert.deepEqual(iqStep.support_settings, ["UFboot: 1000 replicates", "SH-aLRT test: 1000 replicates"]);
   // The real bug: retrieve_outputs must carry a non-null tool id into D1.
   const retrieve = body.provenance.find((step) => step.step_id === "retrieve_outputs");
   assert.equal(retrieve.tool_id, "galaxy:retrieve_outputs");
@@ -706,6 +713,51 @@ test("FIXTURE: non-succeeded IQ-TREE job returns honest 409 with zero submission
   assert.equal(body.resumed_from_provider_job, false);
   assert.match(body.error, /running/);
   assert.equal(stub.calls.filter((call) => call.method === "POST").length, 0, "no submission");
+});
+
+test("FIXTURE: genuine accession tree with negative ML length validates with warnings", async (t) => {
+  const { response, body, stub } = await runWorkflow(t, {
+    payload: { resume_provider_job_id: FIX.providerJobId, history_id: FIX.historyId,
+      resume_iqtree_provider_job_id: IQ_JOB_ID },
+    stubOptions: { alignmentContent: FULL_HEADER_FASTA, treeContent: ACCESSION_TREE,
+      reportContent: IQ_REPORT, iqtreeJobId: IQ_JOB_ID,
+      iqtreeJobOutputs: IQ_OUTPUTS, iqtreeOutputs: IQ_OUTPUTS }
+  });
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(body.workflow_completed, true);
+  assert.equal(body.validation.status, "pass_with_warnings");
+  assert.equal(body.validation.tree.valid, true);
+  assert.deepEqual(body.validation.warnings, ["tree_negative_branch_lengths"]);
+  assert.equal(body.validation.label_normalization, "first_token_accession");
+  assert.deepEqual(body.validation.tree.missing, []);
+  assert.deepEqual(body.validation.tree.unknown, []);
+  assert.equal(body.validation.tree.taxa_normalized.length, 5);
+  assert.equal(body.tree_newick, ACCESSION_TREE);
+  assert.equal(body.metrics.tree.branch_lengths.negative_count, 1);
+  assert.equal(body.metrics.tree.usable_for_length_layout, false, "cladogram fallback");
+  assert.deepEqual(body.metrics.warnings, ["tree_negative_branch_lengths"]);
+  assert.equal(body.resume_iqtree.model, "GTR+F+R3");
+  assert.equal(body.resume_iqtree.log_likelihood, -1234.5678);
+  assert.ok(body.resume_iqtree.support_settings.some((line) => /UFboot/.test(line)));
+  assert.match(body.resume_iqtree.iqtree_report_excerpt, /Log-likelihood: -1234\.5678/);
+  assert.equal(stub.calls.filter((call) => call.method === "POST"
+    && call.url.includes("/api/tools") && !call.url.includes("/fetch")).length, 0, "zero submissions");
+});
+
+test("FIXTURE: absent real report keeps model/likelihood/excerpt null (no invention)", async (t) => {
+  const { response, body, stub } = await runWorkflow(t, {
+    payload: { resume_provider_job_id: FIX.providerJobId, history_id: FIX.historyId,
+      resume_iqtree_provider_job_id: IQ_JOB_ID },
+    stubOptions: { reportContent: "", iqtreeJobId: IQ_JOB_ID,
+      iqtreeJobOutputs: IQ_OUTPUTS, iqtreeOutputs: IQ_OUTPUTS }
+  });
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(body.validation.status, "pass");
+  assert.equal(body.resume_iqtree.model, null);
+  assert.equal(body.resume_iqtree.log_likelihood, null);
+  assert.equal(body.resume_iqtree.iqtree_report_excerpt, null);
+  assert.deepEqual(body.resume_iqtree.support_settings, []);
+  assert.equal(stub.calls.filter((call) => call.method === "POST").length, 0, "zero submissions");
 });
 
 test("FIXTURE: an unavailable recovered tree artifact is never fabricated", async (t) => {
