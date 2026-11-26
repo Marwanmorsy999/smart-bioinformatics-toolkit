@@ -80,6 +80,19 @@
 .history-view .phylo-figure pre { max-height: none; overflow-x: auto; padding: 0; border: 0; background: none; }
 .history-detail:has(#history-detail:not([hidden])) #history-detail-empty { display: none; }
 
+/* M7.13 protein recovery: reuse the existing evidence surfaces. */
+.history-protein { border-top: var(--border-hairline); margin-top: var(--space-7); padding-top: var(--space-4); }
+.history-protein h4 { font-size: var(--fs-300); margin: var(--space-4) 0 var(--space-2); }
+.history-protein .phylo-figure > div { min-height: 4rem; overflow-x: auto; }
+.history-protein .phylo-downloads button {
+  border: var(--border-hairline);
+  border-radius: var(--radius-3);
+  background: var(--surface, #fff);
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  font-size: var(--fs-200);
+}
+
 @media (max-width: 980px) {
   .history-shell { grid-template-columns: minmax(0, 1fr); }
 }

@@ -38,7 +38,11 @@ const TOOL_ENTRY_POINTS = Object.freeze({
   "sequence-stats.profile": Object.freeze({ label: "Open sequence statistics", href: "index.html#tools" }),
   "microbiome-16s.blast-parse": Object.freeze({ label: "Open BLAST analyzer", href: "blast.html" }),
   "microbiome-16s.taxonomy": Object.freeze({ label: "Open taxonomy analyzer", href: "taxonomy.html" }),
-  "ncbi.blastn": Object.freeze({ label: "Open 16S NCBI BLAST workflow", href: "16s.html" })
+  "ncbi.blastn": Object.freeze({ label: "Open 16S NCBI BLAST workflow", href: "16s.html" }),
+  "protein.validate": Object.freeze({ label: "Open protein annotation", href: "protein.html" }),
+  "protein.annotate": Object.freeze({ label: "Open protein annotation", href: "protein.html" }),
+  "protein.get_result": Object.freeze({ label: "Open research history", href: "history.html" }),
+  "protein.get_domain_details": Object.freeze({ label: "Open research history", href: "history.html" })
 });
 
 // Paraphrases of the generated descriptions only. No scientific claim is added.
@@ -52,7 +56,11 @@ const TOOL_PURPOSES = Object.freeze({
   "sequence-stats.profile": "Summarize FASTA records with length, GC%, composition and N50.",
   "microbiome-16s.blast-parse": "Normalize an existing BLAST TSV into parsed hits.",
   "microbiome-16s.taxonomy": "Derive conservative per-query taxonomic verdicts from parsed BLAST hits.",
-  "ncbi.blastn": "Retrieve real NCBI BLASTN evidence for 16S rRNA identification."
+  "ncbi.blastn": "Retrieve real NCBI BLASTN evidence for 16S rRNA identification.",
+  "protein.validate": "Validate protein FASTA/accession input and compute the EBI-style uppercase-ASCII MD5.",
+  "protein.annotate": "Retrieve genuine InterPro evidence for a protein (precomputed matches or an executed job).",
+  "protein.get_result": "Read a stored protein annotation result without re-submitting to a provider.",
+  "protein.get_domain_details": "Inspect a stored protein domain, family or site with its genuine coordinates and evidence."
 });
 
 const copy = (value) => JSON.parse(JSON.stringify(value ?? null));

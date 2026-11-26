@@ -9,6 +9,9 @@
 import { getTool, validateParams } from "../ai/registry.js";
 import { validateFasta } from "../../../public/js/fasta.js";
 import { calculateStatistics } from "../../../public/js/statistics.js";
+import {
+  PROTEIN_ASSISTANT_TOOL_IDS, executeProteinTool, getProteinToolDefinitions
+} from "./protein-tools.js";
 
 export const ASSISTANT_TOOL_IDS = Object.freeze([
   "sequence-stats.validate",
@@ -17,6 +20,10 @@ export const ASSISTANT_TOOL_IDS = Object.freeze([
 
 export const ASSISTANT_TOOL_SOURCE =
   "registry:sequence-stats (implementation: public/js/fasta.js, public/js/statistics.js)";
+
+// M7.13 extends the same allowlisted loop with read-mostly protein evidence
+// tools; they are registered in the authoritative WORKER_TOOLS manifest.
+export { PROTEIN_ASSISTANT_TOOL_IDS, getProteinToolDefinitions, executeProteinTool };
 
 const MAX_FASTA_CHARS = 65536;
 
@@ -39,7 +46,7 @@ function mergedParameters(tool) {
 
 export function getAssistantToolDefinitions() {
   const definitions = [];
-  for (const id of ASSISTANT_TOOL_IDS) {
+  for (const id of [...ASSISTANT_TOOL_IDS, ...PROTEIN_ASSISTANT_TOOL_IDS]) {
     const tool = getTool(id);
     if (!tool) continue; // registry drift: never fabricate a definition
     definitions.push({
@@ -120,7 +127,13 @@ function resultCard(tool, validation, statistics) {
  * `deps` is injectable only for offline tests; production uses the shipped
  * pure functions. No arbitrary function name can reach this code path.
  */
-export function executeTool(name, args, deps = {}) {
+export async function executeTool(name, args, deps = {}) {
+  // Protein capabilities are executed by the dedicated Worker-side executor.
+  // They share this allowlist and the same function-call protocol; no second
+  // chat provider or parallel assistant is introduced.
+  if (PROTEIN_ASSISTANT_TOOL_IDS.includes(name)) {
+    return executeProteinTool(name, args, deps);
+  }
   if (!ASSISTANT_TOOL_IDS.includes(name)) return refusal(name);
   const tool = getTool(name);
   if (!tool) return refusal(name);

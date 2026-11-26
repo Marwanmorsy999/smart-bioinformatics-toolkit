@@ -7,6 +7,7 @@
 // server-side AI-run record, fetched again on every reopen.
 
 import { renderTree } from "./phylo-tree-view.js";
+import { renderProteinViewer } from "./protein-viewer.js";
 
 export const STORAGE_KEY = "sbio.research-history.v1";
 export const HONEST_LABEL = "Browser-local research history — this index lives in this browser and is not cross-device owner-account sync. The actual analysis and original files remain retrievable from the server-side AI-run record.";
@@ -56,7 +57,7 @@ export function sanitizeEntry(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const runId = safeId(raw.run_id);
   if (!runId || !RUN_ID_RE.test(runId)) return null;
-  const workflowType = ["phylo", "16s", "unknown"].includes(raw.workflow_type) ? raw.workflow_type : "unknown";
+  const workflowType = ["phylo", "16s", "protein", "unknown"].includes(raw.workflow_type) ? raw.workflow_type : "unknown";
   const status = STATUSES.has(raw.status) ? raw.status : "unknown";
   const resumeRaw = raw.resume && typeof raw.resume === "object" && !Array.isArray(raw.resume) ? raw.resume : {};
   return {
@@ -71,6 +72,9 @@ export function sanitizeEntry(raw) {
     plan_id: safeId(raw.plan_id),
     workspace_run_id: safeId(raw.workspace_run_id),
     provider_job_ids: sequenceIds(raw.provider_job_ids),
+    // M7.13: only a genuine EBI-style uppercase MD5 key is retained.
+    protein_md5: typeof raw.protein_md5 === "string" && /^[0-9A-Fa-f,]{32,2000}$/.test(raw.protein_md5)
+      ? raw.protein_md5 : null,
     resume: {
       provider_job_id: safeId(resumeRaw.provider_job_id),
       iqtree_provider_job_id: safeId(resumeRaw.iqtree_provider_job_id),
@@ -134,6 +138,7 @@ export function listEntries(entries, filter = "all") {
   switch (filter) {
     case "16s": return sorted.filter((item) => item.workflow_type === "16s");
     case "phylo": return sorted.filter((item) => item.workflow_type === "phylo");
+    case "protein": return sorted.filter((item) => item.workflow_type === "protein");
     case "running": return sorted.filter((item) => item.status === "running");
     case "failed": return sorted.filter((item) => item.status === "failed");
     case "completed": return sorted.filter((item) => item.status === "completed");
@@ -205,6 +210,35 @@ export function capture16sRun(data, options = {}, storage = storageOrNull()) {
   }, storage);
 }
 
+// M7.13: capture only after the annotate endpoint returned a genuine job_
+// id. No run id, MD5, provider job id or result is reconstructed in browser.
+export function captureProteinRun(body, options = {}, storage = storageOrNull()) {
+  const runId = [body?.reopen?.ai_run_id, body?.run_id].find((value) => AI_RUN_ID_RE.test(value));
+  if (!runId) return null;
+  const ids = sequenceIds(options.sequence_ids);
+  const statusValue = String(body?.status ?? "").toLowerCase();
+  let status = "unknown";
+  if (statusValue === "succeeded" || statusValue === "completed") status = "completed";
+  else if (statusValue === "running" || statusValue === "queued") status = "running";
+  else if (statusValue === "failed" || statusValue === "error") status = "failed";
+  const now = new Date().toISOString();
+  const md5 = String(body?.input?.md5 ?? "").toUpperCase();
+  return upsertEntry({
+    run_id: runId,
+    workflow_type: "protein",
+    status,
+    title: titleFor("Protein annotation", options.objective, ids, runId),
+    sequence_ids: ids,
+    created_at: now,
+    completed_at: status === "completed" ? now : null,
+    plan_id: safeId(body?.plan_id),
+    workspace_run_id: safeId(body?.reopen?.workspace_run_id),
+    provider_job_ids: body?.provider_job_id ? [safeId(body.provider_job_id)].filter(Boolean) : [],
+    protein_md5: /^[0-9A-F,]{32,2000}$/.test(md5) ? md5 : null,
+    resume: { provider_job_id: null, iqtree_provider_job_id: null, history_id: null }
+  }, storage);
+}
+
 export function classifyJobStatus(raw) {
   const value = String(raw ?? "").toLowerCase();
   if (/await|action_required|needs_(action|input)/.test(value)) return "Awaiting user action";
@@ -249,8 +283,16 @@ export function initResearchHistory() {
     downloads: $("history-downloads"),
     checksums: $("history-checksums"),
     provider: $("history-provider"),
-    continuation: $("history-continuation")
+    continuation: $("history-continuation"),
+    proteinStatus: $("history-protein-status"),
+    proteinInput: $("history-protein-input"),
+    proteinViewer: $("history-protein-viewer"),
+    proteinNote: $("history-protein-note"),
+    proteinFeatures: $("history-protein-features"),
+    proteinGo: $("history-protein-go"),
+    proteinDownloads: $("history-protein-downloads")
   };
+  let proteinView = null;
   let entries = [];
   let filter = "all";
   let treeView = null;
@@ -463,6 +505,69 @@ export function initResearchHistory() {
     ui.continuation.append(note, link);
   }
 
+  function renderProteinRecovery(recovery, entry) {
+    const protein = recovery?.protein;
+    if (!protein || protein.reason || !protein.proteins?.length) {
+      text(ui.proteinStatus, protein?.reason ?? "No protein evidence was returned by the stored run; nothing was reconstructed.");
+      return;
+    }
+    text(ui.proteinStatus, `Workflow ${recovery.workflow_type} — route ${protein.route_label ?? "not reported"} — ` +
+      `run status ${recovery.status ?? "unknown"} — ${protein.proteins.length} protein(s) read from stored artifacts.`);
+    text(ui.proteinInput, protein.input_fasta ?? "No stored protein input FASTA artifact is available.");
+    const first = protein.proteins[0];
+    try {
+      proteinView = renderProteinViewer(ui.proteinViewer, {
+        protein_length: first.length, features: first.features ?? []
+      });
+      text(ui.proteinNote, `Rendered from ${proteinView.model.tracks.length} stored interval(s) over ` +
+        `${proteinView.model.protein_length ?? "unknown"} residues; no coordinate was generated here.`);
+    } catch (error) {
+      text(ui.proteinNote, `The stored coordinates could not be rendered: ${error?.message ?? error}`);
+    }
+    if (ui.proteinFeatures) {
+      ui.proteinFeatures.replaceChildren();
+      for (const feature of first.features ?? []) {
+        for (const location of feature.locations ?? []) {
+          appendLine(ui.proteinFeatures, `${feature.source ?? "unknown"} ${feature.signature?.accession ?? "no accession"}: ` +
+            `${location.start ?? "?"}–${location.end ?? "?"}` +
+            `${feature.entry?.accession ? ` — entry ${feature.entry.accession}` : " — no integrated entry"}`);
+        }
+      }
+      if (!(first.features ?? []).length) appendLine(ui.proteinFeatures, "No stored features were returned.");
+    }
+    const terms = first.go?.terms ?? [];
+    const releases = protein.releases?.member_databases ?? {};
+    text(ui.proteinGo, `GO terms: ${terms.map((term) => `${term.identifier ?? "no identifier"} ${term.name ?? ""}`).join("; ") || "none reported"}. ` +
+      `Member database releases: ${Object.entries(releases).map(([name, version]) => `${name} ${version}`).join(", ") || "none reported"}. ` +
+      `InterPro release: ${protein.releases?.interpro_release ?? "not reported by the source"}.`);
+    if (ui.proteinDownloads) {
+      ui.proteinDownloads.replaceChildren();
+      for (const artifact of recovery?.artifacts ?? []) {
+        if (!String(artifact?.name ?? "").includes("protein") && !String(artifact?.derived_kind ?? "").startsWith("protein_")) continue;
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = `Download stored ${artifact.name} (${artifact.sha256?.slice(0, 12) ?? "no checksum"})`;
+        button.addEventListener("click", () => {
+          appendLine(ui.checksums, `${artifact.name}: stored SHA-256 ${artifact.sha256 ?? "not available"}; ` +
+            "content is read from the server-side run record.");
+          if (typeof artifact.content !== "string") {
+            setError(`Download failed for ${artifact.name}: stored content is unavailable.`);
+            return;
+          }
+          const url = URL.createObjectURL(new Blob([artifact.content], { type: artifact.mime || "text/plain;charset=utf-8" }));
+          objectUrls.push(url);
+          const anchor = document.createElement("a");
+          anchor.href = url;
+          anchor.download = artifact.name;
+          anchor.click();
+        });
+        const item = document.createElement("li");
+        item.append(button);
+        ui.proteinDownloads.append(item);
+      }
+    }
+  }
+
   async function openEntry(entry) {
     const clean = sanitizeEntry(entry);
     if (!clean) {
@@ -476,9 +581,12 @@ export function initResearchHistory() {
     setError("");
     resetObjectUrls();
     treeView = null;
-    for (const node of [ui.jobs, ui.artifacts, ui.checksums, ui.downloads, ui.provider, ui.continuation, ui.startingTrees]) {
+    proteinView = null;
+    for (const node of [ui.jobs, ui.artifacts, ui.checksums, ui.downloads, ui.provider, ui.continuation,
+      ui.startingTrees, ui.proteinFeatures, ui.proteinDownloads, ui.proteinViewer]) {
       if (node) node.replaceChildren();
     }
+    for (const node of [ui.proteinStatus, ui.proteinInput, ui.proteinNote, ui.proteinGo]) text(node, "");
     text(ui.provenance, "");
     text(ui.alignment, "");
     text(ui.tree, "");
@@ -557,6 +665,8 @@ export function initResearchHistory() {
       appendLine(ui.startingTrees, `${tree.name ?? "unnamed tree"} — ${tree.source_role ?? "starting_tree_not_displayed"}${tree.reason ? ` — ${tree.reason}` : ""}`);
     }
     renderDownloads({ recovery, entry: clean });
+    if (clean.workflow_type === "protein") renderProteinRecovery(recovery, clean);
+    else text(ui.proteinStatus, "This run is not a protein annotation run; no protein fields are reconstructed.");
     renderProviderSection(recovery, clean);
     renderContinuation(recovery, clean);
   }
@@ -582,7 +692,7 @@ export function initResearchHistory() {
 if (typeof window !== "undefined") {
   window.__researchHistory = {
     STORAGE_KEY, HONEST_LABEL, sanitizeEntry, readIndex, loadIndex, saveIndex,
-    upsertEntry, removeEntry, listEntries, capturePhyloRun, capture16sRun, classifyJobStatus
+    upsertEntry, removeEntry, listEntries, capturePhyloRun, capture16sRun, captureProteinRun, classifyJobStatus
   };
   initResearchHistory();
 }

@@ -81,7 +81,8 @@ the Worker-side registry in functions/api/ai/registry.js):
 phylogenetics.validate, phylogenetics.align, phylogenetics.tree,
 phylogenetics.report, phylogenetics.workflow, sequence-stats.validate,
 sequence-stats.profile, microbiome-16s.blast-parse,
-microbiome-16s.taxonomy, ncbi.blastn.
+microbiome-16s.taxonomy, ncbi.blastn, protein.validate, protein.annotate,
+protein.get_result, protein.get_domain_details.
 Use no other tool id. If a needed capability is absent, say it is unavailable
 rather than naming a plausible-sounding nonexistent tool.
 
@@ -109,9 +110,11 @@ const GENERATED_NOTICE =
   "AI-generated phrasing only. No scientific measurement or citation is asserted.";
 
 const TOOL_USE_GUIDANCE = `TOOL USE (server-side guidance; the browser cannot change this)
-- Only the two function tools declared in this request may be called. Never invent a tool id, argument, result or number.
+- Only the function tools declared in this request may be called. Never invent a tool id, argument, result or number.
 - Tool results are real Worker computations. Quote only the values they actually contain, and describe them as unverified tool output, not as scientific truth.
 - ncbi.blastn and every external or approval-gated capability are NOT executable from this chat. You may describe them as catalog capabilities, but any use requires the existing plan approval UI and an explicit, scoped, single-use consent token. Never claim to have executed, approved or consented to them.
+- protein.validate/get_result/get_domain_details read or validate genuine records; protein.annotate may read precomputed InterPro Matches evidence only, but calling it PERSISTS a run record in the server-side AI D1 (a write side-effect). Executed InterProScan 6 jobs require the explicit Protein annotation page action and a configured server-side contact email; never claim one ran from chat.
+- InterPro route labels are distinct: precomputed_reference_annotation is NOT an executed analysis. Member database releases come from source responses; no InterPro release version or job id may be guessed.
 - If a requested value was not returned by a tool, say you cannot determine it. Do not fill gaps with plausible-sounding values.`;
 
 class AssistantError extends Error {
@@ -249,7 +252,7 @@ export async function onStatus(context) {
       auth_ok: reachable ? true : null,
       model_count: list.length,
       selected_model: selected,
-      tool_calling: reachable && getAssistantToolDefinitions().length === 2,
+      tool_calling: reachable && getAssistantToolDefinitions().length > 0,
       tool_calling_source: "worker allowlist; model capability is not advertised by /v1/models",
       model: modelInfo
         ? { id: modelInfo.id, name: modelInfo.name, source: modelInfo.source, discovery_mode: modelInfo.discovery_mode }
@@ -283,7 +286,7 @@ function toolCallId(call, index) {
 
 // Shared by the JSON and SSE paths. Every tool result is a real Worker
 // computation; tool failure is reported to the model as data, never faked.
-async function runToolLoop({ adapter, ctx, messages, useStream, sink }) {
+async function runToolLoop({ adapter, ctx, env, messages, useStream, sink }) {
   const definitions = getAssistantToolDefinitions();
   const toolChoice = definitions.length ? "auto" : undefined;
   const toolActivity = [];
@@ -361,7 +364,7 @@ async function runToolLoop({ adapter, ctx, messages, useStream, sink }) {
         const parsed = JSON.parse(call.function?.arguments ?? "");
         if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) args = parsed;
       } catch { args = {}; }
-      const result = executeTool(call.function?.name, args);
+      const result = await executeTool(call.function?.name, args, { env });
       const event = {
         tool_id: result.tool_id,
         tool_name: safeString(call.function?.name, 200),
@@ -553,7 +556,7 @@ export async function onChat(context) {
 
   if (useStream) {
     return streamResponse(request, async (sink) => {
-      const out = await runToolLoop({ adapter, ctx, messages, useStream: true, sink });
+      const out = await runToolLoop({ adapter, ctx, env, messages, useStream: true, sink });
       if (!out.meta_sent) sink.meta({ model: out.model });
       // Exactly one terminator for the whole loop. If upstream sent [DONE]
       // this relays it; otherwise it is a protocol terminator only — no text
@@ -563,7 +566,7 @@ export async function onChat(context) {
   }
 
   try {
-    const out = await runToolLoop({ adapter, ctx, messages, useStream: false, sink: null });
+    const out = await runToolLoop({ adapter, ctx, env, messages, useStream: false, sink: null });
     return jsonResponse(chatPayload(out, conversationId), 200, request);
   } catch (caught) {
     const classified = classifyError(caught);

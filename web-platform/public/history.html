@@ -27,6 +27,7 @@
       <a href="index.html#tools">Tools</a>
       <a href="workspace.html">Research workspace</a>
       <a href="phylo.html">Phylogenetics</a>
+      <a href="protein.html">Protein annotation</a>
       <a href="16s.html">16S</a>
       <a href="assistant.html">Assistant</a>
       <a href="history.html" aria-current="location">Research history</a>
@@ -58,6 +59,7 @@
             <button type="button" data-history-filter="all" aria-pressed="true">All</button>
             <button type="button" data-history-filter="16s" aria-pressed="false">16S identification</button>
             <button type="button" data-history-filter="phylo" aria-pressed="false">Phylogenetics</button>
+            <button type="button" data-history-filter="protein" aria-pressed="false">Protein annotation</button>
             <button type="button" data-history-filter="running" aria-pressed="false">Running</button>
             <button type="button" data-history-filter="failed" aria-pressed="false">Failed</button>
             <button type="button" data-history-filter="completed" aria-pressed="false">Completed</button>
@@ -103,6 +105,22 @@
             <h3>IQ-TREE report</h3>
             <p><a id="history-report-link" href="#" hidden>Download original IQ-TREE report</a></p>
             <pre id="history-report-excerpt" class="history-report-excerpt"></pre>
+          </div>
+          <div class="history-protein">
+            <h3>Restored protein annotation (server recovery)</h3>
+            <p id="history-protein-status" class="panel-note">No protein run is selected.</p>
+            <h4>Original protein input</h4>
+            <pre id="history-protein-input" class="history-report-excerpt"></pre>
+            <h4>Protein architecture from stored coordinates</h4>
+            <p id="history-protein-note" class="panel-note"></p>
+            <figure class="phylo-figure">
+              <div id="history-protein-viewer" aria-label="Restored protein architecture viewer"></div>
+              <figcaption>Drawn only from feature coordinates in the stored protein annotation artifact.</figcaption>
+            </figure>
+            <ul id="history-protein-features" class="data-list"></ul>
+            <h4>GO evidence and source releases</h4>
+            <p id="history-protein-go"></p>
+            <ul id="history-protein-downloads" class="phylo-downloads"></ul>
           </div>
 
           <h3>Downloads from the original artifacts</h3>

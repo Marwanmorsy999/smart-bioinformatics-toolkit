@@ -15,6 +15,9 @@ import { onRequest as onAiJobResult } from "./functions/api/ai/jobs/[id]/result.
 import { onRequest as onPhyloRun } from "./functions/api/ai/workflows/phylo/run.js";
 import { onRequest as onPhyloStatus } from "./functions/api/ai/workflows/phylo/status.js";
 import { onRequest as onPhyloTool } from "./functions/api/ai/workflows/phylo/tool.js";
+import {
+  proteinHandlers as createProteinHandlers
+} from "./functions/api/protein/workflow.js";
 import { onRequest as onAiJobReport } from "./functions/api/ai/jobs/[id]/report.js";
 import { onRequest as onAiPlan } from "./functions/api/ai/plans/[id]/index.js";
 import { onRequest as onAiPlanApprove } from "./functions/api/ai/plans/[id]/approve.js";
@@ -66,6 +69,8 @@ import { errorResponse } from "./functions/api/ai/_lib.js";
 
 // Stable keys let unit tests inject stubbed handlers without changing the
 // production routing table. The default map is the real onRequest handlers.
+const PROTEIN_HANDLERS = createProteinHandlers();
+
 export const handlers = {
   tools: onTools,
   toolCatalog: onToolCatalog,
@@ -77,6 +82,11 @@ export const handlers = {
   phyloRun: onPhyloRun,
   phyloStatus: onPhyloStatus,
   phyloTool: onPhyloTool,
+  proteinPlan: PROTEIN_HANDLERS.proteinPlan,
+  proteinAnnotate: PROTEIN_HANDLERS.proteinAnnotate,
+  proteinStatus: PROTEIN_HANDLERS.proteinStatus,
+  proteinResult: PROTEIN_HANDLERS.proteinResult,
+  proteinDomains: PROTEIN_HANDLERS.proteinDomains,
   aiJobReport: onAiJobReport,
   aiPlan: onAiPlan,
   aiPlanApprove: onAiPlanApprove,
@@ -181,6 +191,13 @@ const ROUTES = [
   { key: "providers", re: /^\/api\/providers\/?$/, names: [] },
   { key: "providerDetail", re: /^\/api\/providers\/([^/]+)\/?$/, names: ["id"] },
   { key: "aiJobReport", re: /^\/api\/ai\/jobs\/([^/]+)\/report\/?$/, names: ["id"] },
+  // M7.13 protein annotation. Specific paths are static and precede every
+  // generic AI run path; no /api/** path may fall through to a static asset.
+  { key: "proteinPlan", re: /^\/api\/ai\/workflows\/protein\/plan\/?$/, names: [] },
+  { key: "proteinAnnotate", re: /^\/api\/ai\/workflows\/protein\/annotate\/?$/, names: [] },
+  { key: "proteinStatus", re: /^\/api\/ai\/workflows\/protein\/status\/?$/, names: [] },
+  { key: "proteinResult", re: /^\/api\/ai\/workflows\/protein\/result\/?$/, names: [] },
+  { key: "proteinDomains", re: /^\/api\/ai\/workflows\/protein\/domains\/?$/, names: [] },
   { key: "phyloTool", re: /^\/api\/ai\/workflows\/phylo\/tool\/?$/, names: [] },
   { key: "phyloStatus", re: /^\/api\/ai\/workflows\/phylo\/status\/?$/, names: [] },
   { key: "phyloRun", re: /^\/api\/ai\/workflows\/phylo\/run\/?$/, names: [] },

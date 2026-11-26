@@ -56,6 +56,137 @@ export const WORKER_TOOLS = Object.freeze([
       "Parsed similarity is not proof of species identity and is not a clinical diagnosis.",
       "When MOCK_NCBI is enabled by the operator, results are synthetic and are labelled as such; they are never presented as real."
     ]
+  }),
+  // M7.13 protein annotation. Worker-side, versioned capabilities derived from
+  // the real /api/ai/workflows/protein/** handlers. No new chat provider is
+  // introduced; these manifests feed the existing /api/tools/catalog and the
+  // allowlisted assistant tool loop.
+  Object.freeze({
+    "id": "protein.validate",
+    "name": "Protein input validation (UniProt/FASTA)",
+    "description": "Validate a protein FASTA, raw protein sequence or UniProt accession server-side: documented amino-acid alphabet, duplicate ids, length, ambiguous residues and the uppercase-ASCII MD5 used by the InterPro Matches API.",
+    "version": "1.0.0-m7.13",
+    "backend": "worker",
+    "domain": "protein-annotation",
+    "available": true,
+    "unavailable_reason": null,
+    "external_egress": false,
+    "requirements": ["worker:protein/provider.js"],
+    "estimated_seconds": 2,
+    "params_schema": {
+      "type": "object", "additionalProperties": false,
+      "required": ["mode"],
+      "properties": { "mode": { "type": "string", "enum": ["accession", "fasta"] } }
+    },
+    "input_schema": {
+      "type": "object", "required": [],
+      "properties": {
+        "fasta_text": { "type": "string", "maxLength": 200000 },
+        "accession": { "type": "string", "maxLength": 40 },
+        "filename": { "type": "string", "maxLength": 200 }
+      }
+    },
+    "output_schema": {
+      "type": "object", "required": ["validation"],
+      "properties": { "validation": { "type": "object" } }
+    },
+    "references": [],
+    "limitations": [
+      "Ambiguous residues B/J/Z/X/U/O are retained verbatim and never resolved.",
+      "Nucleotide sequences are rejected; this is not a six-frame translation tool.",
+      "No result is claimed from validation alone."
+    ]
+  }),
+  Object.freeze({
+    "id": "protein.annotate",
+    "name": "Protein functional annotation (InterPro evidence)",
+    "description": "Annotate a validated protein from genuine UniProt/InterPro evidence. Route A reads precomputed InterPro Matches and PERSISTS a run record in AI D1 (a write side-effect); Route B submits an executed InterProScan 6 job only when a server-side contact email is configured, and is never auto-submitted from chat. Route labels are never conflated.",
+    "version": "1.0.0-m7.13",
+    "backend": "worker",
+    "domain": "protein-annotation",
+    "available": true,
+    "unavailable_reason": null,
+    "external_egress": true,
+    "requirements": ["binding:AI_DB", "env:INTERPROSCAN_EMAIL (Route B only)"],
+    "estimated_seconds": 30,
+    "params_schema": {
+      "type": "object", "additionalProperties": false,
+      "required": ["route"],
+      "properties": { "route": { "type": "string", "enum": ["precomputed", "iprscan6"] } }
+    },
+    "input_schema": {
+      "type": "object", "required": [],
+      "properties": {
+        "mode": { "type": "string", "enum": ["accession", "fasta"] },
+        "fasta_text": { "type": "string", "maxLength": 200000 },
+        "accession": { "type": "string", "maxLength": 40 },
+        "filename": { "type": "string", "maxLength": 200 },
+        "objective": { "type": "string", "maxLength": 1000 }
+      }
+    },
+    "output_schema": {
+      "type": "object", "required": ["result"],
+      "properties": { "result": { "type": "object" } }
+    },
+    "references": [],
+    "limitations": [
+      "Route B requires INTERPROSCAN_EMAIL; when it is absent the tool fails closed without submitting a job.",
+      "Only one protein per Route B job; small multi-FASTA inputs use Route A.",
+      "Member-database releases come from the response; no InterPro release version is guessed."
+    ]
+  }),
+  Object.freeze({
+    "id": "protein.get_result",
+    "name": "Stored protein annotation result",
+    "description": "Read back a genuine stored protein annotation run by its run id from the AI D1 record. Read-only; never re-submits and never reconstructs missing values.",
+    "version": "1.0.0-m7.13",
+    "backend": "worker",
+    "domain": "protein-annotation",
+    "available": true,
+    "unavailable_reason": null,
+    "external_egress": false,
+    "requirements": ["binding:AI_DB"],
+    "estimated_seconds": 1,
+    "params_schema": {
+      "type": "object", "additionalProperties": false,
+      "required": ["run_id"],
+      "properties": { "run_id": { "type": "string" } }
+    },
+    "input_schema": { "type": "object", "required": [], "properties": {} },
+    "output_schema": {
+      "type": "object", "required": ["result"],
+      "properties": { "result": { "type": "object" } }
+    },
+    "references": [],
+    "limitations": ["A run without a stored result returns a null result with an honest reason."]
+  }),
+  Object.freeze({
+    "id": "protein.get_domain_details",
+    "name": "Stored protein domain details",
+    "description": "Read one stored protein domain/family/site feature by accession from a genuine annotation run, including coordinates, signature source, integrated entry, GO terms and evidence links. Read-only.",
+    "version": "1.0.0-m7.13",
+    "backend": "worker",
+    "domain": "protein-annotation",
+    "available": true,
+    "unavailable_reason": null,
+    "external_egress": false,
+    "requirements": ["binding:AI_DB"],
+    "estimated_seconds": 1,
+    "params_schema": {
+      "type": "object", "additionalProperties": false,
+      "required": ["run_id", "accession"],
+      "properties": {
+        "run_id": { "type": "string" },
+        "accession": { "type": "string", "maxLength": 120 }
+      }
+    },
+    "input_schema": { "type": "object", "required": [], "properties": {} },
+    "output_schema": {
+      "type": "object", "required": ["details"],
+      "properties": { "details": { "type": "object" } }
+    },
+    "references": [],
+    "limitations": ["No feature is synthesised when the accession is absent from the stored run."]
   })
 ]);
 

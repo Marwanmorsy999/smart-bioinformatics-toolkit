@@ -1,0 +1,103 @@
+/* M7.13 protein annotation page. Consumes the shared design tokens; no new
+   visual language, no external assets. */
+
+.protein-view .app-shell { align-items: start; }
+.protein-detail-host { min-width: 0; }
+
+.protein-validation {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0.75rem 0;
+  padding: 0.75rem;
+  border: 1px solid var(--line, #d3dde1);
+  border-radius: 8px;
+  background: var(--surface-2, #f5f8f9);
+  font-size: 0.9rem;
+}
+.protein-validation .is-valid { color: var(--success, #1d6b54); }
+.protein-validation .is-invalid { color: var(--danger, #a23b31); }
+.protein-validation .is-warning { color: var(--caution, #8a5a12); }
+.protein-validation ul { margin: 0.25rem 0 0 1.1rem; }
+
+#protein-route-fieldset label { display: block; margin: 0.35rem 0; font-size: 0.92rem; }
+#protein-route-confirm-group { margin-top: 0.5rem; }
+
+.protein-table-wrap { overflow-x: auto; max-width: 100%; }
+.protein-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+.protein-table th, .protein-table td {
+  padding: 0.45rem 0.55rem;
+  border-bottom: 1px solid var(--line-soft, #e6edef);
+  text-align: left;
+  vertical-align: top;
+}
+.protein-table tbody tr:hover { background: var(--accent-tint, #e6f0f0); }
+.protein-table tbody tr.is-selected { background: var(--accent-tint, #e6f0f0); font-weight: 600; }
+.protein-table button { border: 0; background: none; color: inherit; cursor: pointer; text-align: left; padding: 0; }
+
+.protein-figure { margin: 1rem 0 1.5rem; }
+.protein-figure figcaption { font-size: 0.82rem; color: var(--muted, #566a74); margin-top: 0.35rem; }
+#protein-viewer {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--line-soft, #e6edef);
+  border-radius: 8px;
+  background: var(--surface, #fff);
+  padding: 0.5rem;
+}
+.pv-svg { display: block; width: 100%; min-width: 520px; height: auto; }
+.pv-block, .pv-site { cursor: pointer; }
+.pv-block:focus-visible, .pv-site:focus-visible { outline: 2px solid var(--focus, #0d5254); outline-offset: 2px; }
+.pv-axis { stroke: var(--line-strong, #b3c3c9); stroke-width: 1; }
+.pv-tick { stroke: var(--line-strong, #b3c3c9); stroke-width: 1; }
+.pv-label { fill: var(--muted, #566a74); font-size: 10px; }
+.pv-family { fill: #176b6e; }
+.pv-domain { fill: #2b5b6b; }
+.pv-superfamily { fill: #8a5a12; }
+.pv-site { stroke: #a23b31; stroke-width: 3; }
+.pv-region { fill: #566a74; }
+.pv-disorder { fill: #b3c3c9; }
+.pv-repeat { fill: #5f727b; }
+.pv-other { fill: #334750; }
+
+.protein-detail {
+  border: 1px solid var(--line, #d3dde1);
+  border-left: 3px solid var(--accent, #176b6e);
+  border-radius: 6px;
+  background: var(--surface-2, #f5f8f9);
+  padding: 0.8rem 1rem;
+  font-size: 0.9rem;
+}
+.protein-detail dl { display: grid; grid-template-columns: minmax(9rem, auto) 1fr; gap: 0.3rem 0.8rem; margin: 0.5rem 0; }
+.protein-detail dt { font-weight: 600; }
+.protein-detail dd { margin: 0; overflow-wrap: anywhere; }
+.protein-detail a { color: var(--accent-strong, #0d5254); }
+
+#protein-report section { margin-bottom: 1rem; }
+#protein-report pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--surface-2, #f5f8f9);
+  border: 1px solid var(--line-soft, #e6edef);
+  border-radius: 6px;
+  padding: 0.6rem;
+  margin: 0;
+  max-height: 22rem;
+  overflow: auto;
+}
+.protein-ai-note { font-size: 0.86rem; color: var(--muted, #566a74); }
+.protein-downloads { display: flex; flex-wrap: wrap; gap: 0.5rem; list-style: none; padding: 0; }
+.protein-downloads button {
+  border: 1px solid var(--line, #d3dde1);
+  border-radius: 6px;
+  background: var(--surface, #fff);
+  padding: 0.35rem 0.7rem;
+  cursor: pointer;
+  font-size: 0.86rem;
+}
+.protein-downloads button:focus-visible { outline: 2px solid var(--focus, #0d5254); outline-offset: 2px; }
+.protein-downloads button:disabled { color: var(--faint, #5f727b); cursor: not-allowed; }
+
+@media (max-width: 640px) {
+  #protein-viewer { overflow-x: auto; }
+  .protein-detail dl { grid-template-columns: 1fr; }
+}
