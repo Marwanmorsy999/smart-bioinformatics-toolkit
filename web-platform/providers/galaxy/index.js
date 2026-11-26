@@ -613,6 +613,14 @@ export function createAdapter(env = {}, deps = {}) {
       ctx = args.ctx;
       const jobId = jobIdFrom(request);
       const at = makeNow(ctx);
+      // Same fail-closed boundary as getArtifacts: no fetch at all when the
+      // provider is disabled or unconfigured.
+      if (!enabled || !configured) {
+        const reason = availability();
+        return { ...failure(PROVIDER, Object.assign(new Error(reason), {
+          code: "provider_unavailable", status: 503, retryable: false
+        }), at), provider: PROVIDER, provider_job_id: jobId || null, ok: false, outputs: [], at, reason };
+      }
       if (!jobId) {
         return { ...failure(PROVIDER, Object.assign(new Error("job_id_required"), {
           code: "validation_error", status: 400, retryable: false

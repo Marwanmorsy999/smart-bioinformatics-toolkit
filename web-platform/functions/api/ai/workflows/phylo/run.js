@@ -191,15 +191,27 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
       .filter((item) => inputNames.has(String(item.name ?? "")))
       .map((item) => String(item.id)));
     const fastaExts = new Set(["fasta", "fa", "fna", "fas", "aln", "msa"]);
-    const candidates = (jobOutputs.outputs ?? []).filter((item) => {
-      const ext = String(item.extension ?? "").trim().replace(/^\./, "").toLowerCase();
+    // A name mentioning MAFFT/alignment is NOT enough: a log or report can carry
+    // that name. The declared extension is authoritative, with the file-name
+    // suffix only as an explicit fallback; both are case-insensitive.
+    const fastaExtensionOf = (item) => {
+      const declared = String(item.extension ?? item.file_ext ?? item.type ?? "")
+        .trim().replace(/^\./, "").toLowerCase();
+      if (declared) return declared;
       const name = String(item.name ?? "");
-      const alignmentLike = fastaExts.has(ext) || /alignment|aligned|\bmsa\b|mafft/i.test(name);
+      const dot = name.lastIndexOf(".");
+      return dot > 0 ? name.slice(dot + 1).trim().toLowerCase() : "";
+    };
+    const candidates = (jobOutputs.outputs ?? []).filter((item) => {
+      const name = String(item.name ?? "");
       const okState = ["ok", "success"].includes(String(item.state ?? "").toLowerCase());
       const notInput = !inputIds.has(String(item.id)) && !inputNames.has(name);
-      return item.valid !== false && okState && alignmentLike && notInput;
+      return item.valid !== false && okState && fastaExts.has(fastaExtensionOf(item)) && notInput;
     });
-    const selected = candidates.find((item) => !item.history_id || String(item.history_id) === String(resumeHistoryId));
+    const inHistory = candidates.filter((item) => !item.history_id || String(item.history_id) === String(resumeHistoryId));
+    // Name matching is only a tie-breaker among extension-valid candidates.
+    const alignmentName = (item) => /alignment|aligned|\bmsa\b|mafft/i.test(String(item.name ?? ""));
+    const selected = inHistory.find(alignmentName) ?? inHistory[0] ?? null;
     if (!selected) {
       const mismatch = candidates.length > 0;
       return resumeError(

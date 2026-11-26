@@ -222,6 +222,23 @@ test("FIXTURE Galaxy adapter getJobOutputs: normalized, read-only, no secret exp
   assert.match(stub.calls[0].url, /\/api\/jobs\/.*\/outputs$/);
 });
 
+test("FIXTURE Galaxy adapter getJobOutputs: disabled/unconfigured fails typed with zero fetches", async () => {
+  const stub = makeRecoveryStub();
+  const neverFetch = () => { throw new Error("no fetch may occur when the provider is unavailable"); };
+  for (const env of [
+    { GALAXY_ENABLED: "false", GALAXY_BASE_URL: "https://galaxy.example.test", GALAXY_API_KEY: "stub-secret" },
+    { GALAXY_ENABLED: "true", GALAXY_BASE_URL: "https://galaxy.example.test", GALAXY_API_KEY: "" }
+  ]) {
+    const adapter = createAdapter(env, { fetch: neverFetch });
+    const result = await adapter.getJobOutputs({ job_id: FIX.providerJobId });
+    assert.equal(result.ok, false);
+    assert.equal(result.error?.code, "provider_unavailable");
+    assert.equal(result.reason, env.GALAXY_ENABLED === "false" ? "disabled" : "unavailable");
+    assert.deepEqual(result.outputs, []);
+    assert.equal(stub.calls.length, 0, "fixture fetch stub must remain untouched");
+  }
+});
+
 // ------------------------------------------------------------- run endpoint
 
 test("FIXTURE: unequal-length raw input is accepted end-to-end (no pre-MAFFT equal-length gate)", async (t) => {
@@ -262,6 +279,30 @@ test("FIXTURE resume by provider job id: succeeded job's FASTA output resolved; 
   assert.doesNotMatch(JSON.stringify(toolPosts), /mafft/i);
   assert.equal(stub.calls.some((call) => call.url.includes(`/api/jobs/${FIX.providerJobId}/outputs`)), true);
   assert.equal(body.reopen.ai_run_id, body.job_ids.galaxy_iqtree);
+});
+
+test("FIXTURE resume by provider job id: a MAFFT-named .log artifact cannot outrank the FASTA output", async (t) => {
+  // FIXTURE: the non-FASTA log appears FIRST and its name contains "MAFFT";
+  // only the real FASTA association is an eligible alignment candidate.
+  const outputs = {
+    mafft_log: { id: FIX.logHda, dataset_id: "103", name: "MAFFT log on data 1",
+      state: "ok", extension: "log", history_id: FIX.historyId },
+    input: { id: FIX.inputHda, uuid: FIX.inputUuid, dataset_id: "101", name: "phylo.fasta",
+      state: "ok", extension: "fasta", history_id: FIX.historyId },
+    mafft: { id: FIX.mafftHda, uuid: FIX.mafftUuid, dataset_id: "102", name: "MAFFT on data 1",
+      state: "ok", extension: "fasta", history_id: FIX.historyId }
+  };
+  const { response, body, stub } = await runWorkflow(t, {
+    payload: { resume_provider_job_id: FIX.providerJobId, history_id: FIX.historyId },
+    stubOptions: { outputs }
+  });
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(body.resume.alignment_hda_id, FIX.mafftHda, "the FASTA output must be selected");
+  assert.notEqual(body.resume.alignment_hda_id, FIX.logHda);
+  assert.equal(body.provenance.find((step) => step.step_id === "galaxy_mafft").dataset_id, FIX.mafftHda);
+  assert.equal(body.alignment_text, ALIGNMENT);
+  assert.equal(stub.calls.filter((call) => call.method === "POST"
+    && String(call.body?.tool_id ?? "").includes("mafft")).length, 0, "no MAFFT resubmission");
 });
 
 test("FIXTURE resume by provider job id: non-succeeded state returns an honest typed error, no submission", async (t) => {
