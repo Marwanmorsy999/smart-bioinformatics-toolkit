@@ -60,6 +60,27 @@ export function classifyPhyloArtifact(artifact = {}) {
   return { kind: "other", reason: "unclassified" };
 }
 
+// Pure, evidence-only parser for a GENUINE IQ-TREE report file. Every value
+// returned comes from the supplied text; absent fields stay null, never guessed.
+export function parseIqtreeReport(text) {
+  const source = String(text ?? "");
+  if (!source.trim()) return { model: null, log_likelihood: null, support: null, available: false };
+  const capture = (pattern) => {
+    const match = source.match(pattern);
+    return match ? match[1].trim() : null;
+  };
+  const model = capture(/(?:^|\n)[^\n]*?(?:Best-fit model|Model of substitution|Substitution model|Model)\s*:\s*([^\r\n]+)/i);
+  const likelihoodText = capture(/Log-likelihood\s*:\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)/i);
+  const likelihood = likelihoodText === null ? null : Number(likelihoodText);
+  const support = capture(/((?:^|\n)[^\n]*?(?:UFboot|SH-aLRT|bootstrap support|support values)[^\r\n]*)/i);
+  return {
+    model: model ? model.slice(0, 200) : null,
+    log_likelihood: likelihood !== null && Number.isFinite(likelihood) ? likelihood : null,
+    support: support ? support.slice(0, 300) : null,
+    available: Boolean(model || support || (likelihood !== null && Number.isFinite(likelihood)))
+  };
+}
+
 export function parseOutputDescriptors(stepId, outputs) {
   if (Array.isArray(outputs)) {
     return outputs.map((id) => ({ id: String(id), name: null, step: stepId })).filter((item) => item.id);
@@ -128,6 +149,7 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
   let resumeId = safeString(payload?.resume_alignment_dataset_id, 200);
   const resumeHistoryId = safeString(payload?.history_id, 200);
   const resumeProviderJobId = safeString(payload?.resume_provider_job_id, 200);
+  const resumeIqtreeJobId = safeString(payload?.resume_iqtree_provider_job_id, 200);
   const outgroup = safeString(payload?.outgroup, 200);
   // Raw homologous 16S sequences are legitimately unequal-length BEFORE MAFFT.
   // Equal length is required only for the retrieved MAFFT alignment.
@@ -150,6 +172,10 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
   let resolvedResumeHistoryId = null;
   let effectiveResumeHistoryId = null;
   let resumedMafftRecord = null;
+  let iqtreeResumeState = null;
+  let recoveredIqtree = null;
+  let recoveredIqtreeRecord = null;
+  let recoveredIqtreeReport = { model: null, log_likelihood: null, support: null, available: false };
 
   function resumeError(message, errorCode, status = 409, extra = {}) {
     return jsonResponse({
@@ -352,6 +378,78 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
     resumedOutputUuid = selected.uuid ?? null;
   }
 
+  // OPTIONAL READ-ONLY IQ-TREE RECOVERY — an already-completed tree job is
+  // inspected and its genuine outputs downloaded. NO new IQ-TREE submission.
+  if (resumeIqtreeJobId) {
+    const iqStatus = await adapter.getJobStatus({ job_id: resumeIqtreeJobId }, ctx);
+    iqtreeResumeState = String(iqStatus.output?.structured?.state ?? iqStatus.status ?? "") || null;
+    if (classifyJobState(iqtreeResumeState) !== "succeeded") {
+      return jsonResponse({
+        error: `IQ-TREE provider job ${resumeIqtreeJobId} is in state '${iqtreeResumeState ?? "unknown"}'; it has not succeeded. No job was submitted and no result was created.`,
+        error_code: "iqtree_provider_job_not_succeeded",
+        provider_job_id: resumeIqtreeJobId,
+        provider_job_state: iqtreeResumeState,
+        resumed_from_provider_job: false,
+        workflow_completed: false,
+        execution_mode: envExecutionMode(env)
+      }, 409, request);
+    }
+    const iqOutputs = await adapter.getJobOutputs({ job_id: resumeIqtreeJobId }, ctx);
+    if (!iqOutputs.ok) {
+      return jsonResponse({
+        error: `IQ-TREE provider job outputs could not be read: ${iqOutputs.error?.message ?? iqOutputs.error?.code ?? "unavailable"}`,
+        error_code: "iqtree_provider_job_outputs_unavailable",
+        provider_job_id: resumeIqtreeJobId,
+        provider_job_state: iqtreeResumeState,
+        resumed_from_provider_job: false,
+        workflow_completed: false,
+        execution_mode: envExecutionMode(env)
+      }, 502, request);
+    }
+    const iqAssociations = [...(iqOutputs.outputs ?? []), ...(iqStatus.output?.structured?.output_associations ?? [])];
+    // Verify output HDAs against the contents of every reported history (plus
+    // the caller's), reading each unique history once.
+    const iqHistoryIds = [];
+    const addIqHistory = (value) => {
+      const id = safeString(value, 200);
+      if (id && !iqHistoryIds.includes(id) && iqHistoryIds.length < 20) iqHistoryIds.push(id);
+    };
+    addIqHistory(resumeHistoryId);
+    addIqHistory(effectiveResumeHistoryId);
+    for (const item of iqAssociations) addIqHistory(item.history_id);
+    const iqHistoryCache = new Map();
+    for (const id of iqHistoryIds) {
+      const result = await adapter.getArtifacts({ history_id: id }, ctx);
+      iqHistoryCache.set(id, result?.ok === true ? (result.artifacts ?? []) : []);
+    }
+    const iqVerified = [...new Map([...iqHistoryCache.values()].flat()
+      .filter((artifact) => artifact?.id)
+      .map((artifact) => [String(artifact.id), artifact])).values()];
+    const iqByHda = new Map(iqVerified.map((artifact) => [String(artifact.id), artifact]));
+    const outputArtifacts = [];
+    const seenIqIds = new Set();
+    for (const item of iqAssociations) {
+      const hda = String(item.galaxyHdaId ?? item.id ?? "").trim();
+      const uuid = String(item.galaxyDatasetUuid ?? item.uuid ?? "").trim();
+      const datasetId = String(item.galaxyDatasetId ?? item.dataset_id ?? "").trim();
+      const match = (hda && iqByHda.get(hda))
+        || (uuid && iqVerified.find((artifact) => String(artifact.uuid ?? "") === uuid))
+        || (datasetId && iqVerified.find((artifact) => String(artifact.dataset_id ?? "") === datasetId))
+        || null;
+      if (!match?.id || match.deleted === true || seenIqIds.has(String(match.id))) continue;
+      if (item.history_id && match.history_id && String(match.history_id) !== String(item.history_id)) continue;
+      seenIqIds.add(String(match.id));
+      outputArtifacts.push(match);
+    }
+    recoveredIqtree = {
+      provider_job_id: resumeIqtreeJobId,
+      state: iqtreeResumeState,
+      artifacts: outputArtifacts,
+      output_ids: outputArtifacts.map((artifact) => artifact.id),
+      history_ids: iqHistoryIds
+    };
+  }
+
   const createdAt = nowIso(now);
   const planId = makeId("plan", idFactory);
   const runId = makeId("run", idFactory);
@@ -363,7 +461,7 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
     upload_input: "upload1",
     galaxy_mafft: tools.mafft?.id ?? null,
     galaxy_iqtree: tools.iqtree?.id ?? null,
-    retrieve_outputs: null,
+    retrieve_outputs: "galaxy:retrieve_outputs",
     validate_alignment: "phylogenetics.validate",
     validate_tree: "phylogenetics.tree",
     generate_report: "phylogenetics.report"
@@ -418,10 +516,12 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
   async function recordStep(stepId, toolId, providerJobId, status, startedAt, finishedAt, extra = {}) {
     const jobId = makeId("job", idFactory);
     jobIds[stepId] = jobId;
-    await insertRow(db, SQL.insertJob, [jobId, planId, stepId, status, toolId, JSON.stringify(extra.params ?? {}),
+    // D1 jobs.tool_id is NOT NULL; never let a null internal id reach it.
+    const safeToolId = String(toolId ?? "galaxy:internal");
+    await insertRow(db, SQL.insertJob, [jobId, planId, stepId, status, safeToolId, JSON.stringify(extra.params ?? {}),
       JSON.stringify({ dataset_id: datasetId }), JSON.stringify({}), "galaxy", "phylo-worker", 1, 120,
       envExecutionMode(env), createdAt, startedAt ?? createdAt, finishedAt ?? null]);
-    const record = { step_id: stepId, job_id: jobId, tool_id: toolId, provider_job_id: providerJobId,
+    const record = { step_id: stepId, job_id: jobId, tool_id: safeToolId, provider_job_id: providerJobId,
       status, started_at: startedAt ?? createdAt, finished_at: finishedAt ?? null, ...extra };
     provenance.push(record);
     return jobId;
@@ -507,26 +607,46 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
       alignmentDataset = selectPhyloArtifacts(alignmentCandidates, mafftOutputs).alignment;
     }
     if (!alignmentDataset) throw new Error("no retrieved alignment dataset available for tree inference");
-    const treeSchema = await fetchToolSchema(env, tools.iqtree.id, tools.iqtree.version);
-    const treePayload = buildSchemaPayload(treeSchema, alignmentDataset.id);
-    if (!treePayload.valid) throw new Error(`tree schema failure: ${treePayload.errors.join(", ")}`);
-    const iqtree = await adapter.submitJob({ operation: "submit_job", tool_id: tools.iqtree.id, inputs: treePayload.inputs }, ctx);
-    if (iqtree.error) throw new Error(`IQ-TREE submission failed: ${iqtree.error.message ?? iqtree.error.code}`);
-    const iqState = await poll(adapter, iqtree.provider_job_id, ctx);
-    if (!["ok", "success", "succeeded"].includes(String(iqState.status).toLowerCase())) {
-      throw new Error(`IQ-TREE job ${iqtree.provider_job_id} ended in state ${iqState.status}`);
+    if (recoveredIqtree) {
+      // READ-ONLY: use the genuine outputs of the already-completed job.
+      iqtreeOutputs = parseOutputDescriptors("galaxy_iqtree", recoveredIqtree.output_ids);
+      await recordStep("galaxy_iqtree", tools.iqtree.id, resumeIqtreeJobId, "succeeded", createdAt, nowIso(now),
+        { tool_version: tools.iqtree.version, tool_id: tools.iqtree.id, discovery_mode: toolVersions.discovery_mode,
+          output_ids: recoveredIqtree.output_ids, input_dataset_id: alignmentDataset.id,
+          resumed: true, provider_job_state: iqtreeResumeState, resumed_from_provider_job: true,
+          history_ids: recoveredIqtree.history_ids });
+      recoveredIqtreeRecord = provenance[provenance.length - 1];
+    } else {
+      const treeSchema = await fetchToolSchema(env, tools.iqtree.id, tools.iqtree.version);
+      const treePayload = buildSchemaPayload(treeSchema, alignmentDataset.id);
+      if (!treePayload.valid) throw new Error(`tree schema failure: ${treePayload.errors.join(", ")}`);
+      const iqtree = await adapter.submitJob({ operation: "submit_job", tool_id: tools.iqtree.id, inputs: treePayload.inputs }, ctx);
+      if (iqtree.error) throw new Error(`IQ-TREE submission failed: ${iqtree.error.message ?? iqtree.error.code}`);
+      const iqState = await poll(adapter, iqtree.provider_job_id, ctx);
+      if (!["ok", "success", "succeeded"].includes(String(iqState.status).toLowerCase())) {
+        throw new Error(`IQ-TREE job ${iqtree.provider_job_id} ended in state ${iqState.status}`);
+      }
+      iqtreeOutputs = parseOutputDescriptors("galaxy_iqtree", iqtree.output?.structured?.outputs);
+      await recordStep("galaxy_iqtree", tools.iqtree.id, iqtree.provider_job_id, "succeeded", createdAt, nowIso(now),
+        { tool_version: tools.iqtree.version, tool_id: tools.iqtree.id, discovery_mode: toolVersions.discovery_mode,
+          output_ids: iqtree.output?.structured?.outputs ?? [], input_dataset_id: alignmentDataset.id });
     }
-    iqtreeOutputs = parseOutputDescriptors("galaxy_iqtree", iqtree.output?.structured?.outputs);
-    await recordStep("galaxy_iqtree", tools.iqtree.id, iqtree.provider_job_id, "succeeded", createdAt, nowIso(now),
-      { tool_version: tools.iqtree.version, tool_id: tools.iqtree.id, discovery_mode: toolVersions.discovery_mode,
-        output_ids: iqtree.output?.structured?.outputs ?? [], input_dataset_id: alignmentDataset.id });
 
     // Step 4 — retrieve intermediate and final datasets. Selection is based on
     // name/extension and the real output mapping; unmatched files are stored as
     // evidence but never presented as the alignment or tree.
     retrievalStartedAt = nowIso(now);
     const finalArtifacts = await adapter.getArtifacts({ history_id: historyId }, ctx);
-    const outputArtifacts = (finalArtifacts.artifacts ?? []).filter((item) => item.id !== uploadedHdaId);
+    let outputArtifacts = (finalArtifacts.artifacts ?? []).filter((item) => item.id !== uploadedHdaId);
+    if (recoveredIqtree) {
+      // A recovered IQ-TREE job may live in another history: merge its genuine
+      // verified artifacts by HDA id so their real content is downloaded.
+      const merged = new Map(outputArtifacts.map((artifact) => [String(artifact.id), artifact]));
+      for (const artifact of recoveredIqtree.artifacts) {
+        if (artifact.id && artifact.id !== uploadedHdaId) merged.set(String(artifact.id), artifact);
+      }
+      outputArtifacts = [...merged.values()];
+    }
     const selected = selectPhyloArtifacts(outputArtifacts, [...mafftOutputs, ...iqtreeOutputs]);
     if (resumeId) {
       // Keep the reported alignment identical to the HDA used for IQ-TREE.
@@ -584,10 +704,19 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
           retrievalErrors.push({ dataset_id: item.id, name: item.name, reason: `newick_parse_failed: ${e?.message ?? e}` });
         }
       }
+      if (recoveredIqtree && kind === "report") {
+        // Only values actually present in the genuine .iqtree file are kept.
+        recoveredIqtreeReport = parseIqtreeReport(downloaded.content);
+        if (recoveredIqtreeRecord) {
+          recoveredIqtreeRecord.model = recoveredIqtreeReport.model;
+          recoveredIqtreeRecord.log_likelihood = recoveredIqtreeReport.log_likelihood;
+          recoveredIqtreeRecord.support = recoveredIqtreeReport.support;
+        }
+      }
     }
     if (!alignmentText) retrievalErrors.push({ reason: "no_valid_alignment_retrieved" });
     if (!treeText) retrievalErrors.push({ reason: "no_valid_newick_tree_retrieved" });
-    await recordStep("retrieve_outputs", null, null, retrievalErrors.length ? "partial" : "succeeded",
+    await recordStep("retrieve_outputs", "galaxy:retrieve_outputs", null, retrievalErrors.length ? "partial" : "succeeded",
       retrievalStartedAt, nowIso(now),
       { dataset_ids: (finalArtifacts.artifacts ?? []).map((item) => item.id),
         files: retrievedFiles, tool_versions: toolVersions, errors: retrievalErrors,
@@ -680,6 +809,16 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
       history_id: resolvedResumeHistoryId ?? historyId,
       caller_history_id: resumeHistoryId,
       provider_history_id: effectiveResumeHistoryId ?? resolvedResumeHistoryId ?? historyId,
+      resumed_from_provider_job: true
+    } : null,
+    resume_iqtree: recoveredIqtree ? {
+      provider_job_id: resumeIqtreeJobId,
+      provider_job_state: iqtreeResumeState,
+      output_ids: recoveredIqtree.output_ids,
+      history_ids: recoveredIqtree.history_ids,
+      model: recoveredIqtreeReport.model,
+      log_likelihood: recoveredIqtreeReport.log_likelihood,
+      support: recoveredIqtreeReport.support,
       resumed_from_provider_job: true
     } : null,
     reopen: {

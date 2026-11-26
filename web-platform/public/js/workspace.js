@@ -52,7 +52,7 @@ const LOCAL_CATALOG = Object.freeze([
     ]),
     execution_availability: Object.freeze({
       state: "partial-not-production-ready", production_ready: false,
-      note: "Evidence: docs/M7_3_PHYLOGENETICS_WORKFLOW_REPORT.md. A real MAFFT job executed once historically; an existing succeeded Galaxy MAFFT job can now be resumed by provider job id without a second submission. The full multi-step remote tree/retrieval/validation path is NOT verified. No live Galaxy call is made by this workspace API and no provider is newly activated in this milestone."
+      note: "Evidence: docs/M7_3_PHYLOGENETICS_WORKFLOW_REPORT.md. A real MAFFT job executed once historically; an existing succeeded Galaxy MAFFT job can now be resumed by provider job id without a second submission, and an already-completed IQ-TREE job can likewise be recovered read-only. The full multi-step remote tree/retrieval/validation path is NOT verified. No live Galaxy call is made by this workspace API and no provider is newly activated in this milestone."
     }),
     entry_point: "phylo.html"
   })

@@ -20,6 +20,8 @@ const UNEQUAL_INPUT = ">taxon_a\nACGTACGTACG\n>taxon_b\nACGTACGTTCGAATC\n>taxon_
 // FIXTURE: the ALIGNED output (equal lengths) is what strict validation checks.
 const ALIGNMENT = ">taxon_a\nACGT-ACGTACG\n>taxon_b\nACGTACGTTCGT\n>taxon_c\nACGTTCGTACGT\n";
 const TREE = "(taxon_a:0.1,(taxon_b:0.2,taxon_c:0.3)95/87:0.4);\n";
+// FIXTURE: a genuine-shaped IQ-TREE report with real values to parse.
+const IQ_REPORT = "Model of substitution: GTR+F+R3\nLog-likelihood: -1234.5678\nUFboot: 1000 replicates\n";
 
 const FIX = Object.freeze({
   historyId: "11ac94870d0bb33adfdcc31d5164dd84",
@@ -55,7 +57,9 @@ function json(body, status = 200) {
 // history contents and dataset text. A MAFFT POST is deliberately NOT routed:
 // if any test triggers one, the assertion on toolPosts below fails loudly.
 function makeRecoveryStub({ jobState = "ok", outputs = DEFAULT_OUTPUTS, jobOutputs = null,
-  alignmentContent = ALIGNMENT, treeContent = TREE, providerHistory = null } = {}) {
+  alignmentContent = ALIGNMENT, treeContent = TREE, providerHistory = null,
+  iqtreeJobId = null, iqtreeJobState = "ok", iqtreeJobOutputs = null, iqtreeOutputs = null,
+  iqtreeHistory = null, reportContent = "IQ-TREE summary\n" } = {}) {
   const calls = [];
   const schemaFor = (id) => ({
     inputs: [{ model_class: "Section", name: "general_options", inputs: [
@@ -77,7 +81,7 @@ function makeRecoveryStub({ jobState = "ok", outputs = DEFAULT_OUTPUTS, jobOutpu
   ];
   const textById = new Map([
     [FIX.inputHda, INPUT_FASTA], [FIX.mafftHda, alignmentContent], [FIX.treeHda, treeContent],
-    [FIX.reportHda, "IQ-TREE summary\n"], [FIX.logHda, "IQ-TREE log\n"],
+    [FIX.reportHda, reportContent], [FIX.logHda, "IQ-TREE log\n"],
     ...(providerHistory?.artifacts?.[0]?.id ? [[providerHistory.artifacts[0].id, alignmentContent]] : [])
   ]);
   const fetchImpl = async (input, init = {}) => {
@@ -101,9 +105,14 @@ function makeRecoveryStub({ jobState = "ok", outputs = DEFAULT_OUTPUTS, jobOutpu
       return json({ outputs: [{ id: FIX.inputHda, history_id: FIX.historyId }],
         jobs: [{ id: "1111111111111111" }] });
     }
+    if (iqtreeJobId && url.includes(`/api/jobs/${iqtreeJobId}/outputs`)) return json(iqtreeOutputs ?? {});
     if (url.includes(`/api/jobs/${FIX.providerJobId}/outputs`)) return json(outputs);
     if (url.includes("/api/jobs/")) {
       const id = url.slice(url.lastIndexOf("/") + 1);
+      if (iqtreeJobId && id === iqtreeJobId) {
+        return json({ id, state: iqtreeJobState, history_id: iqtreeHistory?.id ?? FIX.historyId,
+          ...(iqtreeJobOutputs ? { outputs: iqtreeJobOutputs } : {}) });
+      }
       return json({ id, state: jobState, history_id: providerHistory?.id ?? FIX.historyId,
         ...(jobOutputs ? { outputs: jobOutputs } : {}) });
     }
@@ -125,10 +134,9 @@ function makeRecoveryStub({ jobState = "ok", outputs = DEFAULT_OUTPUTS, jobOutpu
       return json({ error: "unexpected_tool", toolId }, 404);
     }
     if (url.includes("/api/histories/") && url.includes("/contents")) {
-      if (providerHistory) {
-        const requested = decodeURIComponent((url.match(/\/api\/histories\/([^/]+)\/contents/) ?? [])[1] ?? "");
-        if (requested === providerHistory.id) return json(providerHistory.artifacts);
-      }
+      const requested = decodeURIComponent((url.match(/\/api\/histories\/([^/]+)\/contents/) ?? [])[1] ?? "");
+      if (providerHistory && requested === providerHistory.id) return json(providerHistory.artifacts);
+      if (iqtreeHistory && requested === iqtreeHistory.id) return json(iqtreeHistory.artifacts);
       return json(contents());
     }
     if (url.includes("/get_content_as_text")) {
@@ -253,11 +261,15 @@ test("FIXTURE Galaxy adapter getJobOutputs: disabled/unconfigured fails typed wi
 // ------------------------------------------------------------- run endpoint
 
 test("FIXTURE: unequal-length raw input is accepted end-to-end (no pre-MAFFT equal-length gate)", async (t) => {
-  const { response, body } = await runWorkflow(t, { payload: { fasta_text: UNEQUAL_INPUT } });
+  const { response, body, fake } = await runWorkflow(t, { payload: { fasta_text: UNEQUAL_INPUT } });
   assert.equal(response.status, 200, JSON.stringify(body));
   assert.equal(body.workflow_completed, true);
   assert.equal(body.validation.alignment.valid, true);
   assert.equal(body.resume, null);
+  // D1 regression: retrieve_outputs.tool_id must be non-null for every step.
+  const retrieve = body.provenance.find((step) => step.step_id === "retrieve_outputs");
+  assert.equal(retrieve.tool_id, "galaxy:retrieve_outputs");
+  for (const row of fake.state.tables.jobs) assert.ok(row.tool_id, `null tool_id in ${row.step_id}`);
 });
 
 test("FIXTURE resume by provider job id: succeeded job's FASTA output resolved; MAFFT never resubmitted", async (t) => {
@@ -629,4 +641,99 @@ test("FIXTURE: a run that failed before any provider job reports a null report e
   assert.ok(report, JSON.stringify(body.provenance));
   assert.equal(report.report_endpoint, null);
   assert.doesNotMatch(JSON.stringify(body.provenance), /\/jobs\/undefined\//);
+});
+
+// ------------------------------------- read-only IQ-TREE recovery (M7.11.1)
+
+const IQ_JOB_ID = "4838ba20a6d8676542ae6f938b169e38";
+const IQ_OUTPUTS = {
+  output_treefile: { id: FIX.treeHda, name: "IQ-TREE treefile on data 2", state: "ok",
+    extension: "nwk", history_id: FIX.historyId },
+  output_report: { id: FIX.reportHda, name: "IQ-TREE on data 2", state: "ok",
+    extension: "iqtree", history_id: FIX.historyId },
+  output_log: { id: FIX.logHda, name: "IQ-TREE log on data 2", state: "ok",
+    extension: "log", history_id: FIX.historyId }
+};
+
+test("FIXTURE: completed IQ-TREE job is recovered read-only with zero tool submissions", async (t) => {
+  const { response, body, fake, stub } = await runWorkflow(t, {
+    payload: { resume_provider_job_id: FIX.providerJobId, history_id: FIX.historyId,
+      resume_iqtree_provider_job_id: IQ_JOB_ID },
+    stubOptions: { jobOutputs: DEFAULT_OUTPUTS, iqtreeJobId: IQ_JOB_ID,
+      iqtreeJobOutputs: IQ_OUTPUTS, iqtreeOutputs: IQ_OUTPUTS, reportContent: IQ_REPORT }
+  });
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(body.workflow_completed, true);
+  assert.equal(body.validation.status, "pass");
+  assert.equal(body.validation.tree.valid, true);
+  assert.equal(body.tree_newick, TREE);
+  assert.equal(body.alignment_text, ALIGNMENT);
+  assert.equal(body.metrics.tree.tip_count, 3);
+  const iqStep = body.provenance.find((step) => step.step_id === "galaxy_iqtree");
+  assert.equal(iqStep.provider_job_id, IQ_JOB_ID);
+  assert.equal(iqStep.resumed, true);
+  assert.equal(iqStep.provider_job_state, "ok");
+  assert.deepEqual(iqStep.output_ids, [FIX.treeHda, FIX.reportHda, FIX.logHda]);
+  assert.equal(iqStep.model, "GTR+F+R3", "model parsed from the genuine report");
+  assert.equal(iqStep.log_likelihood, -1234.5678, "likelihood parsed from the genuine report");
+  assert.match(iqStep.support, /UFboot/);
+  assert.deepEqual(body.resume_iqtree, {
+    provider_job_id: IQ_JOB_ID, provider_job_state: "ok",
+    output_ids: [FIX.treeHda, FIX.reportHda, FIX.logHda],
+    history_ids: [FIX.historyId], model: "GTR+F+R3", log_likelihood: -1234.5678,
+    support: iqStep.support, resumed_from_provider_job: true
+  });
+  // The real bug: retrieve_outputs must carry a non-null tool id into D1.
+  const retrieve = body.provenance.find((step) => step.step_id === "retrieve_outputs");
+  assert.equal(retrieve.tool_id, "galaxy:retrieve_outputs");
+  for (const row of fake.state.tables.jobs) assert.ok(row.tool_id, `null tool_id in ${row.step_id}`);
+  // ZERO submissions: no MAFFT and no IQ-TREE job was created.
+  const toolPosts = stub.calls.filter((call) => call.method === "POST"
+    && call.url.includes("/api/tools") && !call.url.includes("/fetch"));
+  assert.equal(toolPosts.length, 0, JSON.stringify(toolPosts));
+});
+
+test("FIXTURE: non-succeeded IQ-TREE job returns honest 409 with zero submissions", async (t) => {
+  const { response, body, stub } = await runWorkflow(t, {
+    payload: { resume_provider_job_id: FIX.providerJobId, history_id: FIX.historyId,
+      resume_iqtree_provider_job_id: IQ_JOB_ID },
+    stubOptions: { iqtreeJobId: IQ_JOB_ID, iqtreeJobState: "running", iqtreeOutputs: {} }
+  });
+  assert.equal(response.status, 409);
+  assert.equal(body.error_code, "iqtree_provider_job_not_succeeded");
+  assert.equal(body.provider_job_id, IQ_JOB_ID);
+  assert.equal(body.provider_job_state, "running");
+  assert.equal(body.resumed_from_provider_job, false);
+  assert.match(body.error, /running/);
+  assert.equal(stub.calls.filter((call) => call.method === "POST").length, 0, "no submission");
+});
+
+test("FIXTURE: an unavailable recovered tree artifact is never fabricated", async (t) => {
+  // FIXTURE: the recovered job lists a treefile HDA whose content cannot be
+  // downloaded. Nothing may be invented as a Newick tree.
+  const missingTreeHda = "dddddddd9999aaaa8888bbbb7777cccc";
+  const iqtreeHistory = { id: FIX.otherHistoryId, artifacts: [
+    { id: missingTreeHda, name: "IQ-TREE treefile", extension: "nwk", state: "ok",
+      history_id: FIX.otherHistoryId, deleted: false },
+    { id: FIX.reportHda, name: "IQ-TREE on data 2", extension: "iqtree", state: "ok",
+      history_id: FIX.otherHistoryId, deleted: false }
+  ] };
+  const iqOutputs = {
+    output_treefile: { id: missingTreeHda, name: "IQ-TREE treefile", state: "ok",
+      extension: "nwk", history_id: FIX.otherHistoryId },
+    output_report: { id: FIX.reportHda, name: "IQ-TREE on data 2", state: "ok",
+      extension: "iqtree", history_id: FIX.otherHistoryId }
+  };
+  const { response, body, stub } = await runWorkflow(t, {
+    payload: { resume_provider_job_id: FIX.providerJobId, history_id: FIX.historyId,
+      resume_iqtree_provider_job_id: IQ_JOB_ID },
+    stubOptions: { iqtreeJobId: IQ_JOB_ID, iqtreeJobOutputs: iqOutputs, iqtreeOutputs: iqOutputs,
+      iqtreeHistory, reportContent: IQ_REPORT }
+  });
+  assert.equal(response.status, 502);
+  assert.equal(body.tree_newick, null, "no tree is invented when content is unavailable");
+  assert.equal(body.workflow_completed, false);
+  assert.ok((body.validation.retrieval_errors ?? []).some((error) => error.dataset_id === missingTreeHda
+    && error.reason === "content_unavailable"));
+  assert.equal(stub.calls.filter((call) => call.method === "POST").length, 0, "no submission");
 });
