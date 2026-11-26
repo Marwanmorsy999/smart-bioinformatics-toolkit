@@ -105,6 +105,17 @@ export function createFakeD1(initialRows = []) {
               results: state.consents.filter((row) => row.token === token).map((row) => ({ ...row }))
             };
           }
+          if (sql === SQL.selectBlastRetrieval) {
+            const [action, target, limit] = statement.values;
+            const rows = state.auditEvents
+              .filter((row) => row.action === action && row.target === target)
+              .sort((a, b) => String(a.timestamp).localeCompare(String(b.timestamp)))
+              .slice(0, Number(limit) || 1)
+              .map((row) => ({
+                public_id: row.public_id, detail_json: row.detail_json, timestamp: row.timestamp
+              }));
+            return { success: true, results: rows };
+          }
           throw new Error(`Unexpected all SQL: ${sql}`);
         }
       };

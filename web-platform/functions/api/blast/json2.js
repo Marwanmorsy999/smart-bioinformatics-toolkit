@@ -5,7 +5,15 @@
 // (qseq/sseq/midline) are preserved verbatim as raw evidence.
 //
 // Query coverage is ALWAYS computed from real alignment coordinates:
-//   (qend - qstart + 1) / query_len * 100, clamped to 0..100, 2 decimals.
+//   - per HSP: one alignment span, normalized to [min,max], clamped to the
+//     [1, query_len] range exactly like the union path, then divided by the
+//     FULL query_len * 100 (percent clamped to 0..100, 2 decimals). A wholly
+//     out-of-range interval yields null per-HSP coverage, never an invented
+//     value; this stays distinct from the hit-level union below;
+//   - per hit: the UNION of all valid query-coordinate intervals of that hit,
+//     divided by the FULL query_len from the JSON2 search, * 100, clamped to
+//     0..100, 2 decimals. Overlapping and adjacent intervals are merged, so
+//     bases covered by more than one HSP are never double-counted.
 // A provider qcovs/qcovhsp value is used only as a cross-check warning.
 
 const DEFAULT_MAX_WARNINGS = 20;
@@ -34,11 +42,81 @@ function cellText(value) {
   return String(value).replace(/[\t\r\n]+/g, " ").trim();
 }
 
-function coverageFromCoordinates(qstart, qend, queryLen) {
+// Per-HSP span coverage: a SINGLE alignment, never the hit-level union. The
+// interval is normalized and clamped to [1, query_len] exactly like the union
+// path; a wholly out-of-range interval has no coverage in this query and is
+// reported as null with a warning rather than a clipped-but-misleading number.
+function coverageFromCoordinates(qstart, qend, queryLen, { rank = null, hspIndex = null, warn = () => {} } = {}) {
   if (!Number.isFinite(qstart) || !Number.isFinite(qend) || !Number.isFinite(queryLen) || queryLen <= 0) return null;
-  const aligned = Math.abs(qend - qstart) + 1;
+  const low = Math.min(qstart, qend);
+  const high = Math.max(qstart, qend);
+  const label = rank === null ? "Hit" : `Hit ${rank}`;
+  const hspLabel = hspIndex === null ? "HSP" : `HSP ${hspIndex}`;
+  if (high < 1 || low > queryLen) {
+    warn(`${label} ${hspLabel} query interval ${low}-${high} lies entirely outside the query range 1-${queryLen}; per-HSP coverage is unavailable.`);
+    return null;
+  }
+  const clampedStart = Math.max(1, low);
+  const clampedEnd = Math.min(queryLen, high);
+  if (clampedStart !== low || clampedEnd !== high) {
+    warn(`${label} ${hspLabel} query interval ${low}-${high} was clamped to ${clampedStart}-${clampedEnd} for per-HSP coverage (query length ${queryLen}).`);
+  }
+  const aligned = clampedEnd - clampedStart + 1;
   const percent = (aligned / queryLen) * 100;
   return Number(Math.min(100, Math.max(0, percent)).toFixed(2));
+}
+
+/**
+ * Hit-level aggregate query coverage: union of the valid query-coordinate
+ * intervals of every HSP of one hit. Intervals are normalized to
+ * [min(qstart,qend), max(qstart,qend)], clamped to the full [1, query_len]
+ * range reported by the JSON2 search, then merged when they overlap or are
+ * adjacent. Query coordinates are strand-independent; reverse-strand subject
+ * coordinates are not involved. Nothing is inferred for missing/malformed
+ * coordinates or an invalid query length.
+ * @returns {{percent:number|null, bases:number|null, intervals:Array<{start:number,end:number}>}}
+ */
+export function unionQueryCoverage(hsps, queryLen, { rank = null, warn = () => {} } = {}) {
+  const empty = { percent: null, bases: null, intervals: [] };
+  if (!Number.isFinite(queryLen) || queryLen <= 0) return empty;
+
+  const label = rank === null ? "Hit" : `Hit ${rank}`;
+  const raw = [];
+  for (let index = 0; index < (Array.isArray(hsps) ? hsps.length : 0); index += 1) {
+    const hsp = hsps[index];
+    if (!hsp || typeof hsp !== "object" || Array.isArray(hsp)) continue;
+    const start = finiteNumber(hsp.qstart);
+    const end = finiteNumber(hsp.qend);
+    if (start === null || end === null) continue; // already warned as missing coverage
+    const low = Math.min(start, end);
+    const high = Math.max(start, end);
+    if (high < 1 || low > queryLen) {
+      warn(`${label} HSP ${index + 1} query interval ${low}-${high} lies entirely outside the query range 1-${queryLen}; it was skipped.`);
+      continue;
+    }
+    const clampedStart = Math.max(1, low);
+    const clampedEnd = Math.min(queryLen, high);
+    if (clampedStart !== low || clampedEnd !== high) {
+      warn(`${label} HSP ${index + 1} query interval ${low}-${high} was clamped to ${clampedStart}-${clampedEnd} (query length ${queryLen}).`);
+    }
+    raw.push({ start: clampedStart, end: clampedEnd });
+  }
+  if (!raw.length) return empty;
+
+  raw.sort((a, b) => a.start - b.start || a.end - b.end);
+  const merged = [];
+  for (const interval of raw) {
+    const previous = merged[merged.length - 1];
+    // Adjacent intervals touch when the next start is at most previous end + 1.
+    if (previous && interval.start <= previous.end + 1) {
+      previous.end = Math.max(previous.end, interval.end);
+    } else {
+      merged.push({ start: interval.start, end: interval.end });
+    }
+  }
+  const bases = merged.reduce((total, interval) => total + (interval.end - interval.start + 1), 0);
+  const percent = Number(Math.min(100, Math.max(0, (bases / queryLen) * 100)).toFixed(2));
+  return { percent, bases, intervals: merged };
 }
 
 function emptyResult(warnings) {
@@ -129,7 +207,9 @@ export function parseBlastJson2(raw, options = {}) {
       const qend = finiteNumber(rawHsp.qend);
       const sstart = finiteNumber(rawHsp.sstart);
       const send = finiteNumber(rawHsp.send);
-      const queryCoverage = coverageFromCoordinates(qstart, qend, queryLen);
+      const queryCoverage = coverageFromCoordinates(qstart, qend, queryLen, {
+        rank, hspIndex: hspIndex + 1, warn
+      });
       if (queryCoverage === null) missingCoverage += 1;
 
       const providerCoverage = finiteNumber(firstValue(rawHsp.qcovs ?? rawHsp.qcovhsp));
@@ -169,9 +249,12 @@ export function parseBlastJson2(raw, options = {}) {
     if (!hsps.length) warn(`Hit ${rank} had no usable HSPs; only descriptive fields are available.`);
 
     // Best HSP is the highest bit score actually present; ties keep provider
-    // order. Its values become the hit-level summary — none are invented.
+    // order. Its values become the hit-level score summary — none are invented.
     const best = hsps.slice().sort((a, b) => (b.bit_score ?? -Infinity) - (a.bit_score ?? -Infinity))[0] ?? null;
-    const coverages = hsps.map((item) => item.query_coverage).filter((value) => value !== null);
+    // Hit coverage is the union of valid query intervals, with the FULL
+    // JSON2 search.query_len as denominator. hsps[].query_coverage stays the
+    // single-HSP span; the two are deliberately different measures.
+    const union = unionQueryCoverage(hsps, queryLen, { rank, warn });
     hits.push({
       rank,
       accession,
@@ -180,8 +263,10 @@ export function parseBlastJson2(raw, options = {}) {
       taxid,
       length: finiteNumber(description?.length) ?? finiteNumber(description?.slen) ?? best?.slen ?? null,
       identity: best?.identity ?? null,
-      // Maximum per-HSP query span; not a union of coordinates (never claimed).
-      query_coverage: coverages.length ? Math.max(...coverages) : null,
+      query_coverage: union.percent,
+      query_coverage_method: "union_of_hsp_query_intervals",
+      query_coverage_bases: union.bases,
+      query_coverage_intervals: union.intervals,
       evalue: best?.evalue ?? null,
       bitscore: best?.bit_score ?? null,
       hsps
@@ -192,7 +277,7 @@ export function parseBlastJson2(raw, options = {}) {
     warn(`${missingDescription} hit(s) had no usable description; accession, title, organism and taxid are null.`);
   }
   if (missingCoverage) {
-    warn(`${missingCoverage} HSP(s) had no coordinate-derived query coverage (missing coordinates or query length).`);
+    warn(`${missingCoverage} HSP(s) had no coordinate-derived query coverage (missing/malformed coordinates, invalid query length or a wholly out-of-range interval).`);
   }
   if (reverseStrands) {
     warn(`${reverseStrands} HSP(s) align on the reverse strand (sstart > send); strand was derived from coordinates.`);
@@ -231,13 +316,14 @@ function bestHspOf(hit) {
 
 /**
  * Deterministic 12-column tabular compatibility view derived ONLY from parsed
- * JSON2 fields. Every numeric field in a row comes from that hit's single
- * best-scoring HSP. It is explicitly labelled as derived, never a provider TSV.
+ * JSON2 fields. Every numeric field except qcovs comes from that hit's single
+ * best-scoring HSP; qcovs is the hit-level UNION of query intervals (not that
+ * HSP's span). It is explicitly labelled as derived, never a provider TSV.
  */
 export function toDerivedTabular(result) {
   const queryId = cellText(result?.query?.id);
   const lines = [
-    "# derived_from: json2 — tabular compatibility view; each hit row uses its best-scoring HSP (highest bit_score) for all numeric fields, not a verbatim NCBI TSV.",
+    "# derived_from: json2 — derived tabular view; numeric fields use the best-scoring HSP (highest bit_score) except qcovs, which is the hit-level union of query intervals over full query_len; not a verbatim NCBI TSV.",
     "qseqid\tsacc\tstaxids\tsscinames\tpident\tlength\tqstart\tqend\tqlen\tevalue\tbitscore\tqcovs"
   ];
   for (const hit of (Array.isArray(result?.hits) ? result.hits : [])) {
@@ -254,7 +340,7 @@ export function toDerivedTabular(result) {
       result?.query?.length,
       hsp.evalue ?? hit.evalue,
       hsp.bit_score ?? hit.bitscore,
-      hsp.query_coverage ?? hit.query_coverage
+      hit.query_coverage ?? hsp.query_coverage
     ].map(cellText).join("\t"));
   }
   return lines.join("\n") + "\n";

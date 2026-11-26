@@ -283,7 +283,18 @@ function clearPlanExplanation() {
 
 // Optional model explanation of the deterministic plan. It reuses the EXISTING
 // /api/assistant/chat endpoint with stream:false and sends ONLY plan metadata —
-// never the FASTA. Failure is non-fatal: approval and submission still work.
+// never the FASTA. Failure is non-fatal and VISIBLE: approval and submission
+// stay fully usable, but the panel never silently disappears.
+function showPlanExplanationFallback(reason = null) {
+  const timedOut = reason === "provider_timeout" || reason === "timeout" || reason === "request_aborted";
+  ui.planExplanation.replaceChildren();
+  ui.planExplanation.append(element("h3", "", "Plan explanation"));
+  ui.planExplanation.append(element("p", "explanation-fallback", timedOut
+    ? "The optional AI explanation timed out. The deterministic plan is complete: review and approve it below without waiting for this explanation. No job was created and nothing was sent to NCBI."
+    : "The optional AI explanation is unavailable right now. The deterministic plan is complete: review and approve it below without this explanation. No job was created and nothing was sent to NCBI."));
+  ui.planExplanation.hidden = false;
+}
+
 async function explainPlan(plan) {
   clearPlanExplanation();
   try {
@@ -294,9 +305,11 @@ async function explainPlan(plan) {
       credentials: "same-origin",
       body: JSON.stringify({ message, stream: false })
     });
-    if (!response.ok) return;
     const data = await response.json().catch(() => ({}));
-    if (data.generated !== true || typeof data.reply !== "string" || !data.reply.trim()) return;
+    if (!response.ok || data.generated !== true || typeof data.reply !== "string" || !data.reply.trim()) {
+      showPlanExplanationFallback(data.reason ?? data.code ?? (response.status === 504 ? "provider_timeout" : null));
+      return;
+    }
     ui.planExplanation.replaceChildren();
     ui.planExplanation.append(element("h3", "", "Plan explanation"));
     ui.planExplanation.append(element("p", "explanation-label", "AI-generated explanation; plan is deterministic"));
@@ -305,7 +318,7 @@ async function explainPlan(plan) {
     ui.planExplanation.hidden = false;
   } catch {
     // Assistant unavailable: leave the deterministic plan intact and usable.
-    clearPlanExplanation();
+    showPlanExplanationFallback();
   }
 }
 
@@ -717,8 +730,9 @@ async function fetchResults({ cached = false } = {}) {
       return false;
     }
     state.tsv = envelope.tsv ?? "";
-    // A cached reload has no retrieval timestamp in D1; never substitute "now".
-    state.fetchedAt = state.cached ? null : (state.provenance?.retrieved_at ?? new Date().toISOString());
+    // A cached reload keeps the ORIGINAL retrieval time from the audit record
+    // when one exists; legacy/unknown rows stay null. Never substitute "now".
+    state.fetchedAt = state.provenance?.retrieved_at ?? (state.cached ? null : new Date().toISOString());
     state.mockResult = state.mockRid || envelope.mock === true || /MOCK DATA|MOCK000001/i.test(state.tsv);
     const schema = detectSchema(state.tsv);
     state.parsed = parseBlast(state.tsv, schema);
@@ -740,7 +754,6 @@ async function fetchResults({ cached = false } = {}) {
     ui.checkStatus.disabled = true;
     ui.countdown.textContent = "No next status check — terminal state.";
     renderRid(state.rid, state.status);
-    if (state.cached) state.fetchedAt = null;
     renderResults();
     return true;
   } catch (error) {
@@ -770,7 +783,7 @@ function renderStructuredResults() {
   field(ui.searchOverview, "Parameters", JSON.stringify(state.plan?.steps?.[0]?.params ?? {}));
   field(ui.searchOverview, "RID", state.rid);
   field(ui.searchOverview, "Status", state.status ?? "—");
-  field(ui.searchOverview, "Retrieved at", state.cached ? "not available (cached reload)" : (state.provenance?.retrieved_at ?? "—"));
+  field(ui.searchOverview, "Retrieved at", state.fetchedAt ?? (state.cached ? "unknown (cached result without an original retrieval record)" : "—"));
   field(ui.searchOverview, "Result format", state.provenance?.result_format ?? "—");
 
   state.interpretation = buildInterpretation(result, state.provenance, { synthetic: state.mockResult });
@@ -794,7 +807,7 @@ function renderStructuredResults() {
     tr.append(
       nameCell,
       element("td", "", hit.identity ?? "—"),
-      element("td", "", hit.query_coverage ?? "—"),
+      element("td", "", hit.query_coverage === null || hit.query_coverage === undefined ? "—" : `${hit.query_coverage}%`),
       element("td", "", hit.evalue ?? "—"),
       element("td", "", hit.bitscore ?? "—")
     );
@@ -802,10 +815,12 @@ function renderStructuredResults() {
     const details = element("details", "alignment-detail");
     details.append(element("summary", "", `Alignment for rank ${hit.rank ?? "—"}`));
     const hsps = Array.isArray(hit.hsps) ? hit.hsps : [];
+    details.append(element("p", "small", `Hit coverage ${hit.query_coverage === null || hit.query_coverage === undefined ? "—" : `${hit.query_coverage}%`} = union of its HSP query intervals over full query length ${result.query?.length ?? "—"}${hit.query_coverage_bases === null || hit.query_coverage_bases === undefined ? "" : ` (${hit.query_coverage_bases} bp)`}. Each HSP below shows its own single-alignment span, not the hit total.`));
     if (!hsps.length) details.append(element("p", "small", "No alignment HSPs were reported for this hit."));
     for (const hsp of hsps) {
       const box = element("div", "alignment-hsp");
       field(box, "HSP", hsp.hsp ?? "—");
+      field(box, "HSP span coverage (this alignment only)", hsp.query_coverage === null || hsp.query_coverage === undefined ? "—" : `${hsp.query_coverage}%`);
       field(box, "Query coordinates", `${hsp.qstart ?? "—"}–${hsp.qend ?? "—"}`);
       field(box, "Subject coordinates", `${hsp.sstart ?? "—"}–${hsp.send ?? "—"}`);
       field(box, "Strand", hsp.strand ?? "—");
@@ -942,7 +957,7 @@ function renderResults() {
   field(ui.provenance, "Browser input SHA-256", state.inputHash);
   field(ui.provenance, "Consent-bound input hash", state.consent?.input_hash);
   field(ui.provenance, "Submitted at", state.submittedAt);
-  field(ui.provenance, "Results fetched at", state.cached ? "not available (cached reload)" : (state.fetchedAt ?? "—"));
+  field(ui.provenance, "Results fetched at", state.fetchedAt ?? (state.cached ? "unknown (cached result without an original retrieval record)" : "—"));
   field(ui.provenance, "Result source", `${RESULT_ENDPOINT}${state.rid}?format=json&structured=1${state.cached ? "&cached=1" : ""}`);
   field(ui.provenance, "Mock mode", state.mockResult ? "SYNTHETIC — not real" : "no synthetic marker detected");
   const proof = state.provenance ?? {};

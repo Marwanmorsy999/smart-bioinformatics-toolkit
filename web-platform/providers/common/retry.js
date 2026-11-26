@@ -26,6 +26,14 @@ export function isRetryableStatus(status) {
 
 function abortError(reason) {
   if (reason && reason.name === "AbortError") return reason;
+  // A deadline abort carries a TimeoutError reason. Preserve that name so
+  // callers can report provider_timeout honestly instead of a generic abort.
+  if (reason && reason.name === "TimeoutError") {
+    const error = new Error(reason.message || "provider request timed out");
+    error.name = "TimeoutError";
+    error.reason = reason;
+    return error;
+  }
   const error = new Error("provider request aborted");
   error.name = "AbortError";
   error.reason = reason ?? null;
