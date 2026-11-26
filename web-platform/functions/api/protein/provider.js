@@ -420,8 +420,10 @@ export async function getIprscanStatus(jobId, { ctx = {} } = {}) {
   if (!IPRSCAN_JOB_ID.test(String(jobId ?? ""))) {
     throw new ProteinProviderError("invalid_job_id", "Invalid InterProScan 6 job id.");
   }
+  // EBI's /status endpoint answers in plain text; the default application/json
+  // Accept header makes it reject the poll with HTTP 406.
   const response = await providerRequest(`${ENDPOINTS.iprscanBase}/status/${encodeURIComponent(jobId)}`, {
-    ctx, timeoutMs: LIMITS.statusTimeoutMs
+    ctx, headers: { Accept: "text/plain" }, timeoutMs: LIMITS.statusTimeoutMs
   });
   if (response.status === 404) {
     return { job_id: jobId, state: "NOT_FOUND", state_class: "failed", reason: "The job dispatcher reported NOT_FOUND." };

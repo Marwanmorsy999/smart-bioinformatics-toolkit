@@ -7,7 +7,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import { lookupMatches, submitIprscan6, validateProteinSequence } from "../functions/api/protein/provider.js";
+import { getIprscanStatus, lookupMatches, submitIprscan6, validateProteinSequence } from "../functions/api/protein/provider.js";
 import { handleAnnotate } from "../functions/api/protein/workflow.js";
 import { createFakeD1AI, mockAIEnv } from "./helpers/fake-d1.mjs";
 
@@ -185,4 +185,24 @@ test("REPEAT SUBMISSION: same sequence reuses the stored genuine job id with zer
   assert.equal(second.run_id, first.run_id);
   assert.equal(second.provider_job_id, JOB_ID);
   assert.equal(submissions(ctx.calls).length, 1, "refresh reuses the real job id; no second submission");
+});
+
+test("STATUS ACCEPT: /status uses Accept: text/plain; plain-text FINISHED is succeeded and ERROR is failed", async () => {
+  const states = ["FINISHED", "ERROR"];
+  const ctx = setup((url, init) => {
+    assert.equal(url, `https://www.ebi.ac.uk/Tools/services/rest/iprscan6/status/${encodeURIComponent(JOB_ID)}`);
+    assert.equal(init.method, "GET");
+    assert.equal(init.headers.Accept, "text/plain", "EBI /status rejects application/json with HTTP 406");
+    return new Response(states.shift() ?? "FINISHED", { status: 200 });
+  });
+  const finished = await getIprscanStatus(JOB_ID, { ctx: { fetch: ctx.fetchImpl } });
+  assert.equal(finished.job_id, JOB_ID);
+  assert.equal(finished.state, "FINISHED");
+  assert.equal(finished.state_class, "succeeded");
+  const errored = await getIprscanStatus(JOB_ID, { ctx: { fetch: ctx.fetchImpl } });
+  assert.equal(errored.job_id, JOB_ID);
+  assert.equal(errored.state, "ERROR");
+  assert.equal(errored.state_class, "failed");
+  assert.equal(ctx.calls.length, 2);
+  assert.equal(submissions(ctx.calls).length, 0, "polling an existing job never resubmits");
 });
