@@ -936,6 +936,39 @@ test("FIXTURE: blank-line-separated CRLF report tree is parsed from full content
     && call.url.includes("/api/tools") && !call.url.includes("/fetch")).length, 0, "zero tool submissions");
 });
 
+test("FIXTURE: artifact roles are assigned by real content, not by name", async (t) => {
+  // Both tree artifacts are downloaded; the MaxLikelihood artifact's genuine
+  // content is byte-identical (after trim) to the displayed report tree.
+  const iqOutputs = {
+    bionj: { id: BIONJ_HDA, name: "IQ-TREE on dataset 1: BIONJ Tree", state: "ok",
+      extension: "nwk", history_id: FIX.otherHistoryId },
+    maxlikelihood: { id: MAXLIKELIHOOD_HDA, name: "IQ-TREE on dataset 1: MaxLikelihood Tree", state: "ok",
+      extension: "nwk", history_id: FIX.otherHistoryId },
+    report: { id: FIX.reportHda, name: "IQ-TREE on dataset 1", state: "ok",
+      extension: "iqtree", history_id: FIX.otherHistoryId }
+  };
+  const iqtreeHistory = { id: FIX.otherHistoryId, artifacts: Object.values(iqOutputs).map((item) => ({
+    id: item.id, name: item.name, extension: item.extension, state: "ok",
+    history_id: FIX.otherHistoryId, deleted: false
+  })) };
+  const { response, body, stub } = await runWorkflow(t, {
+    payload: { resume_provider_job_id: FIX.providerJobId, history_id: FIX.historyId,
+      resume_iqtree_provider_job_id: IQ_JOB_ID },
+    stubOptions: { alignmentContent: FULL_HEADER_FASTA, treeContent: BIONJ_START_TREE,
+      reportContent: REAL_IQTREE_REPORT, iqtreeJobId: IQ_JOB_ID,
+      iqtreeJobOutputs: iqOutputs, iqtreeOutputs: iqOutputs, iqtreeHistory,
+      extraDatasetText: { [BIONJ_HDA]: BIONJ_TREE, [MAXLIKELIHOOD_HDA]: FINAL_ML_TREE } }
+  });
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(body.tree_newick, FINAL_ML_TREE);
+  assert.equal(body.tree_source, "iqtree_report_final_tree");
+  const roles = new Map(body.tree_artifacts.map((artifact) => [artifact.dataset_id, artifact.source_role]));
+  assert.equal(roles.get(MAXLIKELIHOOD_HDA), "displayed_tree", "identical content is the displayed tree");
+  assert.equal(roles.get(BIONJ_HDA), "starting_tree_not_displayed", "different content stays a starting tree");
+  assert.equal(stub.calls.filter((call) => call.method === "POST"
+    && call.url.includes("/api/tools") && !call.url.includes("/fetch")).length, 0, "zero tool submissions");
+});
+
 test("FIXTURE: MaxLikelihood tree beats BIONJ tree when no report tree exists", async (t) => {
   const providerHistoryId = "11ac94870d0bb33acbeba775a07e014e";
   const providerHistory = { id: providerHistoryId, artifacts: [
