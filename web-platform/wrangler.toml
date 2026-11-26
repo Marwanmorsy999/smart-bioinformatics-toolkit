@@ -47,6 +47,9 @@ NINEROUTER_ENABLED = "true"
 NINEROUTER_MODEL = "auto"
 # M7.10.1: bound server-side provider deadline (seconds). Staging only.
 NINEROUTER_TIMEOUT = "60"
+# M7.10.2: NCBI Common URL API tool identifier (staging only). No personal
+# contact email is configured; none is invented or sent.
+NCBI_TOOL = "smart-bioinformatics-toolkit"
 
 # M7.1: staging now uses its OWN D1 database. Production keeps the original
 # binding below; staging and production must never share a row space.
