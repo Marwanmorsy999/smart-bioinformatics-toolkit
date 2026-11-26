@@ -95,7 +95,11 @@ export function parseIqtreeReport(text) {
     .filter(Boolean);
   // The FINAL ML tree is printed in the report; a separately downloaded .nhx
   // can be the BIONJ starting tree and must not silently replace it.
-  const finalTree = capture(/(?:^|\n)[ \t]*Tree in newick format[ \t]*:[ \t]*([^\r\n]+)/i);
+  // IQ-TREE sometimes prints the newick on the SAME line as the label and
+  // sometimes on the following line. Both come from the FULL report text.
+  const sameLineTree = capture(/(?:^|\n)[ \t]*Tree in newick format[ \t]*:[ \t]*([^\r\n]+)/i);
+  const nextLineTree = capture(/(?:^|\n)[ \t]*Tree in newick format[ \t]*:[ \t]*(?:\r?\n)[ \t]*([^\r\n]+)/i);
+  const finalTree = sameLineTree || nextLineTree;
   const rootingNote = capture(/((?:^|\n)[^\n]*?NOTE:[^\r\n]*UNROOTED[^\r\n]*)/i);
   return {
     model: model ? model.slice(0, 200) : null,
@@ -758,8 +762,11 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
         }
       }
       if (recoveredIqtree && kind === "report") {
-        // Only values actually present in the genuine .iqtree file are kept.
-        recoveredIqtreeReport = parseIqtreeReport(downloaded.content);
+        // Parse the FULL genuine report (a real .iqtree file can be tens of KB
+        // and print its final tree near the END). Only the bounded excerpt is
+        // ever exposed in the response; the full text is never sent to the UI.
+        const fullReportText = downloaded.content;
+        recoveredIqtreeReport = parseIqtreeReport(fullReportText);
         if (recoveredIqtreeRecord) {
           recoveredIqtreeRecord.model = recoveredIqtreeReport.model;
           recoveredIqtreeRecord.log_likelihood = recoveredIqtreeReport.log_likelihood;
@@ -773,7 +780,7 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
           log_likelihood: recoveredIqtreeReport.log_likelihood,
           final_tree_present: Boolean(recoveredIqtreeReport.final_tree)
         };
-        recoveredIqtreeExcerpt = iqtreeReportExcerpt(downloaded.content);
+        recoveredIqtreeExcerpt = iqtreeReportExcerpt(fullReportText);
       }
     }
     // The report's exact final ML tree wins over a starting-tree artifact; it
