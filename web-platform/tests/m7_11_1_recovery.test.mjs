@@ -48,6 +48,19 @@ const NHX_HDA = "eeeeeeee5555ffff4444aaaa3333bbbb";
 // The Worker must fall back to the downloaded treefile and LABEL that fallback.
 const UNPARSEABLE_REPORT = REAL_IQTREE_REPORT.replace(/Tree in newick format: [^\n]*/,
   "Tree in newick format: ((NR_115348.1:0.1,NR_074666.1:0.2);");
+// FIXTURE: a 34KB-shaped report whose final tree line is far beyond the first
+// 2000 chars. A sentinel in the middle must NEVER appear in the excerpt.
+const LONG_REPORT = [
+  "Best-fit model according to AIC: TPM3u+F+I",
+  "Model             LogL",
+  "TPM3u+F+I      -2197.612",
+  "x".repeat(2800),
+  "MID_REPORT_SENTINEL_4f7a",
+  "x".repeat(2200),
+  `Tree in newick format: ${FINAL_ML_TREE}`,
+  "NOTE: Tree is UNROOTED although outgroup taxon 'NR_115348.1' is drawn at root",
+  "UFboot: 1000 replicates"
+].join("\n");
 
 const FIX = Object.freeze({
   historyId: "11ac94870d0bb33adfdcc31d5164dd84",
@@ -262,6 +275,8 @@ test("FIXTURE: report model parsing covers real IQ-TREE phrasings and stays null
   assert.equal(parseIqtreeReport("Best-fit model according to BIC: TPM3u+F+I\n").model, "TPM3u+F+I");
   assert.equal(parseIqtreeReport("Model: TPM3u+F+I\n").model, "TPM3u+F+I");
   assert.equal(parseIqtreeReport("Model of substitution: GTR+F+R3\n").model, "GTR+F+R3");
+  const nextLineTree = parseIqtreeReport("Model: X\nTree in newick format:\n(A:0.1,B:0.2);\n");
+  assert.equal(nextLineTree.final_tree, "(A:0.1,B:0.2);", "tree on the following line is also supported");
   const absent = parseIqtreeReport("no model information here\n");
   assert.equal(absent.model, null);
   assert.equal(absent.log_likelihood, null);
@@ -857,6 +872,31 @@ test("FIXTURE: genuine report final ML tree wins over the BIONJ starting tree", 
   assert.equal(nhx.source_role, "starting_tree_not_displayed");
   assert.equal(body.retrieval.files.find((file) => file.dataset_id === NHX_HDA).source_role,
     "starting_tree_not_displayed");
+  assert.equal(stub.calls.filter((call) => call.method === "POST"
+    && call.url.includes("/api/tools") && !call.url.includes("/fetch")).length, 0, "zero tool submissions");
+});
+
+test("FIXTURE: long genuine report parses its final tree from FULL content", async (t) => {
+  const { response, body, stub } = await runWorkflow(t, {
+    payload: { resume_provider_job_id: FIX.providerJobId, history_id: FIX.historyId,
+      resume_iqtree_provider_job_id: IQ_JOB_ID },
+    stubOptions: { alignmentContent: FULL_HEADER_FASTA, treeContent: BIONJ_START_TREE,
+      reportContent: LONG_REPORT, iqtreeJobId: IQ_JOB_ID,
+      iqtreeJobOutputs: IQ_OUTPUTS, iqtreeOutputs: IQ_OUTPUTS }
+  });
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(body.workflow_completed, true);
+  assert.equal(body.tree_newick, FINAL_ML_TREE, "final tree line beyond 2000 chars is found");
+  assert.equal(body.tree_source, "iqtree_report_final_tree");
+  assert.equal(body.resume_iqtree.final_tree_present, true);
+  assert.equal(body.resume_iqtree.model, "TPM3u+F+I");
+  assert.equal(body.resume_iqtree.log_likelihood, -2197.612);
+  assert.match(body.resume_iqtree.rooting_note, /UNROOTED/);
+  const excerpt = body.resume_iqtree.iqtree_report_excerpt;
+  assert.equal(typeof excerpt, "string");
+  assert.ok(excerpt.length <= 4100, `excerpt must stay bounded, got ${excerpt.length}`);
+  assert.doesNotMatch(excerpt, /MID_REPORT_SENTINEL_4f7a/, "full report is never sent to the UI");
+  assert.match(excerpt, /Tree in newick format/);
   assert.equal(stub.calls.filter((call) => call.method === "POST"
     && call.url.includes("/api/tools") && !call.url.includes("/fetch")).length, 0, "zero tool submissions");
 });
