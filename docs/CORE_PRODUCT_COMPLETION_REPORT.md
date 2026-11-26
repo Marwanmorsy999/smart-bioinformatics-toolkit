@@ -4,7 +4,7 @@
 **Branch:** `product/core-completion`
 **Base commit:** `8105956c908ea6c0d5c053b5ed2c13b86516d2a2`
 **Starting commit (M7.6 reconciliation):** `0303e615e4cdf71a9b97038773a537beab9acdb9`
-**Final commit:** `302cd982461f89a04e5d31784d51b8d4b231f2ff` (M7.6 code fix + documentation reconciliation)
+**Final commit:** `543358f8aa466b78fa8fab8c78eb2392e40f5881` (M7.6 code fix + documentation reconciliation)
 **Current staging deployment:** `c00c6245-c91e-4bc2-9b64-881677b97972`
 **Status:** Completion narrative. This document is documentation-only: this worker made no commit, no deployment and no provider call. A separate code-fix worker is adding the corrected NCBI database identifier and 16S readiness changes after the starting commit; none of that code is claimed here.
 **CURRENT implementation snapshot:** branch `product/core-completion`, base `8105956â€¦`, starting commit `0303e615â€¦`, staging deployment `c00c6245-c91e-4bc2-9b64-881677b97972`, verification date 2026-11-26.
@@ -83,7 +83,7 @@ All paths are under `D:/DevCache/Temp/live-16s-evidence/` unless prefixed with `
 
 ## 5. Branches, commits and deployments
 
-**CURRENT snapshot:** branch `product/core-completion`; base `8105956c908ea6c0d5c053b5ed2c13b86516d2a2`; starting commit (M7.6 reconciliation) `0303e615e4cdf71a9b97038773a537beab9acdb9`; final commit `302cd982461f89a04e5d31784d51b8d4b231f2ff` (M7.6 code fix + documentation reconciliation); staging deployment `c00c6245-c91e-4bc2-9b64-881677b97972`; verification date 2026-11-26.
+**CURRENT snapshot:** branch `product/core-completion`; base `8105956c908ea6c0d5c053b5ed2c13b86516d2a2`; starting commit (M7.6 reconciliation) `0303e615e4cdf71a9b97038773a537beab9acdb9`; final commit `543358f8aa466b78fa8fab8c78eb2392e40f5881` (M7.6 code fix + documentation reconciliation); staging deployment `c00c6245-c91e-4bc2-9b64-881677b97972`; verification date 2026-11-26.
 
 **History â€” branch commits (preserved, superseded):**
 
@@ -152,4 +152,5 @@ Decisions recorded in `docs/PRODUCT_SCOPE_AUDIT.md` and honoured here:
 - **AI chat with a real model**: no authorized provider exists (`available:false`, `reason:"no_enabled_llm_provider"`); the UI is complete and the gateway fails closed, but chat-operational status is **NOT ACHIEVED**.
 
 **Final statement:** the CORE PRODUCT COMPLETION program has delivered a genuinely working, honest product surface, a real consent-governed 16S submission pipeline and genuine browser-only scientific computation, while transparently reporting that the overall 16S workflow is PARTIAL / `production_ready:false`: the real NCBI job FAILED on an invalid database identifier and no genuine results were retrieved, validated, displayed or exported. AI chat remains unavailable for lack of an authorized provider. Mocked tests, synthetic TSV and UI completeness are not presented as substitutes for real results. No production deployment, provider activation, corrected live NCBI submission or scientific algorithm change occurred.
+
 

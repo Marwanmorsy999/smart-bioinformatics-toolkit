@@ -4,7 +4,7 @@
 **Branch:** `product/core-completion`
 **Base commit:** `8105956c908ea6c0d5c053b5ed2c13b86516d2a2`
 **Starting commit (M7.6 reconciliation):** `0303e615e4cdf71a9b97038773a537beab9acdb9`
-**Final commit:** `302cd982461f89a04e5d31784d51b8d4b231f2ff` (M7.6 code fix + documentation reconciliation)
+**Final commit:** `543358f8aa466b78fa8fab8c78eb2392e40f5881` (M7.6 code fix + documentation reconciliation)
 **Current staging deployment:** `c00c6245-c91e-4bc2-9b64-881677b97972`
 **Status:** Implementation description. This document is documentation-only: this worker changed no HTML/CSS/JS/config/migration/secret and called no live provider. A separate code-fix worker is implementing the corrected NCBI database identifier and 16S readiness changes after the starting commit; none of that code is claimed here.
 **CURRENT implementation snapshot:** branch `product/core-completion`, base `8105956â€¦`, starting commit `0303e615â€¦`, staging deployment `c00c6245-c91e-4bc2-9b64-881677b97972`, verification date 2026-11-26.
@@ -147,4 +147,5 @@ These categories are kept in separate test tables in `docs/CORE_PRODUCT_TEST_REP
 ## 8. Constraints preserved
 
 No auth B2, no R2 activation, no new provider, no migration, no scientific algorithm change, no production deployment and no live Galaxy call. The single "Precision Instrument Bench" design system and existing names are preserved; no second catalog or second design system was introduced. `providers/tools/registry.js` is a derived projection, not a competing registry: `functions/api/ai/registry.js` + the generated manifest and `functions/api/workspace/catalog.js` remain authoritative.
+
 

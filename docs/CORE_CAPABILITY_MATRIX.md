@@ -4,7 +4,7 @@
 **Branch:** `product/core-completion`
 **Base commit:** `8105956c908ea6c0d5c053b5ed2c13b86516d2a2`
 **Starting commit (M7.6 reconciliation):** `0303e615e4cdf71a9b97038773a537beab9acdb9`
-**Final commit:** `302cd982461f89a04e5d31784d51b8d4b231f2ff` (M7.6 code fix + documentation reconciliation)
+**Final commit:** `543358f8aa466b78fa8fab8c78eb2392e40f5881` (M7.6 code fix + documentation reconciliation)
 **Current staging deployment:** `c00c6245-c91e-4bc2-9b64-881677b97972`
 **CURRENT implementation snapshot:** branch `product/core-completion`, base `8105956â€¦`, starting commit `0303e615â€¦`, staging deployment `c00c6245-c91e-4bc2-9b64-881677b97972`, verification date 2026-11-26. A separate code-fix worker is adding the corrected NCBI database identifier and 16S readiness changes; no such code is claimed here. The earlier statement that statuses were those at base `8105956` with concurrent uncommitted `/api/tools/catalog`, `providers/tools/registry.js` and assistant UI changes is retained as **history** for the M7.5 pass. Earlier staging deployments `892f4266-2afa-4a0f-aa3f-00585764faf5` / `ed08189a-5db2-41b1-98f3-732b5c97992f` and HEAD `32abf86e6ab8da6819454103286c06e0b62d1076` are **history only**.
 
@@ -144,4 +144,5 @@ grep -n 'key: "' web-platform/worker.js
 **Previously verified surfaces (not re-run by this documentation pass):** `/`, `/16s.html`, `/assistant.html`, `/workspace.html`, `/ai.html`, `/blast.html`, `/taxonomy.html`, `/phylo.html`, `/benchmark.html`, `/research-use.html`; `/api/tools/catalog` (version `1.0.0-m7.4`, 12 tools); `/api/assistant/status` (`available:false`, `reason:"no_enabled_llm_provider"`).
 
 Statuses above were recorded at base `8105956` and reconciled for the M7.6 snapshot at starting commit `0303e615` on 2026-11-26; nothing in this matrix should be read as evidence that a provider is enabled, a credential exists, a corrected live NCBI submission happened, or a live scientific call may be made. The invalid database identifier was corrected in the final commit; the exact evidence is in `docs/evidence/M7_6_NCBI_DIAGNOSIS.md`.
+
 

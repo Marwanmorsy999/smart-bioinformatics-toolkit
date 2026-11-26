@@ -4,7 +4,7 @@
 **Branch:** `product/core-completion`
 **Base commit:** `8105956c908ea6c0d5c053b5ed2c13b86516d2a2`
 **Starting commit (M7.6 reconciliation):** `0303e615e4cdf71a9b97038773a537beab9acdb9`
-**Final commit:** `302cd982461f89a04e5d31784d51b8d4b231f2ff` (M7.6 code fix + documentation reconciliation)
+**Final commit:** `543358f8aa466b78fa8fab8c78eb2392e40f5881` (M7.6 code fix + documentation reconciliation)
 **Current staging deployment:** `c00c6245-c91e-4bc2-9b64-881677b97972`
 **Status:** Consolidated report of the program's completed test runs. This document is documentation-only: this worker ran no new test suite, made no commit and made no deployment. A separate code-fix worker is adding the corrected NCBI database identifier and 16S readiness changes after the starting commit.
 **CURRENT implementation snapshot:** branch `product/core-completion`, base `8105956â€¦`, starting commit `0303e615â€¦`, staging deployment `c00c6245-c91e-4bc2-9b64-881677b97972`, verification date 2026-11-26.
@@ -158,4 +158,5 @@ From `docs/M7_4_2_ACCESSIBILITY.md` (9/9 automated E2E) and the assistant implem
 - New mocked-NCBI honesty suite: **15/15** pass; targeted blast suites: **48/48** pass.
 - Workspace E2E PASS, phylo page E2E PASS, UI E2E 10/10, assistant 10/10, M7.4.2 E2E 9/9.
 - Live NCBI: **no new submission**; no real result retrieved. Mock/offline evidence remains quarantined in `mock-offline/`.
+
 

@@ -4,7 +4,7 @@
 **Branch:** `product/core-completion`
 **Base commit:** `8105956c908ea6c0d5c053b5ed2c13b86516d2a2`
 **Starting commit (M7.6 reconciliation):** `0303e615e4cdf71a9b97038773a537beab9acdb9`
-**Final commit:** `302cd982461f89a04e5d31784d51b8d4b231f2ff` (M7.6 code fix + documentation reconciliation)
+**Final commit:** `543358f8aa466b78fa8fab8c78eb2392e40f5881` (M7.6 code fix + documentation reconciliation)
 **Current staging deployment:** `c00c6245-c91e-4bc2-9b64-881677b97972`
 **CURRENT implementation snapshot:** branch `product/core-completion`, base `8105956â€¦`, starting commit `0303e615â€¦`, staging deployment `c00c6245-c91e-4bc2-9b64-881677b97972`, verification date 2026-11-26. A separate code-fix worker is adding the corrected NCBI database identifier and 16S readiness changes; this audit claims none of that code. The earlier statement that the inventory was taken at base `8105956` with concurrent uncommitted `public/assistant.html`, `css/assistant.css`, `js/assistant.js`, `worker.js`, `functions/api/tools/catalog/` and `providers/tools/registry.js` changes is retained as **history** for the M7.5 documentation pass. Earlier staging deployments `892f4266-2afa-4a0f-aa3f-00585764faf5` and `ed08189a-5db2-41b1-98f3-732b5c97992f` and earlier HEAD `32abf86e6ab8da6819454103286c06e0b62d1076` are **history only**.
 
@@ -166,4 +166,5 @@
 8. **The 16S end-to-end workflow is PARTIAL / `production_ready:false`.** Browser-only FASTA statistics (NR_074666.1, 1 record, 1524 bp, GC 52.1654%, SHA-256 `07efc2c1aeac02a2eed1cbe8d8479b59ffa00a730e93ed65881b41069c652853`) and a genuine consent-governed NCBI submission (RID `GF4KCK07016`) are individually verified, but the canonical `CMD=Get` response is `Status=FAILED`: `Error: No alias or index file found for nucleotide database [16S_ribosomal_RNA] in search path [â€¦]. Please verify the spelling of â€¦`. Our code used the invalid bare database name; NCBI's current value is `rRNA_typestrains/16S_ribosomal_RNA`. The `FORMAT_OBJECT=SearchInfo` `Status=READY` / `ThereAreHits=no` refers to the format request, and its `Status: Searching` row is a stale JS placeholder. No real TSV was retrieved; a corrected live submission requires **explicit owner authorization** and has not happened. Mock RID `MOCK07EFC2C1AEAC02A2` is synthetic only. Evidence: `docs/evidence/M7_6_NCBI_DIAGNOSIS.md`, `docs/evidence/M7_6_status_url_raw.json`, `docs/evidence/M7_6_searchinfo_raw.json`.
 
 **Net recommendation:** no feature in this inventory should be deleted to "simplify". The correct P0/P1 actions are: **HIDE** unavailability behind honest labels, **INTEGRATE** the duplicate shims under their authoritative owners, **SIMPLIFY** stale doc claims, and **KEEP** all engineering infrastructure, migrations, security controls, scientific evidence and historical reports.
+
 

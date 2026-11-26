@@ -4,7 +4,7 @@
 **Branch:** `product/core-completion`
 **Base commit:** `8105956c908ea6c0d5c053b5ed2c13b86516d2a2`
 **Starting commit (M7.6 reconciliation):** `0303e615e4cdf71a9b97038773a537beab9acdb9`
-**Final commit:** `302cd982461f89a04e5d31784d51b8d4b231f2ff` (M7.6 code fix + documentation reconciliation)
+**Final commit:** `543358f8aa466b78fa8fab8c78eb2392e40f5881` (M7.6 code fix + documentation reconciliation)
 **Current staging deployment:** `c00c6245-c91e-4bc2-9b64-881677b97972`
 **Status:** P0/P1 product guidance. This document is a **documentation-only** artifact: this worker changed no HTML/CSS/JS/config/migration. A separate code-fix worker is adding the corrected NCBI database identifier and 16S readiness changes after the starting commit; none of that code is claimed here.
 **CURRENT implementation snapshot:** branch `product/core-completion`, base `8105956â€¦`, starting commit `0303e615â€¦`, staging deployment `c00c6245-c91e-4bc2-9b64-881677b97972`, verification date 2026-11-26. Earlier snapshot statements (tree at `8105956`, concurrent uncommitted `public/assistant.*`, `worker.js`, `/api/tools/catalog`, `providers/tools/` files) were accurate for the M7.5 documentation pass and are retained below as **history**, not as the current state. Earlier staging deployments `892f4266-2afa-4a0f-aa3f-00585764faf5` and `ed08189a-5db2-41b1-98f3-732b5c97992f` and earlier branch HEAD `32abf86e6ab8da6819454103286c06e0b62d1076` are **history only**.
@@ -117,4 +117,5 @@ A correct product response today is an explicit, typed, actionable unavailabilit
 - Feature/screen/endpoint classification: `docs/PRODUCT_SCOPE_AUDIT.md`
 - Authoritative capability ids and statuses: `docs/CORE_CAPABILITY_MATRIX.md`
 - Target architecture and blockers: `docs/CORE_PRODUCT_ARCHITECTURE.md`
+
 

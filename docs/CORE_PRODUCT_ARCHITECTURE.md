@@ -4,7 +4,7 @@
 **Branch:** `product/core-completion`
 **Base commit:** `8105956c908ea6c0d5c053b5ed2c13b86516d2a2`
 **Starting commit (M7.6 reconciliation):** `0303e615e4cdf71a9b97038773a537beab9acdb9`
-**Final commit:** `302cd982461f89a04e5d31784d51b8d4b231f2ff` (M7.6 code fix + documentation reconciliation)
+**Final commit:** `543358f8aa466b78fa8fab8c78eb2392e40f5881` (M7.6 code fix + documentation reconciliation)
 **Current staging deployment:** `c00c6245-c91e-4bc2-9b64-881677b97972`
 **CURRENT implementation snapshot:** branch `product/core-completion`, base `8105956â€¦`, starting commit `0303e615â€¦`, staging deployment `c00c6245-c91e-4bc2-9b64-881677b97972`, verification date 2026-11-26. A separate code-fix worker is adding the corrected NCBI database identifier and 16S readiness changes after the starting commit; this document claims none of that code. The earlier statement that current-state statements describe base `8105956` with concurrent uncommitted `worker.js` (`/api/tools/catalog`), `providers/tools/` and assistant UI changes is retained as **history** for the M7.5 pass. Earlier staging deployments `892f4266-2afa-4a0f-aa3f-00585764faf5` / `ed08189a-5db2-41b1-98f3-732b5c97992f` and HEAD `32abf86e6ab8da6819454103286c06e0b62d1076` are **history only**.
 
@@ -229,4 +229,5 @@ grep -n 'ALLOWED_DATABASE\|rRNA_typestrains' web-platform/functions/api/blast/_l
 **Previously verified surfaces (not re-run by this documentation pass):** `/`, `/16s.html`, `/assistant.html`, `/workspace.html`, `/ai.html`, `/blast.html`, `/taxonomy.html`, `/phylo.html`, `/benchmark.html`, `/research-use.html`; `/api/tools/catalog` (version `1.0.0-m7.4`, 12 tools); `/api/assistant/status` (`available:false`, `reason:"no_enabled_llm_provider"`). The authoritative raw evidence for the NCBI failure is `docs/evidence/M7_6_NCBI_DIAGNOSIS.md`, which references `M7_6_status_url_raw.json` and `M7_6_searchinfo_raw.json` by relative path.
 
 Related documents: `docs/PRODUCT_NORTH_STAR.md` (journey and success criteria), `docs/PRODUCT_SCOPE_AUDIT.md` (keep/integrate/hide decisions), `docs/CORE_CAPABILITY_MATRIX.md` (capability ids and statuses). All historical reports remain in place as evidence.
+
 
