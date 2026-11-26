@@ -27,7 +27,13 @@
     clearAll: byId("clear-conversations"),
     panelState: byId("assistant-state"),
     timeline: byId("message-list"),
-    emptyState: byId("empty-state"),
+    capabilityStatus: byId("capability-status"),
+    capabilityVersion: byId("capability-version"),
+    catalogList: byId("tool-catalog-list"),
+    catalogReload: byId("catalog-reload"),
+    planSelect: byId("plan-tool-select"),
+    planOutput: byId("plan-output"),
+    activeContext: byId("active-context"),
     error: byId("assistant-error"),
     form: byId("composer"),
     input: byId("message-input"),
@@ -51,7 +57,10 @@
     inFlight: false,
     controller: null,
     lastRequest: null,
-    projectContext: ""
+    projectContext: "",
+    catalog: [],
+    catalogVersion: null,
+    selectedToolId: null
   };
 
   function element(tag, className, text) {
@@ -458,7 +467,6 @@
     ui.timeline.replaceChildren();
     const conversation = activeConversation();
     const messages = conversation ? conversation.messages : [];
-    ui.emptyState.hidden = messages.length > 0;
 
     for (const message of messages) {
       const role = ["assistant", "user", "system"].includes(message.role) ? message.role : "system";
@@ -516,6 +524,168 @@
       const label = stage.querySelector(".stage-state");
       if (label) label.textContent = stage.dataset.state === "active" ? "Observed" : "Not started";
     }
+  }
+
+  // ------------------------------------------------- capability catalog
+  // The catalog is read-only data from /api/tools/catalog. Nothing here can
+  // start a job, grant consent, or turn a plan draft into an approval.
+  const stringList = (values) => (Array.isArray(values)
+    ? values.filter((value) => typeof value === "string" && value.trim())
+    : []);
+
+  function appendField(parent, label, values) {
+    const items = stringList(values);
+    if (items.length === 0) return;
+    const field = element("div", "catalog-field");
+    field.append(element("h5", "", label));
+    const list = element("ul");
+    for (const item of items) list.append(element("li", "", item));
+    field.append(list);
+    parent.append(field);
+  }
+
+  function renderActiveContext() {
+    const parts = [];
+    if (state.projectContext) parts.push(`Project/dataset: ${state.projectContext}`);
+    if (state.selectedToolId) parts.push(`Workflow: ${state.selectedToolId}`);
+    ui.activeContext.textContent = parts.length
+      ? `Active context: ${parts.join(" · ")} (ids only — no dataset bytes are fetched or sent).`
+      : "Active context: none — select a project or dataset id in the sidebar and a capability above.";
+  }
+
+  function renderCatalog() {
+    ui.catalogList.replaceChildren();
+    const empty = element("option", "", "Select a capability…");
+    empty.value = "";
+    const options = [empty];
+    for (const entry of state.catalog) {
+      const option = element("option", "", `${entry.id} — ${entry.availability}`);
+      option.value = entry.id;
+      options.push(option);
+    }
+    ui.planSelect.replaceChildren(...options);
+    ui.planSelect.disabled = state.catalog.length === 0;
+    ui.catalogReload.disabled = false;
+    ui.capabilityVersion.textContent = `Catalog version: ${state.catalogVersion ?? "unavailable"}`;
+    ui.capabilityStatus.textContent = `${state.catalog.length} real capabilities loaded from /api/tools/catalog. Availability describes where a capability runs, not a claim that this page executed it.`;
+
+    for (const entry of state.catalog) {
+      const card = element("li", "tool-card");
+      const head = element("div", "tool-card-head");
+      head.append(element("span", "tool-id", entry.id));
+      const chip = element("span", `availability-${String(entry.availability).replace(/[^a-z-]/g, "")}`, entry.availability);
+      head.append(chip);
+      if (entry.production_ready === true) head.append(element("span", "tool-ready", "production ready"));
+      if (entry.production_ready === false) head.append(element("span", "tool-not-ready", "NOT production ready"));
+      if (entry.workflow_context?.production_ready === false) head.append(element("span", "tool-not-ready", "workflow NOT production ready"));
+      card.append(head);
+      card.append(element("p", "tool-purpose", entry.scientific_purpose ?? ""));
+      card.append(element("p", "tool-description", entry.description ?? ""));
+
+      const schemaInputs = Object.keys(entry.input_schema?.properties ?? {});
+      const schemaOutputs = Object.keys(entry.output_schema?.properties ?? {});
+      appendField(card, "Inputs", entry.input_schema?.required?.length ? entry.input_schema.required : schemaInputs);
+      appendField(card, "Outputs", entry.output_schema?.required?.length ? entry.output_schema.required : schemaOutputs);
+      appendField(card, "Supported formats", entry.supported_formats);
+      appendField(card, "Validation requirements", stringList(entry.validation_requirements).slice(0, 3));
+      appendField(card, "Execution location", entry.execution_location);
+      appendField(card, "Dependencies", entry.dependencies);
+      appendField(card, "Limitations", stringList(entry.limitations).slice(0, 2));
+
+      const footer = element("div", "tool-card-footer");
+      const href = safeUrl(entry.entry_point?.href ?? "");
+      if (href) {
+        const link = element("a", "tool-entry", entry.entry_point?.label ?? "Open tool");
+        link.href = href;
+        if (/^https?:\/\//i.test(href)) {
+          link.target = "_blank";
+          link.rel = "noopener noreferrer nofollow";
+        }
+        footer.append(link);
+      }
+      const draft = element("button", "quiet-button", "Draft plan");
+      draft.type = "button";
+      draft.setAttribute("aria-label", `Draft a plan for ${entry.id}`);
+      draft.addEventListener("click", () => {
+        ui.planSelect.value = entry.id;
+        renderPlanDraft();
+        ui.planOutput.scrollIntoView({ block: "nearest" });
+      });
+      footer.append(draft);
+      card.append(footer);
+      ui.catalogList.append(card);
+    }
+  }
+
+  function renderPlanDraft() {
+    const entry = state.catalog.find((tool) => tool.id === ui.planSelect.value) ?? null;
+    state.selectedToolId = entry ? entry.id : null;
+    renderActiveContext();
+    ui.planOutput.replaceChildren();
+    if (!entry) {
+      ui.planOutput.hidden = true;
+      return;
+    }
+    ui.planOutput.hidden = false;
+    ui.planOutput.append(element("h4", "", `Deterministic draft for ${entry.id}`));
+    const outputs = entry.output_schema?.required?.length
+      ? entry.output_schema.required
+      : Object.keys(entry.output_schema?.properties ?? {});
+    const sections = [
+      ["Objective", [entry.scientific_purpose]],
+      ["Input requirements", entry.validation_requirements],
+      ["Recommended workflow", entry.recommended_workflow],
+      ["Expected outputs", outputs],
+      ["Validation", entry.validation_requirements],
+      ["Limitations", entry.limitations],
+      ["External destination (if any)", stringList(entry.external_destinations).length
+        ? entry.external_destinations
+        : ["None declared by the registry."]],
+      ["Approval requirement", [
+        "This draft grants nothing. Execution requires the existing approval and consent flow through the tool's own page."
+      ]]
+    ];
+    for (const [label, values] of sections) appendField(ui.planOutput, label, values);
+    if (entry.workflow_context) {
+      appendField(ui.planOutput, "Workflow readiness", [
+        `${entry.workflow_context.workflow_id}: ${entry.workflow_context.availability}`,
+        entry.workflow_context.production_ready === true ? "production ready" : "NOT production ready"
+      ]);
+    }
+  }
+
+  async function loadCatalog() {
+    // /api/tools/catalog only exists on the platform origin. A file:// preview
+    // is an offline fixture: show the limitation instead of inventing tools.
+    if (location.protocol !== "http:" && location.protocol !== "https:") {
+      ui.capabilityStatus.textContent = "Offline preview: /api/tools/catalog is available when this page is served by the platform. No capabilities are listed here.";
+      ui.capabilityVersion.textContent = "Catalog version: unavailable offline";
+      ui.catalogList.replaceChildren(element("li", "tool-empty", "Open assistant.html from the running platform to load the real capability registry."));
+      ui.planSelect.disabled = true;
+      renderPlanDraft();
+      return;
+    }
+    try {
+      const response = await fetch("api/tools/catalog", {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        credentials: "same-origin"
+      });
+      const data = response.ok ? await response.json().catch(() => null) : null;
+      if (!data || !Array.isArray(data.tools) || typeof data.catalog_version !== "string") {
+        throw new Error("invalid catalog response");
+      }
+      state.catalog = data.tools;
+      state.catalogVersion = data.catalog_version;
+      renderCatalog();
+    } catch {
+      state.catalog = [];
+      ui.capabilityStatus.textContent = "Capability catalog could not be loaded from /api/tools/catalog. No tools are listed until it is reachable.";
+      ui.capabilityVersion.textContent = "Catalog version: unavailable";
+      ui.catalogList.replaceChildren(element("li", "tool-empty", "Registry unavailable — no capabilities are fabricated."));
+      ui.planSelect.disabled = true;
+    }
+    renderPlanDraft();
   }
 
   // ------------------------------------------------------------ composer
@@ -670,6 +840,7 @@
     ui.context.value = "";
     ui.context.removeAttribute("aria-invalid");
     state.projectContext = "";
+    renderActiveContext();
     ui.context.focus();
   });
   ui.context.addEventListener("input", () => {
@@ -677,7 +848,11 @@
     state.projectContext = value;
     const invalid = value !== "" && !PUBLIC_ID.test(value);
     ui.context.setAttribute("aria-invalid", String(invalid));
+    renderActiveContext();
   });
+
+  ui.planSelect.addEventListener("change", renderPlanDraft);
+  ui.catalogReload.addEventListener("click", () => loadCatalog());
 
   ui.clearAll.addEventListener("click", () => {
     openDialog({
@@ -735,4 +910,5 @@
   newConversation();
   setUnavailable(state.reason);
   loadStatus();
+  loadCatalog();
 })();

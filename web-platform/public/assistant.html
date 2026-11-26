@@ -115,13 +115,45 @@
           <span class="status-chip status-chip-caution">AI-generated phrasing only</span>
         </header>
 
-        <ol id="message-list" class="message-list" aria-live="polite" aria-relevant="additions text"></ol>
+        <section id="capability-browser" class="capability-browser" aria-labelledby="capability-title">
+          <div class="capability-head">
+            <div>
+              <p class="eyebrow section-kicker">Read-only registry</p>
+              <h3 id="capability-title">Capability browser — real registered tools and workflows</h3>
+            </div>
+            <button id="catalog-reload" type="button" class="secondary-button small-button" disabled>Reload catalog</button>
+          </div>
+          <p class="capability-intro">Loaded from <code>/api/tools/catalog</code>. Availability and production readiness are reported exactly as the source catalog declares them. This page executes nothing; use the links to reach the existing tools.</p>
+          <p id="capability-status" class="capability-status" role="status" aria-live="polite">Loading capability catalog…</p>
+          <p id="capability-version" class="capability-version">Catalog version: loading</p>
+          <ul id="tool-catalog-list" class="tool-catalog-list"></ul>
+        </section>
 
-        <div id="empty-state" class="empty-state">
-          <img src="brand/sbio-assistant.svg" alt="" aria-hidden="true" width="48" height="48">
-          <h3>No conversation yet</h3>
-          <p>Chat cannot start: no authorized model provider is configured. The questions below only fill the composer — nothing is executed or answered.</p>
-        </div>
+        <section id="plan-builder" class="plan-builder" aria-labelledby="plan-title">
+          <h3 id="plan-title">Plan draft builder</h3>
+          <p class="plan-disclaimer">Deterministic plan draft — not AI-generated and not an approved execution.</p>
+          <p class="plan-workflow-link">For the end-to-end browser 16S identification workflow, open the <a href="16s.html">16S NCBI BLAST workflow</a>. The assistant does not execute it or generate a model answer.</p>
+          <div class="field-group plan-select-group">
+            <label for="plan-tool-select">Choose a registered capability</label>
+            <select id="plan-tool-select" disabled aria-describedby="plan-select-help"></select>
+            <small id="plan-select-help">Only capabilities returned by /api/tools/catalog can be selected. Selecting one drafts text; it does not submit a job.</small>
+          </div>
+          <p id="active-context" class="active-context">Active context: none — select a project or dataset id in the sidebar and a capability above.</p>
+          <div id="plan-output" class="plan-output" aria-live="polite" hidden></div>
+          <div class="plan-ack">
+            <label for="plan-ack">
+              <input type="checkbox" id="plan-ack">
+              <span>I understand execution requires the existing approval and consent flow</span>
+            </label>
+            <p>Acknowledgement only. It does not grant approval or consent, and this page has no execute control.</p>
+          </div>
+        </section>
+
+        <section class="timeline-section" aria-labelledby="timeline-title">
+          <h3 id="timeline-title" class="activity-title">Conversation timeline</h3>
+          <ol id="message-list" class="message-list" aria-live="polite" aria-relevant="additions text"></ol>
+          <p id="timeline-note" class="timeline-note">No conversation messages exist. Chat is unavailable, so no assistant reply is generated.</p>
+        </section>
 
         <section class="suggested" aria-labelledby="suggested-title">
           <h3 id="suggested-title">Example questions — clicking fills the composer; nothing is executed.</h3>

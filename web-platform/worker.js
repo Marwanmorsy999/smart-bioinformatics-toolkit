@@ -6,6 +6,7 @@
 // to that context. Non-API requests are delegated to the static-assets binding.
 
 import { onRequest as onTools } from "./functions/api/tools.js";
+import { onRequest as onToolCatalog } from "./functions/api/tools/catalog/index.js";
 import { onRequest as onAiRequests } from "./functions/api/ai/requests/index.js";
 import { onRequest as onWorkspace } from "./functions/api/workspace/index.js";
 import { onRequest as onAiBackend } from "./functions/api/ai/backend.js";
@@ -66,6 +67,7 @@ import { errorResponse } from "./functions/api/ai/_lib.js";
 // production routing table. The default map is the real onRequest handlers.
 export const handlers = {
   tools: onTools,
+  toolCatalog: onToolCatalog,
   aiRequests: onAiRequests,
   workspace: onWorkspace,
   aiBackend: onAiBackend,
@@ -188,6 +190,9 @@ const ROUTES = [
   { key: "blastResults", re: /^\/api\/blast\/results\/([^/]+)\/?$/, names: ["rid"] },
   { key: "aiPlan", re: /^\/api\/ai\/plans\/([^/]+)\/?$/, names: ["id"] },
   { key: "aiRun", re: /^\/api\/ai\/runs\/([^/]+)\/?$/, names: ["id"] },
+  // Public read-only capability catalog. Static /api/tools/catalog precedes
+  // /api/tools so the two endpoints can never be confused.
+  { key: "toolCatalog", re: /^\/api\/tools\/catalog\/?$/, names: [] },
   { key: "tools", re: /^\/api\/tools\/?$/, names: [] },
   { key: "aiRequests", re: /^\/api\/ai\/requests\/?$/, names: [] },
   { key: "aiBackend", re: /^\/api\/ai\/backend\/?$/, names: [] },
