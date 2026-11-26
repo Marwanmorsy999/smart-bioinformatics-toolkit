@@ -5,6 +5,15 @@
 import { validateFasta, parseFasta } from "./fasta.js";
 import { parseBlast, analyzeBlast, queryLengthsFromFasta } from "./blast.js";
 import { analyzeTaxonomy } from "./taxonomy.js";
+import {
+  alignmentTsv,
+  buildInterpretation,
+  buildPlanExplanationMessage,
+  fullReport,
+  hasStructuredHits,
+  hitSummaryCsv,
+  isSafeAccession
+} from "./16s-results-view.js";
 
 const SUBMIT_THROTTLE_MS = 10 * 1000;
 const STATUS_INTERVAL_MS = 60 * 1000;
@@ -28,6 +37,7 @@ const ui = {
   inputInfo: byId("input-info"),
   create: byId("create-request"),
   plan: byId("plan-view"),
+  planExplanation: byId("plan-explanation"),
   approvalBox: byId("approval-box"),
   approveCheck: byId("approve-check"),
   approve: byId("approve-plan"),
@@ -45,6 +55,9 @@ const ui = {
   results: byId("results"),
   resultsEmpty: byId("results-empty"),
   summary: byId("summary"),
+  searchOverview: byId("search-overview"),
+  interpretation: byId("interpretation-view"),
+  bestHitsBody: byId("best-hits-body"),
   hitsBody: byId("hits-body"),
   queryDetails: byId("query-details"),
   taxonomy: byId("taxonomy-view"),
@@ -52,6 +65,9 @@ const ui = {
   provenance: byId("provenance-view"),
   downloadTsv: byId("download-tsv"),
   downloadJson: byId("download-json"),
+  downloadCsv: byId("download-csv"),
+  downloadReport: byId("download-report"),
+  downloadAlignment: byId("download-alignment"),
   error: byId("flow-error")
 };
 
@@ -62,6 +78,7 @@ const state = {
   statusMessage: null, providerError: null, provenance: null, noHits: false,
   lastSubmitAt: 0, lastStatusAt: 0, submittedAt: null, fetchedAt: null,
   tsv: null, parsed: null, analysis: null, taxonomy: null, mockResult: false,
+  result: null, resultFormat: null, cached: false, interpretation: [],
   pollTimer: null, countdownTimer: null
 };
 
@@ -100,11 +117,21 @@ function resetResults() {
   state.taxonomy = null;
   state.mockResult = false;
   state.noHits = false;
+  state.result = null;
+  state.resultFormat = null;
+  state.cached = false;
+  state.interpretation = [];
   ui.results.hidden = true;
   ui.resultsEmpty.hidden = false;
   ui.banner.hidden = true;
   ui.banner.replaceChildren();
   ui.hitsBody.replaceChildren();
+  ui.searchOverview.replaceChildren();
+  ui.interpretation.replaceChildren();
+  ui.bestHitsBody.replaceChildren();
+  ui.downloadCsv.disabled = true;
+  ui.downloadReport.disabled = true;
+  ui.downloadAlignment.disabled = true;
 }
 
 // ------------------------------------------------------------------ step 1
@@ -162,6 +189,7 @@ async function refreshInput() {
   // consent, RID and results; nothing is carried forward silently.
   ui.plan.hidden = true;
   ui.plan.replaceChildren();
+  clearPlanExplanation();
   ui.approvalBox.hidden = true;
   ui.approveCheck.checked = false;
   ui.approve.disabled = true;
@@ -210,6 +238,7 @@ ui.objective.addEventListener("input", () => {
   clearPollTimer();
   ui.plan.hidden = true;
   ui.plan.replaceChildren();
+  clearPlanExplanation();
   ui.approvalBox.hidden = true;
   ui.approveCheck.checked = false;
   ui.approve.disabled = true;
@@ -245,6 +274,39 @@ function renderPlan(plan) {
   list(ui.plan, "Consents required", plan.consents_required);
   list(ui.plan, "Limitations", plan.limitations);
   ui.plan.append(element("p", "small", "This plan came from the existing deterministic planner. It is not an approval and no job has been created yet."));
+}
+
+function clearPlanExplanation() {
+  ui.planExplanation.hidden = true;
+  ui.planExplanation.replaceChildren();
+}
+
+// Optional model explanation of the deterministic plan. It reuses the EXISTING
+// /api/assistant/chat endpoint with stream:false and sends ONLY plan metadata —
+// never the FASTA. Failure is non-fatal: approval and submission still work.
+async function explainPlan(plan) {
+  clearPlanExplanation();
+  try {
+    const message = buildPlanExplanationMessage(plan, ui.objective.value.trim());
+    const response = await fetch("/api/assistant/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ message, stream: false })
+    });
+    if (!response.ok) return;
+    const data = await response.json().catch(() => ({}));
+    if (data.generated !== true || typeof data.reply !== "string" || !data.reply.trim()) return;
+    ui.planExplanation.replaceChildren();
+    ui.planExplanation.append(element("h3", "", "Plan explanation"));
+    ui.planExplanation.append(element("p", "explanation-label", "AI-generated explanation; plan is deterministic"));
+    ui.planExplanation.append(element("p", "", data.reply.slice(0, 1200)));
+    ui.planExplanation.append(element("p", "small", `Source: existing assistant (${data.provider ?? "unknown provider"}). This text does not approve or execute anything.`));
+    ui.planExplanation.hidden = false;
+  } catch {
+    // Assistant unavailable: leave the deterministic plan intact and usable.
+    clearPlanExplanation();
+  }
 }
 
 async function jsonOrThrow(response) {
@@ -291,6 +353,7 @@ ui.create.addEventListener("click", async () => {
       throw new Error("The generated plan is not the NCBI BLAST identification plan. Nothing was approved or submitted.");
     }
     renderPlan(data.plan);
+    explainPlan(data.plan); // best-effort; never blocks approval
     ui.approveCheck.checked = false;
     ui.approve.disabled = true;
     ui.approvalBox.hidden = false;
@@ -563,7 +626,7 @@ async function checkStatus(manual) {
 
 ui.checkStatus.addEventListener("click", () => checkStatus(true));
 
-function resumeFromRid(value) {
+async function resumeFromRid(value) {
   if (!/^[A-Za-z0-9_-]{8,64}$/.test(value)) {
     setError("Enter a valid NCBI RID (8–64 letters, digits, hyphen or underscore). Nothing was submitted.");
     return;
@@ -585,7 +648,10 @@ function resumeFromRid(value) {
   ui.submit.disabled = true;
   ui.checkStatus.disabled = false;
   setError("");
-  checkStatus(true);
+  // Prefer an offline cached reload of a completed result; only fall back to
+  // a live status check when no cached result exists or it is unusable.
+  const restored = await fetchResults({ cached: true });
+  if (!restored) checkStatus(true);
 }
 
 ui.resumeButton.addEventListener("click", () => {
@@ -602,10 +668,11 @@ function detectSchema(tsv) {
   return columns === 11 ? "extended" : "standard";
 }
 
-async function fetchResults() {
-  if (!state.rid) return;
+async function fetchResults({ cached = false } = {}) {
+  if (!state.rid) return false;
   try {
-    const response = await fetch(`${RESULT_ENDPOINT}${encodeURIComponent(state.rid)}?format=json`, {
+    const suffix = `?format=json&structured=1${cached ? "&cached=1" : ""}`;
+    const response = await fetch(`${RESULT_ENDPOINT}${encodeURIComponent(state.rid)}${suffix}`, {
       method: "GET", headers: { Accept: "application/json" }, credentials: "same-origin"
     });
     let envelope;
@@ -634,6 +701,9 @@ async function fetchResults() {
       envelope = await response.json();
     }
     state.provenance = envelope.provenance ?? null;
+    state.result = envelope.result ?? null;
+    state.resultFormat = state.provenance?.result_format ?? null;
+    state.cached = envelope.cached === true || state.provenance?.cached === true;
     if (envelope.outcome === "no_hits" || envelope.outcome === "provider_failure" || envelope.outcome === "unavailable") {
       state.noHits = envelope.outcome === "no_hits";
       clearPollTimer();
@@ -644,10 +714,11 @@ async function fetchResults() {
       ui.banner.hidden = true;
       ui.downloadTsv.disabled = true;
       ui.downloadJson.disabled = true;
-      return;
+      return false;
     }
     state.tsv = envelope.tsv ?? "";
-    state.fetchedAt = state.provenance?.retrieved_at ?? new Date().toISOString();
+    // A cached reload has no retrieval timestamp in D1; never substitute "now".
+    state.fetchedAt = state.cached ? null : (state.provenance?.retrieved_at ?? new Date().toISOString());
     state.mockResult = state.mockRid || envelope.mock === true || /MOCK DATA|MOCK000001/i.test(state.tsv);
     const schema = detectSchema(state.tsv);
     state.parsed = parseBlast(state.tsv, schema);
@@ -659,9 +730,22 @@ async function fetchResults() {
     // No taxonomy mapping file is uploaded here: consensus uses the scientific
     // names actually present in the retrieved TSV and flags missing lineages.
     state.taxonomy = analyzeTaxonomy(state.analysis, null, {});
+    // Results are only served for a canonical-complete RID, so every
+    // successful fetch (live or cached) is terminal. state.cached is derived
+    // from the RESPONSE, not from this request's cached=1 flag: a live resume
+    // that fell back because no cache existed is never labelled as cached.
+    state.status = "complete";
+    clearPollTimer();
+    stopCountdown();
+    ui.checkStatus.disabled = true;
+    ui.countdown.textContent = "No next status check — terminal state.";
+    renderRid(state.rid, state.status);
+    if (state.cached) state.fetchedAt = null;
     renderResults();
+    return true;
   } catch (error) {
     setError(error.message || "Could not retrieve results. Nothing was fabricated.");
+    return false;
   }
 }
 
@@ -671,6 +755,87 @@ function appendCard(parent, label, value) {
   parent.append(card);
 }
 
+function renderStructuredResults() {
+  const result = state.result;
+  ui.searchOverview.replaceChildren();
+  ui.interpretation.replaceChildren();
+  ui.bestHitsBody.replaceChildren();
+  if (!result) return;
+
+  ui.searchOverview.append(element("h3", "", "Search overview"));
+  field(ui.searchOverview, "Query id", result.query?.id);
+  field(ui.searchOverview, "Query length", result.query?.length);
+  field(ui.searchOverview, "Database", state.provenance?.database ?? "—");
+  field(ui.searchOverview, "Program", state.provenance?.program ?? "—");
+  field(ui.searchOverview, "Parameters", JSON.stringify(state.plan?.steps?.[0]?.params ?? {}));
+  field(ui.searchOverview, "RID", state.rid);
+  field(ui.searchOverview, "Status", state.status ?? "—");
+  field(ui.searchOverview, "Retrieved at", state.cached ? "not available (cached reload)" : (state.provenance?.retrieved_at ?? "—"));
+  field(ui.searchOverview, "Result format", state.provenance?.result_format ?? "—");
+
+  state.interpretation = buildInterpretation(result, state.provenance, { synthetic: state.mockResult });
+  ui.interpretation.append(element("h3", "", "Evidence-based interpretation"));
+  for (const line of state.interpretation) ui.interpretation.append(element("p", "", line));
+
+  for (const hit of result.hits ?? []) {
+    const tr = element("tr");
+    tr.append(element("td", "", hit.rank ?? "—"));
+    const nameCell = element("td");
+    const label = hit.organism ?? hit.title ?? "—";
+    if (isSafeAccession(hit.accession)) {
+      const link = element("a", "", label);
+      link.href = `https://www.ncbi.nlm.nih.gov/nuccore/${hit.accession}`;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      nameCell.append(link, element("span", "small", ` ${hit.accession}`));
+    } else {
+      nameCell.append(element("span", "", label), element("span", "small", hit.accession ? ` ${hit.accession}` : ""));
+    }
+    tr.append(
+      nameCell,
+      element("td", "", hit.identity ?? "—"),
+      element("td", "", hit.query_coverage ?? "—"),
+      element("td", "", hit.evalue ?? "—"),
+      element("td", "", hit.bitscore ?? "—")
+    );
+    const alignmentCell = element("td");
+    const details = element("details", "alignment-detail");
+    details.append(element("summary", "", `Alignment for rank ${hit.rank ?? "—"}`));
+    const hsps = Array.isArray(hit.hsps) ? hit.hsps : [];
+    if (!hsps.length) details.append(element("p", "small", "No alignment HSPs were reported for this hit."));
+    for (const hsp of hsps) {
+      const box = element("div", "alignment-hsp");
+      field(box, "HSP", hsp.hsp ?? "—");
+      field(box, "Query coordinates", `${hsp.qstart ?? "—"}–${hsp.qend ?? "—"}`);
+      field(box, "Subject coordinates", `${hsp.sstart ?? "—"}–${hsp.send ?? "—"}`);
+      field(box, "Strand", hsp.strand ?? "—");
+      field(box, "Identity / identical", `${hsp.identity ?? "—"} / ${hsp.nident ?? "—"}`);
+      const mismatches = Number.isFinite(hsp.length) && Number.isFinite(hsp.nident) ? hsp.length - hsp.nident : null;
+      field(box, "Mismatches (derived: length − identical)", mismatches ?? "—");
+      field(box, "Gaps", hsp.gaps ?? "—");
+      field(box, "Bit score / E-value", `${hsp.bit_score ?? "—"} / ${hsp.evalue ?? "—"}`);
+      if (hsp.qseq || hsp.midline || hsp.sseq) {
+        box.append(element("pre", "alignment-block", [
+          `Query   ${hsp.qseq ?? ""}`,
+          `        ${hsp.midline ?? ""}`,
+          `Subject ${hsp.sseq ?? ""}`
+        ].join("\n")));
+      }
+      details.append(box);
+    }
+    alignmentCell.append(details);
+    tr.append(alignmentCell);
+    ui.bestHitsBody.append(tr);
+  }
+  if (!(result.hits ?? []).length) {
+    const td = element("td", "", "No structured hits were reported.");
+    td.colSpan = 7;
+    const tr = element("tr");
+    tr.append(td);
+    ui.bestHitsBody.append(tr);
+  }
+}
+
 function renderResults() {
   ui.resultsEmpty.hidden = true;
   ui.results.hidden = false;
@@ -678,7 +843,9 @@ function renderResults() {
   ui.banner.className = `results-banner ${state.mockResult ? "synthetic" : "real"}`;
   ui.banner.textContent = state.mockResult
     ? "SYNTHETIC / MOCK DATA — a mock marker was detected in the RID or report. This is NOT a real NCBI result and must not be used for biological conclusions."
-    : "Real tabular result retrieved from NCBI through /api/blast/results/:rid. Independent interpretation is required.";
+    : (state.resultFormat === "json2"
+      ? "Real NCBI JSON2 result parsed into a derived table through /api/blast/results/:rid. Independent interpretation is required."
+      : "Real tabular result retrieved from NCBI through /api/blast/results/:rid. Independent interpretation is required.");
 
   const parsed = state.parsed;
   const analysis = state.analysis;
@@ -692,6 +859,8 @@ function renderResults() {
   appendCard(ui.summary, "Queries with hits", taxonomy.summary.queries_with_hits);
   appendCard(ui.summary, "No-hit queries", taxonomy.summary.queries_without_hits);
   appendCard(ui.summary, "Synthetic", state.mockResult ? "YES" : "no");
+
+  renderStructuredResults();
 
   ui.hitsBody.replaceChildren();
   for (const row of parsed.rows) {
@@ -773,10 +942,13 @@ function renderResults() {
   field(ui.provenance, "Browser input SHA-256", state.inputHash);
   field(ui.provenance, "Consent-bound input hash", state.consent?.input_hash);
   field(ui.provenance, "Submitted at", state.submittedAt);
-  field(ui.provenance, "Results fetched at", state.fetchedAt);
-  field(ui.provenance, "Result source", `${RESULT_ENDPOINT}${state.rid}?format=json`);
+  field(ui.provenance, "Results fetched at", state.cached ? "not available (cached reload)" : (state.fetchedAt ?? "—"));
+  field(ui.provenance, "Result source", `${RESULT_ENDPOINT}${state.rid}?format=json&structured=1${state.cached ? "&cached=1" : ""}`);
   field(ui.provenance, "Mock mode", state.mockResult ? "SYNTHETIC — not real" : "no synthetic marker detected");
   const proof = state.provenance ?? {};
+  field(ui.provenance, "Result format", proof.result_format ?? "—");
+  field(ui.provenance, "Derived from", proof.derived_from ?? "—");
+  field(ui.provenance, "Cached reload", proof.cached === true ? "yes — no fresh NCBI fetch" : "no");
   field(ui.provenance, "Database", proof.database ?? "—");
   field(ui.provenance, "Provider parser schema", proof.parser_schema ?? "—");
   field(ui.provenance, "Raw SHA-256", proof.sha256 ?? "—");
@@ -785,6 +957,9 @@ function renderResults() {
   list(ui.provenance, "Retrieval warnings", proof.warnings);
   ui.downloadTsv.disabled = false;
   ui.downloadJson.disabled = false;
+  ui.downloadCsv.disabled = !hasStructuredHits(state.result) && parsed.parsed_rows === 0;
+  ui.downloadReport.disabled = false;
+  ui.downloadAlignment.disabled = !(state.result?.hits ?? []).some((hit) => (hit.hsps ?? []).length > 0);
 }
 
 function download(text, filename, type) {
@@ -814,6 +989,10 @@ ui.downloadJson.addEventListener("click", () => {
     parameters: state.plan?.steps?.[0]?.params ?? {},
     input_hash: state.consent?.input_hash ?? null,
     retrieved_at: state.fetchedAt,
+    cached: state.cached,
+    result_format: state.resultFormat,
+    structured_result: state.result,
+    interpretation: state.interpretation,
     provenance: state.provenance,
     parsed: state.parsed,
     analysis: state.analysis,
@@ -825,10 +1004,52 @@ ui.downloadJson.addEventListener("click", () => {
   download(JSON.stringify(payload, null, 2), `${state.mockResult ? "mock-" : ""}ncbi-blast-${state.rid}.json`, "application/json");
 });
 
+function csvHits() {
+  if (hasStructuredHits(state.result)) return hitSummaryCsv(state.result);
+  // Fallback: the same fields from the retrieved tabular report, never invented.
+  const hits = (state.parsed?.rows ?? []).filter((row) => row.valid).map((row) => ({
+    rank: null,
+    accession: row.values?.sacc ?? row.values?.sseqid ?? null,
+    organism: row.values?.sscinames ?? row.values?.sscinames_raw ?? null,
+    taxid: row.values?.staxids ?? null,
+    identity: row.values?.pident ?? null,
+    query_coverage: row.query_coverage ?? row.values?.qcovs ?? null,
+    evalue: row.values?.evalue ?? null,
+    bitscore: row.values?.bitscore ?? null
+  }));
+  return hitSummaryCsv({ hits });
+}
+
+ui.downloadCsv.addEventListener("click", () => {
+  if (!state.rid || ui.downloadCsv.disabled) return;
+  download(csvHits(), `${state.mockResult ? "mock-" : ""}ncbi-blast-${state.rid}-hits.csv`, "text/csv;charset=utf-8");
+});
+ui.downloadReport.addEventListener("click", () => {
+  if (!state.rid || ui.downloadReport.disabled) return;
+  const report = fullReport({
+    rid: state.rid,
+    result: state.result,
+    provenance: state.provenance,
+    parameters: state.plan?.steps?.[0]?.params ?? {},
+    interpretation: state.interpretation,
+    synthetic: state.mockResult,
+    cached: state.cached,
+    fetchedAt: state.fetchedAt
+  });
+  download(report, `${state.mockResult ? "mock-" : ""}ncbi-blast-${state.rid}-report.txt`, "text/plain;charset=utf-8");
+});
+ui.downloadAlignment.addEventListener("click", () => {
+  if (!state.rid || ui.downloadAlignment.disabled) return;
+  download(alignmentTsv(state.result), `${state.mockResult ? "mock-" : ""}ncbi-blast-${state.rid}-alignment.tsv`, "text/plain;charset=utf-8");
+});
+
 // Initial state: no input and no result. If this browser tab already submitted
 // a job, resume by RID (a status read) instead of creating a duplicate job.
 ui.downloadTsv.disabled = true;
 ui.downloadJson.disabled = true;
+ui.downloadCsv.disabled = true;
+ui.downloadReport.disabled = true;
+ui.downloadAlignment.disabled = true;
 refreshInput();
 try {
   const savedRid = String(sessionStorage.getItem(RID_STORAGE_KEY) ?? "").trim();

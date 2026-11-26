@@ -170,6 +170,16 @@ before(async () => {
       stages: [], fixture: "OFFLINE_FIXTURE_NOT_A_REAL_API_RESPONSE"
     }) });
   });
+  await context.route("**/api/assistant/chat", async (route) => {
+    fetchAttempts.push(route.request().url());
+    // OFFLINE FIXTURE, not a real model response: the optional plan explanation
+    // degrades gracefully and never claims generated content. No live provider.
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+      generated: false, available: false, reason: "offline_fixture",
+      reply: "", notice: "Offline fixture: no assistant response was generated.",
+      fixture: "OFFLINE_FIXTURE_NOT_A_REAL_API_RESPONSE"
+    }) });
+  });
 });
 
 after(async () => {

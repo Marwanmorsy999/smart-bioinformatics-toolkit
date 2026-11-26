@@ -28,6 +28,7 @@ import {
   QBLAST_PARSER_SCHEMA,
   textResponse
 } from "../_lib.js";
+import { isJson2Report, parseBlastJson2, toDerivedTabular } from "../json2.js";
 
 function ridFromUrl(url, segment) {
   try {
@@ -42,6 +43,158 @@ function ridFromUrl(url, segment) {
 function wantsJson(request) {
   const format = new URL(request.url).searchParams.get("format");
   return format === "json" || /application\/json/i.test(request.headers.get("Accept") ?? "");
+}
+
+// Opt-in modes. `structured=1` is only honoured together with format=json, so
+// the default text/plain and JSON tabular responses stay byte-for-byte intact.
+function requestOptions(request) {
+  try {
+    const params = new URL(request.url).searchParams;
+    return {
+      structured: params.get("structured") === "1" && params.get("format") === "json",
+      cached: params.get("cached") === "1"
+    };
+  } catch {
+    return { structured: false, cached: false };
+  }
+}
+
+function looksLikeJson2(raw) {
+  const body = String(raw ?? "").trim();
+  return body.startsWith("{") && !/QBlastInfoBegin|<!doctype|<html/i.test(body);
+}
+
+// Cached reload: NO NCBI fetch at all. The D1 schema has no retrieval timestamp
+// column, so retrieved_at is honestly null rather than the current time.
+async function cachedResultResponse(request, rid, raw, { structured = false, mock = false } = {}) {
+  const rawText = String(raw ?? "");
+  const synthetic = mock === true || /MOCK DATA|MOCK000001/.test(rawText);
+  const sha256 = await hashInput(rawText);
+  const cachedWarning = "Cached result served from D1 without a fresh NCBI fetch; the original retrieval time is not available.";
+
+  if (looksLikeJson2(rawText)) {
+    const result = parseBlastJson2(rawText);
+    if (isJson2Report(result)) {
+      const tsv = toDerivedTabular(result);
+      // A cached JSON2 report can be a genuine no-hits result: never label it
+      // as hits just because rows were served from D1.
+      const noHits = result.no_hits === true && !result.hits.length;
+      const outcome = noHits ? "no_hits" : "hits";
+      const provenance = baseProvenance(rid, null, synthetic, {
+        outcome,
+        cached: true,
+        result_format: "json2",
+        derived_from: "json2",
+        sha256,
+        ...countRows(tsv),
+        warnings: [
+          ...result.warnings,
+          cachedWarning,
+          ...(noHits ? ["NCBI reported ThereAreHits=no. No result rows were retrieved and none were synthesised."] : [])
+        ]
+      });
+      if (wantsJson(request)) {
+        const body = {
+          status: noHits ? "no_hits" : "complete",
+          state: noHits ? "no_hits" : "complete",
+          outcome, terminal: true,
+          tsv: noHits ? null : tsv,
+          table: null, mock: synthetic, cached: true, provenance,
+          message: synthetic
+            ? "Cached SYNTHETIC result. Not a real NCBI result."
+            : (noHits
+              ? "Cached no-hits result served from D1; no new NCBI request was made."
+              : "Cached structured result served from D1; no new NCBI request was made.")
+        };
+        if (structured) body.result = result;
+        return jsonResponse(body, 200, request);
+      }
+      return textResponse(noHits ? "" : tsv, 200, request, provenanceHeaders(provenance));
+    }
+  }
+
+  const provenance = baseProvenance(rid, null, synthetic, {
+    outcome: synthetic ? "mock" : "hits",
+    cached: true,
+    result_format: "tabular",
+    sha256,
+    ...countRows(rawText),
+    warnings: [cachedWarning]
+  });
+  if (wantsJson(request)) {
+    return jsonResponse({
+      status: "complete", state: "complete", outcome: synthetic ? "mock" : "hits", terminal: true,
+      tsv: rawText, table: null, mock: synthetic, cached: true, provenance,
+      message: synthetic
+        ? "Cached SYNTHETIC result. Not a real NCBI result."
+        : "Cached tabular result served from D1; no new NCBI request was made."
+    }, 200, request);
+  }
+  return textResponse(rawText, 200, request, provenanceHeaders(provenance));
+}
+
+// Structured JSON2 retrieval. Called only AFTER the same canonical status gate
+// used by the tabular path, so no-hit/failure states behave identically.
+async function structuredHitsResponse(request, rid, env, { now, fetchImpl, parsed, db }) {
+  const resultsUrl = `${BLAST_API_URL}?${buildResultsParams(rid, env, { format: "json2" }).toString()}`;
+  const upstream = await fetchUpstream(resultsUrl, { fetchImpl });
+  if (!upstream.ok) {
+    return rejectedResponse(request,
+      `NCBI did not return a usable JSON2 report (HTTP ${upstream.httpStatus ?? "unknown"}). No result was fabricated.`,
+      parsed.evidence);
+  }
+
+  const raw = upstream.body;
+  const contentType = String(upstream.contentType ?? "").toLowerCase();
+  if (!raw.trim()
+    || /text\/html|application\/xml/i.test(contentType)
+    || /<!doctype|<html|QBlastInfoBegin|\bError:\s*No alias/i.test(raw)) {
+    return rejectedResponse(request,
+      "NCBI returned an HTML, error or empty body instead of a JSON2 report. No result was fabricated.",
+      parsed.evidence);
+  }
+
+  const result = parseBlastJson2(raw);
+  if (!isJson2Report(result)) {
+    return rejectedResponse(request,
+      "NCBI returned a body with no usable JSON2 search object. No result was fabricated.",
+      parsed.evidence);
+  }
+  const retrievedAt = new Date(now).toISOString();
+  if (result.no_hits && !result.hits.length) {
+    return noHitsResponse(request, rid, parsed, retrievedAt, {
+      cachedProof: { sha256: await hashInput(raw), warnings: result.warnings }
+    });
+  }
+
+  const tsv = toDerivedTabular(result);
+  const provenance = baseProvenance(rid, retrievedAt, false, {
+    outcome: "hits",
+    result_format: "json2",
+    derived_from: "json2",
+    sha256: await hashInput(raw),
+    ...countRows(tsv),
+    warnings: [...result.warnings]
+  });
+  if (provenance.rows_rejected > 0) {
+    provenance.warnings.push(`${provenance.rows_rejected} derived line(s) were rejected.`);
+  }
+
+  try {
+    // Store the RAW JSON2 body: a later ?cached=1 reload must serve exactly
+    // what the provider returned, not a lossy derived summary.
+    await cacheResults(db, rid, raw);
+  } catch {
+    return errorResponse("Could not cache the BLAST results.", 500, request);
+  }
+
+  return jsonResponse({
+    status: "complete", state: "complete", outcome: "hits", terminal: true,
+    result, tsv, table: null, mock: false, cached: false,
+    message: "Real structured JSON2 BLAST report retrieved from NCBI. Independent interpretation is required.",
+    evidence: parsed.evidence,
+    provenance
+  }, 200, request);
 }
 
 function provenanceHeaders(provenance) {
@@ -167,8 +320,19 @@ export async function handleResults(rid, request, env, { now = Date.now(), fetch
     return errorResponse(`Results are not ready. Current status: ${row.status}.`, 409, request);
   }
 
+  const options = requestOptions(request);
   const mockEnv = isMock(env);
   const mockRid = safeRid.toUpperCase().startsWith(MOCK_RID_PREFIX);
+
+  // ?cached=1 is an explicit offline reload: serve the cached body with no
+  // status preflight and no results fetch. Provenance says so honestly.
+  if (options.cached && row.result_tsv) {
+    return cachedResultResponse(request, safeRid, row.result_tsv, {
+      structured: options.structured,
+      mock: mockEnv || mockRid
+    });
+  }
+
   if (mockEnv || mockRid) {
     // MOCK_TSV is strictly gated by server-side env: a mock RID in real mode
     // never turns synthetic rows into an apparently real result.
@@ -230,6 +394,10 @@ export async function handleResults(rid, request, env, { now = Date.now(), fetch
   if (parsed.state !== "complete") return providerFailureResponse(request, parsed);
   if (parsed.evidence.there_are_hits === "no" || parsed.evidence.no_hits === true) {
     return noHitsResponse(request, safeRid, parsed, new Date(now).toISOString());
+  }
+
+  if (options.structured) {
+    return structuredHitsResponse(request, safeRid, env, { now, fetchImpl, parsed, db });
   }
 
   const resultsUrl = `${BLAST_API_URL}?${buildResultsParams(safeRid, env).toString()}`;

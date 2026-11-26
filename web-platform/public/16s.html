@@ -96,7 +96,10 @@
           <div class="button-row">
             <button id="create-request" type="button" class="primary-button small-button" disabled>Create request</button>
           </div>
-          <div id="plan-view" class="plan-view" hidden aria-live="polite"></div>
+          <div class="plan-columns">
+            <div id="plan-view" class="plan-view" hidden aria-live="polite"></div>
+            <div id="plan-explanation" class="plan-explanation" hidden aria-live="polite"></div>
+          </div>
           <div id="approval-box" class="approval-box" hidden>
             <label for="approve-check">
               <input id="approve-check" type="checkbox">
@@ -141,6 +144,21 @@
           <div id="results-banner" class="results-banner" role="status" aria-live="polite" hidden></div>
           <div id="results" hidden>
             <div id="summary" class="summary-grid" aria-label="Result summary"></div>
+            <div id="search-overview" class="search-overview" aria-label="Search overview"></div>
+            <div id="interpretation-view" class="interpretation-view" aria-label="Evidence-based interpretation"></div>
+            <div id="best-match-view" class="best-match-view" aria-label="Best-match table">
+              <div class="table-scroll">
+                <table id="best-hits-table">
+                  <caption>Best matches — values present in the retrieved structured report only</caption>
+                  <thead><tr>
+                    <th scope="col">Rank</th><th scope="col">Organism / accession</th>
+                    <th scope="col">Identity %</th><th scope="col">Coverage %</th>
+                    <th scope="col">E-value</th><th scope="col">Bit score</th><th scope="col">Alignment</th>
+                  </tr></thead>
+                  <tbody id="best-hits-body"></tbody>
+                </table>
+              </div>
+            </div>
             <div class="table-scroll">
               <table id="hits-table">
                 <caption>Real BLAST hits — only fields present in the retrieved TSV are shown</caption>
@@ -158,6 +176,9 @@
             <div class="button-row">
               <button id="download-tsv" type="button" class="secondary-button small-button">Download retrieved TSV</button>
               <button id="download-json" type="button" class="secondary-button small-button">Download parsed JSON</button>
+              <button id="download-csv" type="button" class="secondary-button small-button" disabled>Download hit summary (CSV)</button>
+              <button id="download-report" type="button" class="secondary-button small-button" disabled>Download full report (TXT)</button>
+              <button id="download-alignment" type="button" class="secondary-button small-button" disabled>Download alignment data (TSV)</button>
             </div>
           </div>
           <p id="results-empty" class="results-empty">No results yet. Results appear only after a real RID is retrieved and its tabular report is parsed.</p>
