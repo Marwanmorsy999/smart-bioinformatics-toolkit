@@ -45,7 +45,22 @@
       </aside>
     </header>
 
-    <p class="storage-notice" role="note" data-testid="data-handling-disclosure">Data handling: no sequence is transmitted until you explicitly approve and submit. Before any external call, only the approved FASTA text is sent to <strong>NCBI BLAST</strong>; a short-lived, single-use consent token bound to its hash, database and program gates the transmission. FASTA bytes are stored inline in D1 for this request, not durably in object storage, along with its hash, status, provenance and any retrieved result table; an audit record of the transmission is kept. Nothing else leaves your browser. Do not submit sequences you are not authorised to transmit.</p>
+    <div class="storage-notice" role="note" data-testid="data-handling-disclosure">
+      <strong>Data handling.</strong>
+      Browser validation is local. When you create a request, your FASTA is sent to Smart Bioinformatics AI and stored in D1 for that request. It is not sent to NCBI until you review and approve the plan and explicitly submit using the single-use consent.
+      FASTA bytes are stored inline in D1 for this request, not durably in object storage; no retention period or deletion mechanism is documented.
+      Do not submit sequences you are not authorised to transmit.
+      <details class="data-flow-details">
+        <summary>Technical data-flow details</summary>
+        <ul>
+          <li><strong>What is sent to this platform:</strong> your FASTA text plus a short question/objective, sent to <code>POST /api/ai/requests</code>. Validation, statistics and previews before that step run in your browser; nothing else leaves your browser for those local checks.</li>
+          <li><strong>What is stored:</strong> FASTA bytes are stored inline in D1 <code>datasets.fasta_text</code>; a SHA-256 hash, size, filename, provenance/status and any retrieved result table; plus request, plan and job rows, a single-use consent record, and append-only audit events. Audit events contain no sequence. Nothing is stored in durable object storage; no durable R2 byte storage. No retention period and no user-facing deletion mechanism is documented.</li>
+          <li><strong>What goes to NCBI:</strong> only the approved FASTA plus the approved parameters <code>DATABASE=rRNA_typestrains/16S_ribosomal_RNA</code> and <code>PROGRAM=blastn</code> (<code>CMD=Put</code>); nothing unrelated, no project files, no secrets, and no consent token. Status and results polling (<code>CMD=Get</code>) sends only the RID. The outgoing NCBI URL is never logged, and the consent token is never sent to NCBI. Nothing is sent to any other external service.</li>
+          <li><strong>When external transmission occurs:</strong> nothing is sent to NCBI before approval and submission. External transmission to NCBI occurs only after you review and approve the plan and explicitly submit using the single-use consent. Nothing else is sent to external services.</li>
+          <li><strong>What consent authorizes:</strong> a short-lived, single-use token bound to this exact input hash, database and program authorizes exactly one external submission; it is not reusable.</li>
+        </ul>
+      </details>
+    </div>
 
     <ol class="flow-steps" aria-label="Workflow steps">
       <li>
@@ -54,7 +69,7 @@
           <div class="field-group">
             <label for="fasta-file">FASTA file (optional)</label>
             <input id="fasta-file" type="file" accept=".fasta,.fa,.fna,.txt,text/plain">
-            <small>Reading a file fills the text box below. No upload happens until you approve a plan.</small>
+            <small>Reading a file fills the text box below; reading is local. Creating a request sends your FASTA to this platform (see data handling above); nothing is sent to NCBI until you approve and submit.</small>
           </div>
           <div class="field-group">
             <label for="fasta-text">FASTA text</label>
@@ -87,7 +102,7 @@
               <input id="approve-check" type="checkbox">
               <span>I have reviewed this exact plan. I approve the single step and consent to transmit the validated FASTA bytes to <strong>NCBI BLAST</strong> (https://blast.ncbi.nlm.nih.gov/Blast.cgi) using database <code>rRNA_typestrains/16S_ribosomal_RNA</code> (16S ribosomal RNA sequences, Bacteria and Archaea; previously named <code>16S_ribosomal_RNA</code>) and program <code>blastn</code>. I understand this consent is scoped to this input, short-lived and single-use.</span>
             </label>
-            <p class="small">Approval creates jobs and mints the consent token. Nothing is transmitted until you then press “Submit to NCBI”.</p>
+            <p class="small">Approval creates jobs and mints the single-use consent token; nothing is sent to NCBI until you then press “Submit to NCBI”.</p>
             <button id="approve-plan" type="button" class="primary-button small-button" disabled>Approve plan &amp; issue consent</button>
           </div>
           <div id="consent-view" class="consent-view" role="status" aria-live="polite" hidden></div>
@@ -112,7 +127,11 @@
             <input id="resume-rid" type="text" maxlength="64" autocomplete="off" spellcheck="false" placeholder="NCBI RID">
             <button id="resume-rid-button" type="button" class="secondary-button small-button">Resume by RID</button>
           </div>
-          <p class="small">Status is checked at most once per minute (the server enforces this too). Checking does not fetch results until the job is complete. Only NCBI's canonical status for your RID is trusted; contradictory status evidence is shown as <code>status_conflict</code> and monitoring stops. No result is shown unless a real tabular report is retrieved.</p>
+          <div class="small">
+            <p>Status is checked at most once per minute (the server enforces this too). Checking does not fetch results until the job is complete. No result is shown unless a real tabular report is retrieved and validated.</p>
+            <p>NCBI may occasionally return inconsistent status information. When this happens, monitoring stops and the request is held for verification. No scientific result is shown until the platform retrieves and validates a real results file.</p>
+            <details class="data-flow-details"><summary>Technical detail</summary><p>The API reports a terminal <code>status_conflict</code> state when structured status evidence disagrees; it is never shown as queued, no-hit or success, and monitoring stops. Production checks only NCBI's canonical status for your RID; no result is shown until a real results file is retrieved.</p></details>
+          </div>
         </section>
       </li>
 
@@ -147,6 +166,7 @@
     </ol>
 
     <div id="flow-error" class="flow-error" role="alert" aria-live="assertive" hidden></div>
+    <button id="clear-error" type="button" class="secondary-button small-button" hidden>Clear error</button>
   </main>
 
   <footer class="site-footer">

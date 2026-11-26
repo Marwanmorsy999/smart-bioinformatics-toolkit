@@ -11,6 +11,10 @@ const STATUS_INTERVAL_MS = 60 * 1000;
 const OPEN_STATUSES = new Set(["queued", "running", "waiting"]);
 // status_conflict = contradictory NCBI status evidence; terminal, never success.
 const TERMINAL_STATUSES = new Set(["complete", "failed", "error", "unavailable", "no_hits", "status_conflict"]);
+// Researcher-facing copy for inconsistent NCBI status evidence. The technical
+// `status_conflict` enum stays in the API and a concise details area, never in
+// ordinary copy.
+const STATUS_CONFLICT_COPY = "NCBI may occasionally return inconsistent status information. When this happens, monitoring stops and the request is held for verification. No scientific result is shown until the platform retrieves and validates a real results file.";
 const RESULT_ENDPOINT = "/api/blast/results/";
 const RID_STORAGE_KEY = "m7_6_blast_rid";
 
@@ -36,6 +40,7 @@ const ui = {
   resumeButton: byId("resume-rid-button"),
   checkStatus: byId("check-status"),
   countdown: byId("status-countdown"),
+  clearError: byId("clear-error"),
   banner: byId("results-banner"),
   results: byId("results"),
   resultsEmpty: byId("results-empty"),
@@ -70,6 +75,7 @@ function element(tag, className, text) {
 function setError(message) {
   ui.error.textContent = message ? String(message).slice(0, 600) : "";
   ui.error.hidden = !message;
+  if (ui.clearError) ui.clearError.hidden = !message;
 }
 
 function field(parent, label, value) {
@@ -346,6 +352,12 @@ function clearPollTimer() {
   state.pollTimer = null;
 }
 
+// Stop the countdown ticker on a terminal state; no indefinite animation.
+function stopCountdown() {
+  if (state.countdownTimer !== null) clearInterval(state.countdownTimer);
+  state.countdownTimer = null;
+}
+
 function schedulePoll() {
   clearPollTimer();
   state.pollTimer = setTimeout(() => checkStatus(false), STATUS_INTERVAL_MS);
@@ -357,10 +369,17 @@ function startCountdown() {
     const waitSubmit = Math.max(0, SUBMIT_THROTTLE_MS - (Date.now() - state.lastSubmitAt));
     const waitStatus = Math.max(0, STATUS_INTERVAL_MS - (Date.now() - state.lastStatusAt));
     if (state.rid) {
-      ui.countdown.textContent = waitStatus > 0
-        ? `Next status check allowed in ${Math.ceil(waitStatus / 1000)} s.`
-        : "Status check available now.";
-      ui.checkStatus.disabled = waitStatus > 0 || !OPEN_STATUSES.has(state.status);
+      // Terminal states have no next permitted check and no indefinite
+      // animation; only open states tick down toward the next poll.
+      if (TERMINAL_STATUSES.has(state.status)) {
+        ui.countdown.textContent = "No next status check — terminal state.";
+        ui.checkStatus.disabled = true;
+      } else {
+        ui.countdown.textContent = waitStatus > 0
+          ? `Next status check allowed in ${Math.ceil(waitStatus / 1000)} s.`
+          : "Status check available now.";
+        ui.checkStatus.disabled = waitStatus > 0 || !OPEN_STATUSES.has(state.status);
+      }
     } else {
       ui.countdown.textContent = waitSubmit > 0
         ? `Submission throttle: ${Math.ceil(waitSubmit / 1000)} s.`
@@ -371,14 +390,32 @@ function startCountdown() {
   state.countdownTimer = setInterval(update, 1000);
 }
 
+// Honest next-permitted-check text. Terminal states have no next check; open
+// states respect the once-per-minute NCBI polling limit. The live countdown
+// element mirrors this; nothing animates on a terminal state.
+function nextPermittedCheckText(status) {
+  if (TERMINAL_STATUSES.has(status)) return "no further checks — terminal state";
+  if (!OPEN_STATUSES.has(status)) return "—";
+  const wait = Math.max(0, STATUS_INTERVAL_MS - (Date.now() - state.lastStatusAt));
+  return wait > 0 ? `${Math.ceil(wait / 1000)} s` : "now";
+}
+
 function renderRid(rid, status) {
   ui.rid.replaceChildren();
   ui.rid.hidden = false;
   ui.rid.append(element("h3", "", "Remote BLAST request"));
   field(ui.rid, "RID", rid);
-  field(ui.rid, "Status", status);
+  // Technical `status_conflict` stays in the API + concise details area, not
+  // ordinary copy; show researcher-facing status text instead.
+  field(ui.rid, "Status", status === "status_conflict" ? "held for verification" : status);
+  // Submission time, last check and next permitted check are shown so the
+  // researcher can see monitoring state without inferring it; RTOE is shown
+  // only when the provider returned a finite value.
+  field(ui.rid, "Submission time", state.submittedAt ?? "—");
+  field(ui.rid, "Last check", state.lastStatusAt ? new Date(state.lastStatusAt).toISOString() : "—");
   // RTOE = provider-estimated seconds to completion, shown only when present.
   if (Number.isFinite(state.rtoe)) field(ui.rid, "Estimated time to completion (RTOE)", `${state.rtoe} s`);
+  field(ui.rid, "Next permitted check", nextPermittedCheckText(status));
   field(ui.rid, "Source", "/api/blast/status/:rid (real NCBI when mock mode is off)");
   if (state.mockRid) {
     ui.rid.append(element("p", "input-warning", "This RID has the mock prefix. Its results must be treated as synthetic, never as a real NCBI result."));
@@ -387,7 +424,10 @@ function renderRid(rid, status) {
   ui.providerStatus.replaceChildren();
   ui.providerStatus.hidden = false;
   ui.providerStatus.className = `provider-status ${TERMINAL_STATUSES.has(status) && status !== "complete" ? "failed" : "pending"}`;
-  if (state.statusMessage) ui.providerStatus.append(element("p", "", state.statusMessage));
+  // For inconsistent NCBI status evidence, ordinary copy uses researcher
+  // wording (STATUS_CONFLICT_COPY); the raw technical message stays in the API
+  // and the concise details area, not in ordinary copy.
+  if (state.statusMessage && status !== "status_conflict") ui.providerStatus.append(element("p", "", state.statusMessage));
   if (state.providerError) {
     ui.providerStatus.append(element("p", "provider-error", `NCBI error (verbatim, truncated by the server): ${state.providerError}`));
   }
@@ -396,7 +436,13 @@ function renderRid(rid, status) {
   }
   if (status === "status_conflict") {
     // Contradictory NCBI status evidence: honest, terminal, never success.
-    ui.providerStatus.append(element("p", "small", "NCBI returned contradictory status evidence. The search state is not trustworthy; no result was retrieved and nothing is fabricated. Monitoring stopped."));
+    // Researcher-facing wording; technical `status_conflict` stays in the API
+    // and the concise details area, not in ordinary copy.
+    ui.providerStatus.append(element("p", "", STATUS_CONFLICT_COPY));
+    const details = element("details", "data-flow-details");
+    details.append(element("summary", "", "Technical detail"));
+    details.append(element("p", "small", "The API reports a terminal `status_conflict` state: structured NCBI status evidence disagrees. It is never shown as queued, no-hit or success; monitoring stops; no result is shown until a real results file is retrieved and validated."));
+    ui.providerStatus.append(details);
   }
 }
 
@@ -480,15 +526,27 @@ async function checkStatus(manual) {
     renderRid(state.rid, state.status);
     if (state.status === "complete") {
       clearPollTimer();
+      stopCountdown();
+      ui.checkStatus.disabled = true;
+      ui.countdown.textContent = "No next status check — terminal state.";
       await fetchResults();
     } else if (TERMINAL_STATUSES.has(state.status)) {
       clearPollTimer();
+      stopCountdown();
+      ui.checkStatus.disabled = true;
+      ui.countdown.textContent = "No next status check — terminal state.";
       state.noHits = state.status === "no_hits";
       ui.resultsEmpty.textContent = state.noHits
         ? "NCBI completed the search with no hits. No result table is shown and none was fabricated."
-        : `NCBI reported ${state.status}. No results were retrieved; no result is fabricated.`;
+        : (state.status === "status_conflict"
+          ? STATUS_CONFLICT_COPY
+          : `NCBI reported ${state.status}. No results were retrieved; no result is fabricated.`);
       if (state.status !== "complete") {
-        setError(data.message || "The remote provider reported a terminal status. No results are available for this RID.");
+        // Ordinary copy uses researcher wording for inconsistent NCBI status;
+        // the technical `status_conflict` enum stays in the API + details area.
+        setError(state.status === "status_conflict"
+          ? STATUS_CONFLICT_COPY
+          : (data.message || "The remote provider reported a terminal status. No results are available for this RID."));
       }
     } else {
       schedulePoll();
@@ -739,6 +797,9 @@ function download(text, filename, type) {
   anchor.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
+// Clear a surfaced error without touching RID/results state.
+if (ui.clearError) ui.clearError.addEventListener("click", () => setError(""));
 
 ui.downloadTsv.addEventListener("click", () => {
   if (!state.tsv || !state.rid) return;

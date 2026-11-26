@@ -1,6 +1,6 @@
 # Dataset transport and data-flow controls
 
-**Status:** Current implementation, verified against source on 2026-11-24.
+**Status:** Current implementation, verified against source on 2026-11-24. **M7.8 update (2026-11-26):** see `docs/PRIVACY_DATA_FLOW_M78.md`. Two axes are distinct: browser validation is local, but `POST /api/ai/requests` sends FASTA to this platform and stores it inline in D1 `datasets.fasta_text`; **nothing is sent to NCBI until approval + explicit submit + single-use consent.** No retention period or user-facing deletion is documented; no durable R2 byte storage. History preserved; prior "not transmitted"/"no sequence persistence" wording refers only to the browser-local (no-network) pages, not the 16S AI-request + NCBI flow.
 **Companion:** `SYSTEM_ARCHITECTURE.md` §10, `AI_AGENT_ARCHITECTURE.md`, `COMPUTE_INFRASTRUCTURE.md`, `THREAT_MODEL.md`, `PRIVACY_NOTE.md`.
 **Scope:** every path by which sequence/dataset bytes can move between the browser, the Worker control plane, the local execution agent, storage and external scientific APIs.
 
@@ -40,7 +40,7 @@ The agent does not receive an inbound connection. It polls `GET /api/ai/jobs` wi
 
 ### 1.4 External scientific API transmission — consented steps only
 
-The only implemented external sequence transmission is the legacy NCBI BLAST URL API `CMD=Put` (`functions/api/blast/submit.js`, `buildPutParams` in `functions/api/blast/_lib.js`). It is now gated by a single-use consent token (§4). The Worker adds `tool`/`email` identification from env when configured (`withIdentification` in `blast/_lib.js`); exact bytes are identified by the SHA-256 `input_hash` bound to the token and stored in `blast_requests`/`blast_consents` and in an `ai_blast_consent_issued` audit event. The FASTA is never logged and never placed in a URL by status/results calls.
+The only implemented external sequence transmission is the legacy NCBI BLAST URL API `CMD=Put` (`functions/api/blast/submit.js`, `buildPutParams` in `functions/api/blast/_lib.js`). It is now gated by a single-use consent token (§4). The Worker adds `tool`/`email` identification from env when configured (`withIdentification` in `blast/_lib.js`); exact bytes are identified by the SHA-256 `input_hash` bound to the token and stored in `blast_requests`/`blast_consents` and in an `ai_blast_consent_issued` audit event. On `CMD=Put` the approved FASTA **is** placed in the NCBI `QUERY` parameter of the GET request URL (plus approved `DATABASE=rRNA_typestrains/16S_ribosomal_RNA`, `PROGRAM=blastn`); **the outgoing NCBI URL is never logged**; no secrets or consent token are sent; no consent token is placed in any NCBI URL. Status/results `CMD=Get` calls carry no sequence. (M7.8 corrected database `rRNA_typestrains/16S_ribosomal_RNA`; bare `16S_ribosomal_RNA` invalid; no live PUT in M7.8.)
 
 `GET /api/blast/status/:rid` and `GET /api/blast/results/:rid` call NCBI with `CMD=Get&RID=...` only (`buildStatusParams`, `buildResultsParams`); they carry **no sequence**, use the RID as the sole identifier, and are not consent-gated (no user bytes are transmitted). This is confirmed in `functions/api/blast/status/[rid].js` and `results/[rid].js` and asserted by `tests/blast_lib.test.mjs`.
 
@@ -50,7 +50,7 @@ Other services in `docs/API_CATALOG.md` are CATALOG-ONLY; no browser or Worker c
 
 | Path | What moves | Trigger | Consent requirement | Validation | Provenance | Storage |
 |---|---|---|---|---|---|---|
-| Browser-local file → in-memory text | Local FASTA/TSV bytes | File input or paste; local "Analyze" button | None — stays on device | Client-side format/alphabet/size checks | None needed (not transmitted) | Memory only |
+| Browser-local file → in-memory text | Local FASTA/TSV bytes | File input or paste; local "Analyze" button | None — stays on device (these no-network pages; the 16S AI-request flow separately transmits FASTA to this platform) | Client-side format/alphabet/size checks | None needed (not transmitted by these local pages) | Memory only |
 | Browser → Worker `POST /api/ai/requests` | FASTA text (≤64 KiB), question text | User submits an AI request | No external egress at this step | `validateRequestPayload`, `validateFasta`, byte cap | `ai_requests` row + dataset SHA-256 | D1 `datasets.fasta_text`, `d1://datasets/<id>` |
 | Worker → D1 job row → agent poll | Dataset id, filename, `fasta_text` (≤64 KiB) inline | Agent authenticated poll of `GET /api/ai/jobs` | Plan approval required to create the job; consent for egress steps | Job/plan schema checks, agent token | `jobs.inputs_json`, audit `ai_job_created` | D1 `jobs` row; agent temp workspace copy |
 | Agent → Worker `POST /api/ai/jobs/:id/result` | Artifacts, provenance, validation, explanation, logs (≤2 MiB) | Agent completes a job | No external data at this hop | `validateResultShape` + SHA-256 hash check per artifact | `tool_runs`, `artifacts`, provenance JSON | D1 rows; no R2 |

@@ -62,7 +62,8 @@ frontend. Client downloads (JSON/CSV/FASTA/printable HTML) are generated locally
   because it limits incident response.
 
 ### I — Information disclosure
-- Positive controls: no sequences in D1/history; generic upstream-error messages; same-origin
+- Positive controls: no sequences in `blast_requests`/history; generic upstream-error messages; same-origin
+  > **M7.8 correction (`docs/PRIVACY_DATA_FLOW_M78.md`):** "no sequences in D1" applies to `blast_requests`; **FASTA is stored inline in D1 `datasets.fasta_text`** (and `jobs.inputs_json`) for `POST /api/ai/requests`, with no sequence in audit/logs; no retention period or user-facing deletion mechanism is documented.
   CORS only (`corsHeaders`); `Cache-Control: no-store`, `Referrer-Policy: no-referrer`,
   `X-Content-Type-Options: nosniff` and a restrictive `Content-Security-Policy` on API
   responses (`baseHeaders`); strict transport headers in `public/_headers`.
