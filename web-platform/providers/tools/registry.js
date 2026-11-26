@@ -5,8 +5,9 @@
 //   - functions/api/workspace/catalog.js (versioned workflow catalog)
 //   - functions/api/ai/registry.tools.generated.js (validated tool manifests)
 // No capability is invented, and no execution claim is upgraded. In particular
-// msa-phylogenetics stays partial/not-production-ready: a real MAFFT step ran
-// once, but the full remote tree/retrieval/validation path is NOT verified.
+// msa-phylogenetics stays partial/not-production-ready: a real MAFFT → IQ-TREE
+// remote path is wired through the existing approval flow with live-discovered
+// tool ids/versions, but end-to-end execution on staging is NOT verified here.
 
 import { TOOLS } from "../../functions/api/ai/registry.tools.generated.js";
 import { WORKER_TOOLS } from "../../functions/api/ai/registry.js";
@@ -77,12 +78,14 @@ function workflowEntries() {
     const productionReady = availability.production_ready === true;
     const entryPoint = WORKFLOW_ENTRY_POINTS[workflow.id];
     // Only the 16S path is documented as production ready and browser/local.
-    // Phylogenetics stays partial and its remote path stays blocked/unverified.
+    // Phylogenetics has a real approval-gated remote path but stays partial:
+    // no end-to-end completion is claimed for this milestone.
     const phylogenetic = workflow.id === "msa-phylogenetics";
     const executionLocation = phylogenetic ? ["python", "external"] : ["browser", "python", "external"];
     const limitations = [availability.note ?? "No execution note was declared by the catalog."];
     if (phylogenetic) {
-      limitations.push("No MAFFT→IQ-TREE completion is claimed; the full multi-step remote path is not verified.");
+      limitations.push("A real MAFFT → IQ-TREE path is executable through the existing approval flow with live-discovered tool ids/versions; end-to-end completion is not verified here.");
+      limitations.push("No production-readiness claim is made for the remote phylogenetics path.");
     }
 
     return {
@@ -112,21 +115,21 @@ function workflowEntries() {
       available: true,
       production_ready: productionReady,
       availability_reason: availability.state ?? "unspecified",
-      blocked_paths: phylogenetic ? ["remote tree/retrieval/validation path (unverified)"] : [],
+      blocked_paths: phylogenetic ? ["end-to-end MAFFT→IQ-TREE completion claim (not verified)"] : [],
       version: workflow.version,
       dependencies: phylogenetic
-        ? ["local-python phylogenetics adapters", "remote tree/retrieval/validation path (unverified; not enabled here)"]
+        ? ["local-python phylogenetics adapters", "existing /api/ai/workflows/phylo/run approval flow (Galaxy tool ids/versions discovered live)"]
         : ["existing /api/ai/requests -> approve -> BLAST path", "single-use consent token for external egress"],
       external_destinations: phylogenetic
-        ? ["remote Galaxy tree/retrieval path — unverified and blocked in this deployment"]
+        ? ["Galaxy Europe MAFFT/IQ-TREE execution — only after explicit approval; ids/versions discovered live"]
         : ["NCBI BLAST — existing consent-gated path only"],
       limitations,
       recommended_workflow: phylogenetic
         ? [
-          "Open the phylogenetics workflow page and load homologous DNA FASTA.",
-          "Review the proposed plan; the full remote tree/retrieval/validation path is unverified.",
-          "Do not treat this capability as a completed MAFFT→IQ-TREE run.",
-          "Any execution requires the existing approval and consent flow."
+          "Open the phylogenetics workflow page and load at least three homologous DNA FASTA records.",
+          "Review the proposed plan; it shows the exact live-discovered tool ids/versions, inputs, outputs and backend.",
+          "Approve explicitly; only then are bytes uploaded to the existing Galaxy execution path.",
+          "Judge the result by the returned alignment/tree metrics and provenance; end-to-end completion is not verified here."
         ]
         : [
           "Open the BLAST analyzer with a 16S rRNA FASTA dataset.",
