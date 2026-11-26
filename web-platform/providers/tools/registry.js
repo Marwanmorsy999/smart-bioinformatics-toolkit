@@ -9,6 +9,7 @@
 // once, but the full remote tree/retrieval/validation path is NOT verified.
 
 import { TOOLS } from "../../functions/api/ai/registry.tools.generated.js";
+import { WORKER_TOOLS } from "../../functions/api/ai/registry.js";
 import { CATALOG_VERSION, WORKFLOWS } from "../../functions/api/workspace/catalog.js";
 
 // Mirrors the authoritative workflow catalog version. Per-tool versions remain
@@ -35,7 +36,8 @@ const TOOL_ENTRY_POINTS = Object.freeze({
   "sequence-stats.validate": Object.freeze({ label: "Open FASTA validation", href: "index.html#tools" }),
   "sequence-stats.profile": Object.freeze({ label: "Open sequence statistics", href: "index.html#tools" }),
   "microbiome-16s.blast-parse": Object.freeze({ label: "Open BLAST analyzer", href: "blast.html" }),
-  "microbiome-16s.taxonomy": Object.freeze({ label: "Open taxonomy analyzer", href: "taxonomy.html" })
+  "microbiome-16s.taxonomy": Object.freeze({ label: "Open taxonomy analyzer", href: "taxonomy.html" }),
+  "ncbi.blastn": Object.freeze({ label: "Open 16S NCBI BLAST workflow", href: "16s.html" })
 });
 
 // Paraphrases of the generated descriptions only. No scientific claim is added.
@@ -48,7 +50,8 @@ const TOOL_PURPOSES = Object.freeze({
   "sequence-stats.validate": "Check FASTA structure and the explicitly chosen IUPAC alphabet.",
   "sequence-stats.profile": "Summarize FASTA records with length, GC%, composition and N50.",
   "microbiome-16s.blast-parse": "Normalize an existing BLAST TSV into parsed hits.",
-  "microbiome-16s.taxonomy": "Derive conservative per-query taxonomic verdicts from parsed BLAST hits."
+  "microbiome-16s.taxonomy": "Derive conservative per-query taxonomic verdicts from parsed BLAST hits.",
+  "ncbi.blastn": "Retrieve real NCBI BLASTN evidence for 16S rRNA identification."
 });
 
 const copy = (value) => JSON.parse(JSON.stringify(value ?? null));
@@ -137,8 +140,8 @@ function workflowEntries() {
   });
 }
 
-function toolEntries() {
-  return TOOLS.map((tool) => {
+function toolEntries(source = TOOLS) {
+  return source.map((tool) => {
     const inputSchema = copy(tool.input_schema ?? {});
     const outputSchema = copy(tool.output_schema ?? {});
     const inputProperties = inputSchema.properties ?? {};
@@ -182,10 +185,11 @@ function toolEntries() {
       output_schema: outputSchema,
       supported_formats: formatsFromInputSchema(inputSchema),
       validation_requirements: validationRequirements,
-      execution_location: ["python"],
-      // `available` is the generated manifest flag; local-python tools run in
-      // the local agent, never in this browser. Disabled tools stay disabled.
-      availability: available ? "local-only" : "disabled",
+      execution_location: tool.external_egress === true ? ["worker", "external"] : ["python"],
+      // `available` is the declared flag; local-python tools run in the local
+      // agent, never in this browser. The Worker BLAST capability is available
+      // only through approval and consent. Disabled tools stay disabled.
+      availability: available ? (tool.external_egress === true ? "available" : "local-only") : "disabled",
       available,
       // The generated registry declares availability, not production readiness.
       production_ready: null,
@@ -212,12 +216,21 @@ function toolEntries() {
         "Any execution requires the existing approval and consent flow."
       ],
       entry_point: { ...entryPoint },
-      source: { registry: "functions/api/ai/registry.tools.generated.js", tool_id: tool.id }
+      source: {
+        registry: tool.external_egress === true
+          ? "functions/api/ai/registry.js"
+          : "functions/api/ai/registry.tools.generated.js",
+        tool_id: tool.id
+      }
     };
   });
 }
 
-export const TOOL_CATALOG = deepFreeze([...workflowEntries(), ...toolEntries()]);
+export const TOOL_CATALOG = deepFreeze([
+  ...workflowEntries(),
+  ...toolEntries(),
+  ...toolEntries(WORKER_TOOLS)
+]);
 
 export function listCatalog() {
   // Defensive copy: callers may not mutate the frozen single source of truth.

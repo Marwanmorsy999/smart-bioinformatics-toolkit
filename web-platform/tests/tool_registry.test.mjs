@@ -8,7 +8,10 @@ import {
   AVAILABILITY_STATES, EXECUTION_LOCATIONS, TOOL_CATALOG, TOOL_CATALOG_VERSION,
   catalogIds, getCatalogEntry, listCatalog
 } from "../providers/tools/registry.js";
-import { TOOLS } from "../functions/api/ai/registry.tools.generated.js";
+import { TOOLS, WORKER_TOOLS } from "../functions/api/ai/registry.js";
+import { ALLOWED_DATABASE, ALLOWED_PROGRAM } from "../functions/api/blast/_lib.js";
+import { classifyIntent, buildPlan } from "../functions/api/ai/planner.js";
+import { validatePlan } from "../functions/api/ai/_lib.js";
 import { CATALOG_VERSION, WORKFLOWS } from "../functions/api/workspace/catalog.js";
 import { onRequest as onToolCatalog } from "../functions/api/tools/catalog/index.js";
 import { createFetch } from "../worker.js";
@@ -25,7 +28,11 @@ function context(path, init = {}) {
 }
 
 test("the capability catalog is derived from the real sources and invents no tools", () => {
-  const expected = new Set([...WORKFLOWS.map((workflow) => workflow.id), ...TOOLS.map((tool) => tool.id)]);
+  const expected = new Set([
+    ...WORKFLOWS.map((workflow) => workflow.id),
+    ...TOOLS.map((tool) => tool.id),
+    ...WORKER_TOOLS.map((tool) => tool.id)
+  ]);
   assert.deepEqual(new Set(catalogIds()), expected);
   assert.equal(TOOL_CATALOG_VERSION, CATALOG_VERSION);
 
@@ -148,4 +155,40 @@ test("the assistant page stays honest: read-only catalog, disabled composer, no 
   }
   // The browser never invents capabilities when served from an offline file.
   assert.match(js, /location\.protocol !== "http:" && location\.protocol !== "https:"/);
+});
+
+test("identify_taxa hands off to a real Worker BLAST step with egress and consent", () => {
+  assert.equal(classifyIntent("identify taxa from these 16S sequences").intent, "identify_taxa");
+  const { plan, clarifyingQuestion } = buildPlan({
+    text: "Identify taxa from these 16S sequences",
+    datasetId: "ds_0123456789abcdef",
+    requestId: "req_0123456789abcdef",
+    now: Date.parse("2026-11-24T12:00:00.000Z")
+  });
+  assert.equal(clarifyingQuestion, null);
+  assert.ok(plan);
+  assert.equal(validatePlan(plan).valid, true);
+  assert.equal(plan.steps.length, 1);
+  const step = plan.steps[0];
+  assert.equal(step.tool_id, "ncbi.blastn");
+  // Worker-side registration is additive: generated tool ids are untouched.
+  assert.deepEqual(getCatalogEntry("ncbi.blastn").source.registry, "functions/api/ai/registry.js");
+  assert.equal(getCatalogEntry("ncbi.blastn").entry_point.href, "16s.html");
+  assert.deepEqual(step.params, { database: ALLOWED_DATABASE, program: ALLOWED_PROGRAM });
+  assert.equal(step.external_egress, true);
+  assert.equal(step.consent_required, true);
+  assert.deepEqual(plan.consents_required, ["external-blast"]);
+  assert.ok(plan.external_services.join(" ").includes("blast.ncbi.nlm.nih.gov"));
+  const limitations = plan.limitations.join(" ");
+  assert.match(limitations, /approval and consent/i);
+  assert.match(limitations, /mock/i);
+  assert.doesNotMatch(limitations, /no external service is contacted/i);
+  // The profile intent is unchanged and still performs no egress.
+  const profile = buildPlan({
+    text: "profile my FASTA",
+    datasetId: "ds_0123456789abcdef",
+    requestId: "req_0123456789abcdef"
+  }).plan;
+  assert.equal(profile.steps[0].tool_id, "sequence-stats.profile");
+  assert.equal(profile.steps[0].external_egress, false);
 });
