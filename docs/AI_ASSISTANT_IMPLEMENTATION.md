@@ -1,15 +1,15 @@
-# S Bio Assistant - Implementation and Honest Acceptance - CORE PRODUCT COMPLETION
+﻿# S Bio Assistant - Implementation and Honest Acceptance - CORE PRODUCT COMPLETION
 
 **Verification date:** 2026-11-26
 **Branch:** `product/core-completion`
 **Base commit:** `8105956c908ea6c0d5c053b5ed2c13b86516d2a2`
 **Starting commit (M7.6 reconciliation):** `0303e615e4cdf71a9b97038773a537beab9acdb9`
-**Final commit:** `55defef938a560e6c09e12ca5313b6de948755c1` (M7.6 code fix + documentation reconciliation)
+**Final commit:** `302cd982461f89a04e5d31784d51b8d4b231f2ff` (M7.6 code fix + documentation reconciliation)
 **Current staging deployment:** `c00c6245-c91e-4bc2-9b64-881677b97972`
 **Status:** Implementation description + acceptance split. This document is documentation-only: this worker changed no HTML/CSS/JS/config/migration/secret, contacted no provider and made no deployment. A separate code-fix worker is adding the corrected NCBI database identifier and 16S readiness changes after the starting commit.
-**CURRENT implementation snapshot:** branch `product/core-completion`, base `8105956…`, starting commit `0303e615…`, staging deployment `c00c6245-c91e-4bc2-9b64-881677b97972`, verification date 2026-11-26.
+**CURRENT implementation snapshot:** branch `product/core-completion`, base `8105956â€¦`, starting commit `0303e615â€¦`, staging deployment `c00c6245-c91e-4bc2-9b64-881677b97972`, verification date 2026-11-26.
 
-**History (preserved, superseded — not current):** earlier branch HEAD at the M7.5 documentation-pass task start was `32abf86e6ab8da6819454103286c06e0b62d1076`; earlier staging deployments were `892f4266-2afa-4a0f-aa3f-00585764faf5` (tool registry, assistant, 16S flow) then `ed08189a-5db2-41b1-98f3-732b5c97992f` (resume-by-RID). Production untouched. `MOCK_NCBI` on staging was set to `0` to permit live NCBI; no other secret or provider was activated. No new live NCBI call or provider activation occurred in this M7.6 documentation pass.
+**History (preserved, superseded â€” not current):** earlier branch HEAD at the M7.5 documentation-pass task start was `32abf86e6ab8da6819454103286c06e0b62d1076`; earlier staging deployments were `892f4266-2afa-4a0f-aa3f-00585764faf5` (tool registry, assistant, 16S flow) then `ed08189a-5db2-41b1-98f3-732b5c97992f` (resume-by-RID). Production untouched. `MOCK_NCBI` on staging was set to `0` to permit live NCBI; no other secret or provider was activated. No new live NCBI call or provider activation occurred in this M7.6 documentation pass.
 
 **Evidence discipline:** every statement below is traceable to a file in the worktree or to the verified program evidence listed in `docs/CORE_PRODUCT_TEST_REPORT.md`. Where a capability is not working, the word **UNAVAILABLE** or **BLOCKED** is used rather than an aspiration.
 
@@ -21,7 +21,7 @@
 
 **Role (from the authoritative system instruction, `functions/api/assistant/index.js:14-89`):** help the user understand sequence formats, FASTA, 16S rRNA analysis, BLAST parsing, taxonomy, MSA, phylogenetics, tool parameters, workflow choices and analysis plans. The instruction explicitly says the assistant is **NOT** an autonomous scientist, **NOT** a source of scientific truth and **NOT** a validation engine.
 
-**Division of labour (unchanged from `docs/PRODUCT_NORTH_STAR.md` §1):**
+**Division of labour (unchanged from `docs/PRODUCT_NORTH_STAR.md` آ§1):**
 
 | Concern | Owner | Assistant may not |
 |---|---|---|
@@ -82,13 +82,13 @@ These drafts are assembled from registry fields (`scientific_purpose`, `validati
 |---|---|---|
 | `GET /api/assistant/status` | `200`, `{available:false, type:"assistant_provider_unavailable", reason:"no_enabled_llm_provider", candidate_provider:"ninerouter", execution_mode:"real"}`, 8 stages `not_started` | `functions/api/assistant/index.js:91-104,106-139`; `docs/M7_4_2_ACCESSIBILITY.md:64` |
 | `POST /api/assistant/chat` | `503`, `{available:false, generated:false, type:"assistant_provider_unavailable", reason:"no_enabled_llm_provider"}` and detail "No response was generated. No model provider was contacted."; header `X-Assistant-Error: assistant_provider_unavailable` | `assistant/index.js:119-131,141-180` |
-| 9Router (the only chat-capable adapter) | Disabled in both environments; no base URL/key; `AI_LLM_PROVIDER` is Python-only and never read by the Worker | `providers/ninerouter/index.js`; `docs/CORE_CAPABILITY_MATRIX.md` §4 (`EX-NINEROUTER-*`) |
-| smarts.bio | Disabled in both environments and requires written owner authorization; no call made | `providers/smartsbio/index.js`; `docs/CORE_CAPABILITY_MATRIX.md` §4 |
+| 9Router (the only chat-capable adapter) | Disabled in both environments; no base URL/key; `AI_LLM_PROVIDER` is Python-only and never read by the Worker | `providers/ninerouter/index.js`; `docs/CORE_CAPABILITY_MATRIX.md` آ§4 (`EX-NINEROUTER-*`) |
+| smarts.bio | Disabled in both environments and requires written owner authorization; no call made | `providers/smartsbio/index.js`; `docs/CORE_CAPABILITY_MATRIX.md` آ§4 |
 | Provider probe (historical) | `403 feature_flag_disabled`; no fallback, no mock | `docs/M7_1_LIVE_ACTIVATION_REPORT.md` |
 
 The gateway is intentionally fail-closed: even with a flag and secret injected in an offline test, `fetch` was asserted never to be called and no secret name/value appeared in bodies or headers (`docs/M7_4_2_ACCESSIBILITY.md:60-68`). **This is evidence of honest unavailability, not evidence that chat works with a real model.**
 
-No provider was activated in this program, no key was installed, and no live provider call was made. The assistant therefore remains unavailable (`/api/assistant/status` → `available:false`, `reason:"no_enabled_llm_provider"`; `/api/assistant/chat` → 503 `generated:false`) and **no AI prose is fabricated**: no canned reply, no invented number, citation or scientific conclusion is presented as a model response.
+No provider was activated in this program, no key was installed, and no live provider call was made. The assistant therefore remains unavailable (`/api/assistant/status` â†’ `available:false`, `reason:"no_enabled_llm_provider"`; `/api/assistant/chat` â†’ 503 `generated:false`) and **no AI prose is fabricated**: no canned reply, no invented number, citation or scientific conclusion is presented as a model response.
 
 ---
 
@@ -130,7 +130,7 @@ The future assistant may explain a plan; it may never bypass the following gates
 
 | Boundary | Implementation | Effect |
 |---|---|---|
-| **Registered** | `functions/api/ai/registry.js` exposes `getTool`, `isKnownTool`, `toolIds`; `planner.js` uses a closed `TOOL_BY_INTENT` map (`validate_and_profile → sequence-stats.profile`, `identify_taxa → ncbi.blastn`, `phylogenetics → phylogenetics.workflow`). An intent can never select a tool from free text. | Unknown or unavailable tool ids produce no plan step; a clarifying question or typed unavailability is returned instead (`planner.js:85-127`). |
+| **Registered** | `functions/api/ai/registry.js` exposes `getTool`, `isKnownTool`, `toolIds`; `planner.js` uses a closed `TOOL_BY_INTENT` map (`validate_and_profile â†’ sequence-stats.profile`, `identify_taxa â†’ ncbi.blastn`, `phylogenetics â†’ phylogenetics.workflow`). An intent can never select a tool from free text. | Unknown or unavailable tool ids produce no plan step; a clarifying question or typed unavailability is returned instead (`planner.js:85-127`). |
 | **Schema-validated** | `validateParams()` checks `required`, `additionalProperties:false`, `type`, `enum`, `minimum`, `maximum` for each tool's `params_schema` (`registry.js:82-135`); `shared/schemas/plan.schema.json` validates plans. | Database/program are the exact constants the consent token is bound to (`ALLOWED_DATABASE`, `ALLOWED_PROGRAM`); no free-text parameter reaches egress. |
 | **Consent-gated** | Explicit checkbox and `POST /api/ai/plans/:id/approve` issue a single-use token bound to input hash, database and program with an expiry; `/api/blast/submit` resolves then atomically burns the token **before** any NCBI call (`blast/submit.js:69-96`); migrations `0003_blast_consent.sql` and `0004_blast_consent_unique.sql`. | No job without approval; a direct POST without a valid unused token cannot reach egress; mock mode is gated too. The browser deliberately does not display the token value (`16s-flow.js:267-272`). |
 | **Recorded** | A pending egress audit row (hash, target, byte counts, mock flag) is written before the call and finalized with success/status/error/RID (`blast/submit.js:98-152`); status polling is capped at one per 60 s with `429` + `Retry-After` (`blast/status/[rid].js:53-62`); provenance and result records are written by the Worker. | Every external action is auditable; a completed or failed RID is never polled again; no silent fallback. |
@@ -146,8 +146,8 @@ The assistant capability browser is read-only: `state.catalog` comes from `GET /
 |---|---|---|---|
 | **Assistant UI complete** | **PASS** | `assistant.js` surfaces; `assistant.test.mjs` **10/10**; UI E2E **10/10**; M7.4.2 E2E **9/9**; 12 real catalog entries served by `/api/tools/catalog` | Conversations, honest banner, disabled composer, capability browser, deterministic drafts, accessibility/keyboard behaviour and fail-closed API are complete. |
 | **Assistant chat operational** | **BLOCKED / NOT ACHIEVED** | `reason:"no_enabled_llm_provider"`; `/api/assistant/chat` 503 `generated:false`; no authorized provider | No real model response has been generated by any provider in any environment. Passing UI/mock tests do not count as chat success. |
-| **Deterministic planning** | **PASS (non-AI)** | `planner.js`; 16S plan shown in live evidence with `step_1 · ncbi.blastn` and explicit egress/consent declarations | The plan is rule-based and registry-validated. It is not AI-generated. |
-| **Execution from assistant** | **OUT OF SCOPE / NOT SUPPORTED** | `assistant.js` cannot create a job; `docs/PRODUCT_NORTH_STAR.md` §1 | The draft grants nothing; real execution happens only through the 16S page's approval/consent chain. |
+| **Deterministic planning** | **PASS (non-AI)** | `planner.js`; 16S plan shown in live evidence with `step_1 آ· ncbi.blastn` and explicit egress/consent declarations | The plan is rule-based and registry-validated. It is not AI-generated. |
+| **Execution from assistant** | **OUT OF SCOPE / NOT SUPPORTED** | `assistant.js` cannot create a job; `docs/PRODUCT_NORTH_STAR.md` آ§1 | The draft grants nothing; real execution happens only through the 16S page's approval/consent chain. |
 | **Overall 16S workflow readiness (cross-reference)** | **PARTIAL / `production_ready:false`** | Real consent-governed submission produced RID `GF4KCK07016`, but NCBI reported `Status=FAILED` (`invalid database [16S_ribosomal_RNA]`); no real TSV retrieved; `docs/evidence/M7_6_NCBI_DIAGNOSIS.md` | Browser-only statistics and the submission are individually verified; browser BLAST parser/taxonomy are exercised with labelled synthetic TSV only. Corrected live submission needs explicit owner authorization and has not happened. |
 
 **Definition of done for this document:** a reader can distinguish the UI shell, the deterministic plan draft and the real 16S handoff from the unavailable AI chat, and will not read a mocked or disabled state as model intelligence.
@@ -170,3 +170,4 @@ The assistant capability browser is read-only: `state.catalog` comes from `GET /
 ## 10. Constraints preserved
 
 No auth B2, no R2, no new provider, no migration, no scientific algorithm change, no production deploy and no live Galaxy call. No secret was activated or disclosed; `MOCK_NCBI=0` on staging only permitted the already-implemented NCBI path. The existing design system and naming ("S Bio Assistant", "Precision Instrument Bench") are unchanged.
+
