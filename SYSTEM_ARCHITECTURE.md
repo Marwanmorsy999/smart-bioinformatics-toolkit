@@ -261,3 +261,15 @@ Known gaps are tracked in `docs/API_INTEGRATION_ROADMAP.md` (RID TTL, global rat
 - Additive `0011_workspace.sql` extends `projects`/`datasets` and adds `workspace_runs` + `provenance_records`. Reports reuse `report_runs` (parent-run owner check), so no new reports table and no R2 binding.
 - The static catalog has exactly two entries. `16s-rrna-identification` is `available-browser-and-local-agent`; `msa-phylogenetics` is `partial-not-production-ready` per `docs/M7_3_PHYLOGENETICS_WORKFLOW_REPORT.md`. No live Galaxy call and no fabricated execution result is introduced.
 - Batch 2 (browser UI) is **not** part of this change.
+
+## 12. M7.5-A public research platform foundation (status: DESIGN ONLY, 2026-11-26)
+
+Section 11 is retained as the historical record of the M7.4 API milestone. Its "browser UI NOT BUILT" label was accurate when written; a `workspace.html` / `workspace.js` UI exists as reviewed at audit time (HEAD `e1a523a8`, then with uncommitted refinements). Those refinements were subsequently committed externally in `90df75e` / `fdc3f26` and HEAD moved to `fdc3f26`; the described behaviour reflects the code as reviewed at audit time. The statement below supersedes that status label without rewriting the evidence above.
+
+- **No implementation was performed for M7.5-A.** The five documents listed below are a blueprint only: no code, migrations, bindings, secrets, deployments or live Galaxy calls were added.
+- The target direction is a genuine human identity system (recommended: Better Auth on Workers + D1, Clerk as alternative), kept strictly separate from the single operator `X-Agent-Token` identity. Workspace ownership today is a SHA-256 hash of that operator token and is **not** a user account.
+- Durable user-file storage is a target capability, not a current one. Cloudflare R2 is evaluated as the recommended object store but is **not activated**; `wrangler.toml` has no R2 binding and artifact endpoints still fail closed. Galaxy histories remain provider references, not platform-owned canonical storage.
+- Legacy operator-owned rows must be isolated and never auto-assigned to the first new human user; migration/transfer procedures and rollback are specified in the design documents.
+- Scientific engines, consent/usage governor, plan-approval flow, provenance and staged run states are preserved.
+
+Design deliverables (all under `docs/`): `M7_5_FOUNDATION_DESIGN.md`, `M7_5_AUTH_PROVIDER_DECISION.md`, `M7_5_DATA_LIFECYCLE.md`, `M7_5_THREAT_MODEL.md`, `M7_5_IMPLEMENTATION_ROADMAP.md`. Implementation begins only after owner review and the explicit decision gates recorded in those documents.
