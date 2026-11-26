@@ -28,6 +28,8 @@ const ui = {
   submit: byId("submit-blast"),
   submitNote: byId("submit-note"),
   rid: byId("rid-view"),
+  resumeRid: byId("resume-rid"),
+  resumeButton: byId("resume-rid-button"),
   checkStatus: byId("check-status"),
   countdown: byId("status-countdown"),
   banner: byId("results-banner"),
@@ -407,6 +409,34 @@ async function checkStatus(manual) {
 }
 
 ui.checkStatus.addEventListener("click", () => checkStatus(true));
+
+ui.resumeButton.addEventListener("click", () => {
+  const value = String(ui.resumeRid.value ?? "").trim();
+  if (!/^[A-Za-z0-9_-]{8,64}$/.test(value)) {
+    setError("Enter a valid NCBI RID (8–64 letters, digits, hyphen or underscore). Nothing was submitted.");
+    return;
+  }
+  clearPollTimer();
+  state.rid = value;
+  state.status = "queued";
+  state.lastStatusAt = 0;
+  state.submittedAt = null;
+  state.fetchedAt = null;
+  state.tsv = null;
+  state.parsed = null;
+  state.analysis = null;
+  state.taxonomy = null;
+  state.mockRid = /mock/i.test(value);
+  ui.rid.hidden = false;
+  ui.results.hidden = true;
+  ui.banner.hidden = true;
+  ui.resultsEmpty.textContent = "Resumed by RID. Results appear only after NCBI reports completion; no new submission was made.";
+  renderRid(state.rid, state.status);
+  ui.submit.disabled = true;
+  ui.checkStatus.disabled = false;
+  setError("");
+  checkStatus(true);
+});
 
 // ------------------------------------------------------------------ step 4
 function detectSchema(tsv) {

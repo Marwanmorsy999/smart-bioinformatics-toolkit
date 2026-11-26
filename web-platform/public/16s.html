@@ -104,6 +104,11 @@
             <button id="check-status" type="button" class="secondary-button small-button" disabled>Check status</button>
             <span id="status-countdown" class="small" aria-live="off"></span>
           </div>
+          <div class="resume-row">
+            <label for="resume-rid">Already submitted? Resume monitoring by RID (no new submission)</label>
+            <input id="resume-rid" type="text" maxlength="64" autocomplete="off" spellcheck="false" placeholder="NCBI RID">
+            <button id="resume-rid-button" type="button" class="secondary-button small-button">Resume by RID</button>
+          </div>
           <p class="small">Status is checked at most once per minute (the server enforces this too). Checking does not fetch results until the job is complete.</p>
         </section>
       </li>
