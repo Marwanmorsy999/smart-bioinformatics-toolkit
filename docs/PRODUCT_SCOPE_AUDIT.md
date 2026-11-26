@@ -1,8 +1,12 @@
 # Product Scope Audit — CORE PRODUCT COMPLETION
 
-**Date:** 2026-11-26
-**Branch:** `product/core-completion` · **Base:** `8105956c908ea6c0d5c053b5ed2c13b86516d2a2`
-**Snapshot note:** the inventory below is of the tree at base `8105956`. Concurrent uncommitted changes appeared during this pass (`public/assistant.html`, `css/assistant.css`, `js/assistant.js`, `worker.js`, new untracked `functions/api/tools/catalog/` and `providers/tools/registry.js`). They were not created or reviewed by this audit and are excluded from the classification tables.
+**Verification date:** 2026-11-26
+**Branch:** `product/core-completion`
+**Base commit:** `8105956c908ea6c0d5c053b5ed2c13b86516d2a2`
+**Starting commit (M7.6 reconciliation):** `0303e615e4cdf71a9b97038773a537beab9acdb9`
+**Final commit:** `55defef938a560e6c09e12ca5313b6de948755c1` (M7.6 code fix + documentation reconciliation)
+**Current staging deployment:** `c00c6245-c91e-4bc2-9b64-881677b97972`
+**CURRENT implementation snapshot:** branch `product/core-completion`, base `8105956…`, starting commit `0303e615…`, staging deployment `c00c6245-c91e-4bc2-9b64-881677b97972`, verification date 2026-11-26. A separate code-fix worker is adding the corrected NCBI database identifier and 16S readiness changes; this audit claims none of that code. The earlier statement that the inventory was taken at base `8105956` with concurrent uncommitted `public/assistant.html`, `css/assistant.css`, `js/assistant.js`, `worker.js`, `functions/api/tools/catalog/` and `providers/tools/registry.js` changes is retained as **history** for the M7.5 documentation pass. Earlier staging deployments `892f4266-2afa-4a0f-aa3f-00585764faf5` and `ed08189a-5db2-41b1-98f3-732b5c97992f` and earlier HEAD `32abf86e6ab8da6819454103286c06e0b62d1076` are **history only**.
 
 **Method:** read-only inventory of `web-platform/public/**`, `web-platform/worker.js` (`ROUTES`, lines 129–197), `web-platform/functions/api/**`, `web-platform/providers/**`, `python-engine/src/**`, `web-platform/migrations/**`, `scripts/**`, `.github/workflows/tests.yml`, and the M7.4/M7.5 reports. No code, config, migration or credential was changed.
 
@@ -46,6 +50,8 @@
 
 ## 2. API inventory (all routes registered in `web-platform/worker.js:129-197`)
 
+**Previously verified surfaces (M7.5/M7.6 baseline, not re-run by this documentation pass):** pages `/`, `/16s.html`, `/assistant.html`, `/workspace.html`, `/ai.html`, `/blast.html`, `/taxonomy.html`, `/phylo.html`, `/benchmark.html`, `/research-use.html`; `GET /api/tools/catalog` returning version `1.0.0-m7.4` with **12 tools**; `GET /api/assistant/status` returning `available:false`, `reason:"no_enabled_llm_provider"`. These are historical verification results, not new calls made in this pass. No page or route below was re-deployed here.
+
 ### 2.1 `/api/assistant/*`
 
 | Endpoint | Purpose | Works? | Dependencies | User value | Reliability | Class | Recommendation |
@@ -60,6 +66,7 @@
 |---|---|---|---|---|---|---|---|
 | `POST /api/ai/requests` | Text + inline FASTA → request/dataset/plan | Yes | D1, planner, registry | CORE | Medium (64 KiB cap, 128 KiB body cap) | **CORE** | **KEEP** |
 | `GET /api/tools` | Tool registry with schemas/availability | Yes, 9 tools; 2 marked unavailable | `registry.tools.generated.js` | CORE | High | **CORE** | **KEEP** |
+| `GET /api/tools/catalog` | Derived 12-entry read-only catalog | Previously verified `200`, version `1.0.0-m7.4`, 12 entries; no mutation, no secrets | `providers/tools/registry.js`, `functions/api/tools/catalog/index.js` | CORE (capability browser) | High | **CORE** | **KEEP**; derived projection of the authoritative registry, not a second source of truth (history: appeared as untracked file during the M7.5 pass) |
 | `GET /api/ai/backend` | Backend/availability metadata | Yes | registry | Medium | High | **SUPPORTING** | **KEEP** |
 | `GET /api/ai/plans/:id` | Read immutable plan | Yes | D1 | CORE | High | **CORE** | **KEEP** |
 | `POST /api/ai/plans/:id/approve` | Human gate; issues single-use BLAST consent | Yes, one-way/idempotent | D1, consent, audit | CORE | High | **CORE** | **KEEP** |
@@ -74,9 +81,9 @@
 
 | Endpoint | Purpose | Works? | Dependencies | User value | Reliability | Class | Recommendation |
 |---|---|---|---|---|---|---|---|
-| `POST /api/blast/submit` | NCBI `CMD=Put`, consent-gated | Code real; live call not permitted/credential-free; mock path gated too | single-use consent token, D1 | CORE (optional external step) | Medium; global NCBI rate limit not enforced | **CORE** | **KEEP**; never bypass consent |
-| `GET /api/blast/status/:rid` | RID polling, ≤1/min | Yes | D1, NCBI `CMD=Get` | CORE | High | **CORE** | **KEEP** |
-| `GET /api/blast/results/:rid` | TSV result | Yes | D1/NCBI | CORE | High | **CORE** | **KEEP** |
+| `POST /api/blast/submit` | NCBI `CMD=Put`, consent-gated | A genuine consent-governed submission was made (RID `GF4KCK07016`); that job **FAILED at NCBI** because our code used the invalid bare database `16S_ribosomal_RNA`. Corrected identifier is implemented in the final commit; no corrected live submission without **explicit owner authorization**. Mock path gated too | single-use consent token, D1 | CORE (optional external step) | Submission verified; result not achieved; global NCBI submission throttle enforced server-side before consent (best-effort) | **CORE** | **KEEP**; never bypass consent |
+| `GET /api/blast/status/:rid` | RID polling, ≤1/min | Gate works; the historical app-level `queued` label was produced by a lossy status parser, not by NCBI's canonical final status (`Status=FAILED`) | D1, NCBI `CMD=Get` | CORE | Medium — parser needs the corrected database/status handling (`docs/evidence/M7_6_NCBI_DIAGNOSIS.md`) | **CORE** | **KEEP** |
+| `GET /api/blast/results/:rid` | TSV result | Code real; **no real TSV was ever retrieved** for the live RID. Browser parser/taxonomy exercised only with clearly labelled synthetic TSV | D1/NCBI | CORE | Not demonstrated on real data | **CORE** | **KEEP**; do not present synthetic TSV as real NCBI output |
 | `GET /api/blast/history` | Recent RIDs (no sequences) | Yes | D1 | Low–Medium | Medium — publishes RIDs | **OPTIONAL** | **KEEP** with existing risk note (`docs/discovery/AUDIT_api_infra.md` G1) |
 
 ### 2.4 `/api/workspace/*` (operator token required; `deriveOwner`)
@@ -122,7 +129,7 @@
 | **Galaxy** (`providers/galaxy/index.js`) | Discovery, job submit/status/cancel, dataset upload/download, workflows; 11 operations declared (`:71-83`) | Code complete; **staging flag only**, no credential available, account not activated; a historical real MAFFT run exists but no new live call permitted | `GALAXY_ENABLED`, `GALAXY_BASE_URL`, `GALAXY_API_KEY`, account activation | High potential | Low in this branch | **INCOMPLETE** | **KEEP**; *enabled staging-only, inactive here*; no flag change, no live call |
 | **smarts.bio** (`providers/smartsbio/index.js`) | Chat/plan/tools/pipelines/files | Disabled in both envs **and** gated by written authorization `SMARTSBIO_PUBLIC_AUTHORIZED`; no network call when inactive (`:3-9,75-81,88-111`) | Written provider authorization + secrets | Unresolved | Fail-closed | **UNSUPPORTED** | **KEEP** code, **HIDE** everywhere; do not request credentials |
 | **9Router** (`providers/ninerouter/index.js`) | Only chat-capable adapter; `/v1/models`, `/v1/chat/completions`, `SYSTEM_GUARD` | Disabled in both envs; no URL/key; endpoint documented as machine-local `127.0.0.1:20128` unreachable from Worker | `NINEROUTER_ENABLED`, base URL, key | Highest potential, zero today | Fail-closed 403 | **UNSUPPORTED** | **KEEP** code, **HIDE** chat; no provider activation |
-| **Python engine local** (`python-engine/src/smartbio/**`, `aiagent/agent.py`, `plugins/**`) | Real FASTA/stats, phylo MSA/tree/report, 16S adapters; polls jobs with operator token | **WORKS** for 7 available tools; 2 16S registry tools marked unavailable (need TSV dataset + local DB) | Local install, Biopython, optional BLAST+ | Highest | High for available tools | **CORE** | **KEEP**; do not reimplement in Worker |
+| **Python engine local** (`python-engine/src/smartbio/**`, `aiagent/agent.py`, `plugins/**`) | Real FASTA/stats, phylo MSA/tree/report, 16S adapters; polls jobs with operator token | **WORKS** for 7 available tools; 2 16S registry tools marked unavailable (need TSV dataset + local DB). The browser BLAST-TSV parser and taxonomy are **available** and exercised with clearly labelled synthetic TSV only; their availability is not negated by the unavailable local Python variants | Local install, Biopython, optional BLAST+ | Highest | High for available tools | **CORE** | **KEEP**; do not reimplement in Worker |
 | **Provider registry** (`providers/registry.js:25-32,84-113`) | Single enablement/discovery/tool-resolution authority | Yes | flags, adapters | SUPPORTING | High | **SUPPORTING** | **KEEP** — single source of truth for advertised tools |
 | **Usage governor / consent / retry / normalize** (`providers/common/**`) | Budget reservations, single-use consent, typed errors | Yes; fail-closed on missing D1 | D1 | SUPPORTING | High | **SUPPORTING** | **KEEP** — security control |
 
@@ -156,5 +163,6 @@
 5. **Provider flags are off; no credential is available.** All three are `"false"` in production; staging enables Galaxy only; M7.1 live probes showed 3 disabled providers, 0 advertised tools, typed 403s (`docs/M7_1_LIVE_ACTIVATION_REPORT.md:6,70-81`). **No live Galaxy call is permitted in this program.**
 6. **Two documented endpoints do not exist in the route table** (`/api/ai/projects/:id`, `/api/audit`) and three designed assistant routes are not implemented. Fix the docs, not the code, in this program.
 7. **Execution-mode honesty has a seam.** Worker `computeExecutionMode()` accepts a self-reported `"real"`/`"mock"` from the agent unless the deployment forces mock (`functions/api/ai/_lib.js:270-281`); this is a known trust-boundary gap (`docs/discovery/REVIEW_worker_ui.md:36`).
+8. **The 16S end-to-end workflow is PARTIAL / `production_ready:false`.** Browser-only FASTA statistics (NR_074666.1, 1 record, 1524 bp, GC 52.1654%, SHA-256 `07efc2c1aeac02a2eed1cbe8d8479b59ffa00a730e93ed65881b41069c652853`) and a genuine consent-governed NCBI submission (RID `GF4KCK07016`) are individually verified, but the canonical `CMD=Get` response is `Status=FAILED`: `Error: No alias or index file found for nucleotide database [16S_ribosomal_RNA] in search path […]. Please verify the spelling of …`. Our code used the invalid bare database name; NCBI's current value is `rRNA_typestrains/16S_ribosomal_RNA`. The `FORMAT_OBJECT=SearchInfo` `Status=READY` / `ThereAreHits=no` refers to the format request, and its `Status: Searching` row is a stale JS placeholder. No real TSV was retrieved; a corrected live submission requires **explicit owner authorization** and has not happened. Mock RID `MOCK07EFC2C1AEAC02A2` is synthetic only. Evidence: `docs/evidence/M7_6_NCBI_DIAGNOSIS.md`, `docs/evidence/M7_6_status_url_raw.json`, `docs/evidence/M7_6_searchinfo_raw.json`.
 
 **Net recommendation:** no feature in this inventory should be deleted to "simplify". The correct P0/P1 actions are: **HIDE** unavailability behind honest labels, **INTEGRATE** the duplicate shims under their authoritative owners, **SIMPLIFY** stale doc claims, and **KEEP** all engineering infrastructure, migrations, security controls, scientific evidence and historical reports.

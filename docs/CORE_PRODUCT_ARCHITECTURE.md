@@ -1,12 +1,16 @@
 # Core Product Architecture — CORE PRODUCT COMPLETION
 
-**Date:** 2026-11-26
-**Branch:** `product/core-completion` · **Base:** `8105956c908ea6c0d5c053b5ed2c13b86516d2a2`
-**Snapshot note:** current-state statements describe base `8105956`. Concurrent uncommitted changes to `worker.js` (new `/api/tools/catalog` route), `providers/tools/`, and the assistant UI appeared during this pass; they were neither created nor reviewed here.
+**Verification date:** 2026-11-26
+**Branch:** `product/core-completion`
+**Base commit:** `8105956c908ea6c0d5c053b5ed2c13b86516d2a2`
+**Starting commit (M7.6 reconciliation):** `0303e615e4cdf71a9b97038773a537beab9acdb9`
+**Final commit:** `55defef938a560e6c09e12ca5313b6de948755c1` (M7.6 code fix + documentation reconciliation)
+**Current staging deployment:** `c00c6245-c91e-4bc2-9b64-881677b97972`
+**CURRENT implementation snapshot:** branch `product/core-completion`, base `8105956…`, starting commit `0303e615…`, staging deployment `c00c6245-c91e-4bc2-9b64-881677b97972`, verification date 2026-11-26. A separate code-fix worker is adding the corrected NCBI database identifier and 16S readiness changes after the starting commit; this document claims none of that code. The earlier statement that current-state statements describe base `8105956` with concurrent uncommitted `worker.js` (`/api/tools/catalog`), `providers/tools/` and assistant UI changes is retained as **history** for the M7.5 pass. Earlier staging deployments `892f4266-2afa-4a0f-aa3f-00585764faf5` / `ed08189a-5db2-41b1-98f3-732b5c97992f` and HEAD `32abf86e6ab8da6819454103286c06e0b62d1076` are **history only**.
 
 **Status:** target architecture + honest current state. Documentation-only: no code, config, migration, secret or deployment was changed. This document **does not** introduce a second design system; the existing **Precision Instrument Bench** system (`docs/DESIGN_SYSTEM.md:8`, `docs/BRAND_IDENTITY.md:5`) remains the only visual language.
 
-**Hard environment statement:** **no provider credential is available in this branch, and no live Galaxy call is permitted.** All three provider flags are `"false"` in production, staging enables Galaxy only, and the B1 identity branch is not merged (`web-platform/wrangler.toml:15-18,39-43`; `docs/M7_1_LIVE_ACTIVATION_REPORT.md:6,70-81`; `docs/M7_3_PHYLOGENETICS_WORKFLOW_REPORT.md:98`). Nothing below authorizes activating a provider, installing a key or calling an external service.
+**Hard environment statement:** **no provider credential is available in this branch, and no live Galaxy call is permitted.** All three provider flags are `"false"` in production, staging enables Galaxy only, and the B1 identity branch is not merged (`web-platform/wrangler.toml:15-18,39-43`; `docs/M7_1_LIVE_ACTIVATION_REPORT.md:6,70-81`; `docs/M7_3_PHYLOGENETICS_WORKFLOW_REPORT.md:98`). Nothing below authorizes activating a provider, installing a key or calling an external service. A genuine consent-governed NCBI submission was made historically (RID `GF4KCK07016`) and is reported as history; a **corrected live submission requires EXPLICIT OWNER AUTHORIZATION and has NOT happened**. No new NCBI call was made in this documentation pass.
 
 ---
 
@@ -176,10 +180,12 @@ flowchart TB
 | 3 | Full MAFFT → IQ-TREE → retrieval → validation → report unverified | `msa-phylogenetics` `production_ready:false` | `docs/M7_3_PHYLOGENETICS_WORKFLOW_REPORT.md:84-98`; `functions/api/workspace/catalog.js:44-48` | Promote local deterministic phylo only; keep remote claim hidden |
 | 4 | No R2 binding/signing key | Artifact endpoints 503; bytes not durable | `wrangler.toml:20-23`; `docs/M7_5_FOUNDATION_DESIGN.md:236-248` | Keep fail-closed; no bucket |
 | 5 | No human identity; workspace is token-derived owner + local scratchpad | No signup/login, no cross-device continuity, no per-user quota | `docs/M7_4_FINAL_REPORT.md:38-40,94-96`; `docs/M7_5_FOUNDATION_DESIGN.md:198-203` | No auth launch; B1 stays separate |
-| 6 | Two 16S registry tools unavailable | 16S adapter path not wired into MVP planner without TSV + local DB | `registry.tools.generated.js:585-586,671-672` | Keep honest `available:false`; do not imply a complete remote 16S workflow |
+| 6 | Two 16S registry tools unavailable | 16S **local-agent Python** adapter path not wired into MVP planner without TSV + local DB; the **browser** BLAST TSV parser and taxonomy are available and exercised with clearly labelled synthetic TSV only | `registry.tools.generated.js:585-586,671-672`; `public/js/blast.js`, `public/js/taxonomy.js` | Keep honest `available:false` for the Python variants; do not mark browser functions unavailable, and do not imply a complete remote 16S workflow |
 | 7 | `execution_mode` is accepted from agent self-report | Server cannot independently prove a step really executed | `functions/api/ai/_lib.js:270-281`; `docs/discovery/REVIEW_worker_ui.md:36` | Document trust boundary; no new claim |
 | 8 | Benchmark source data absent | Published numbers cannot be verified from this tree | `docs/discovery/AUDIT_docs_consistency.md` D2 | Keep protocol; mark figures UNVERIFIED |
 | 9 | Two documented endpoints absent from route table | `/api/ai/projects/:id`, `/api/audit` are not callable | `SYSTEM_ARCHITECTURE.md:201,207` vs `worker.js:129-197` | Correct docs; no new route in this program |
+| 10 | Invalid NCBI database identifier in the submitted BLAST job | The genuine consent-governed RID `GF4KCK07016` **FAILED** at NCBI: `Status=FAILED`, `Error: No alias or index file found for nucleotide database [16S_ribosomal_RNA] in search path […]`. Our code submitted the bare `16S_ribosomal_RNA`; NCBI's current value is `rRNA_typestrains/16S_ribosomal_RNA`. No real TSV was retrieved; the `FORMAT_OBJECT=SearchInfo` `Status=READY`/`ThereAreHits=no` describes the format request and its `Status: Searching` row is a stale JS placeholder | `docs/evidence/M7_6_NCBI_DIAGNOSIS.md`; `docs/evidence/M7_6_status_url_raw.json`; `docs/evidence/M7_6_searchinfo_raw.json` | Code-fix worker is implementing the corrected identifier; **corrected live submission needs explicit owner authorization and has not happened**. Report the overall 16S workflow as PARTIAL / `production_ready:false` |
+| 11 | Overall 16S workflow not production-ready | Browser-only statistics (NR_074666.1, 1 record, 1524 bp, GC 52.1654%, SHA-256 `07efc2c1aeac02a2eed1cbe8d8479b59ffa00a730e93ed65881b41069c652853`) and the real submission are individually verified, but no genuine NCBI result was retrieved, validated, displayed or exported | `docs/evidence/M7_6_NCBI_DIAGNOSIS.md`; `docs/CORE_PRODUCT_TEST_REPORT.md` | Keep the honest PARTIAL / `production_ready:false` label; never cite mock RID `MOCK07EFC2C1AEAC02A2` as real |
 
 ---
 
@@ -216,6 +222,10 @@ grep -n 'UNAVAILABLE_REASON\|available: false\|generated: false' web-platform/fu
 grep -n '_ENABLED\|ARTIFACT' web-platform/wrangler.toml
 # Single-source shims
 grep -n 'DEPRECATED\|deprecated' web-platform/providers/workspace/catalog.js
+# The submitted NCBI database identifier (historically invalid, corrected in the final commit)
+grep -n 'ALLOWED_DATABASE\|rRNA_typestrains' web-platform/functions/api/blast/_lib.js
 ```
+
+**Previously verified surfaces (not re-run by this documentation pass):** `/`, `/16s.html`, `/assistant.html`, `/workspace.html`, `/ai.html`, `/blast.html`, `/taxonomy.html`, `/phylo.html`, `/benchmark.html`, `/research-use.html`; `/api/tools/catalog` (version `1.0.0-m7.4`, 12 tools); `/api/assistant/status` (`available:false`, `reason:"no_enabled_llm_provider"`). The authoritative raw evidence for the NCBI failure is `docs/evidence/M7_6_NCBI_DIAGNOSIS.md`, which references `M7_6_status_url_raw.json` and `M7_6_searchinfo_raw.json` by relative path.
 
 Related documents: `docs/PRODUCT_NORTH_STAR.md` (journey and success criteria), `docs/PRODUCT_SCOPE_AUDIT.md` (keep/integrate/hide decisions), `docs/CORE_CAPABILITY_MATRIX.md` (capability ids and statuses). All historical reports remain in place as evidence.
