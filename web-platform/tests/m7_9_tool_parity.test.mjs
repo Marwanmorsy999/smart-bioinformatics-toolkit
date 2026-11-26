@@ -19,9 +19,9 @@ function args(sequenceType, fastaText = FASTA) {
   };
 }
 
-test("sequence-stats.validate matches validateFasta exactly", () => {
+test("sequence-stats.validate matches validateFasta exactly", async () => {
   const expected = validateFasta(FASTA, "dna");
-  const result = executeTool("sequence-stats.validate", args("dna"));
+  const result = await executeTool("sequence-stats.validate", args("dna"));
   assert.equal(result.ok, true);
   assert.deepEqual(result.output.validation, expected);
   assert.equal(result.execution_location, "worker");
@@ -30,10 +30,10 @@ test("sequence-stats.validate matches validateFasta exactly", () => {
   assert.ok(result.source.includes("public/js/fasta.js"));
 });
 
-test("sequence-stats.profile matches validateFasta + calculateStatistics exactly", () => {
+test("sequence-stats.profile matches validateFasta + calculateStatistics exactly", async () => {
   const validation = validateFasta(FASTA, "dna");
   const statistics = calculateStatistics(validation);
-  const result = executeTool("sequence-stats.profile", args("dna"));
+  const result = await executeTool("sequence-stats.profile", args("dna"));
 
   assert.equal(result.ok, true);
   assert.deepEqual(result.output.validation, validation);
@@ -46,29 +46,29 @@ test("sequence-stats.profile matches validateFasta + calculateStatistics exactly
   assert.equal(result.result_card.evidence, "actual tool output");
 });
 
-test("protein profile uses the same pure functions and reports no GC value", () => {
+test("protein profile uses the same pure functions and reports no GC value", async () => {
   const protein = ">test_protein\nACDEFGHIKLMNPQRSTVWY";
   const validation = validateFasta(protein, "protein");
   const statistics = calculateStatistics(validation);
-  const result = executeTool("sequence-stats.profile", args("protein", protein));
+  const result = await executeTool("sequence-stats.profile", args("protein", protein));
   assert.equal(result.ok, true);
   assert.deepEqual(result.output.validation, validation);
   assert.deepEqual(result.output.statistics, statistics);
   assert.equal(result.output.statistics.records[0].gc_percent, null);
 });
 
-test("invalid FASTA is a real tool result with the same validation report", () => {
+test("invalid FASTA is a real tool result with the same validation report", async () => {
   const bad = ">bad\nACGTZ";
   const validation = validateFasta(bad, "dna");
-  const result = executeTool("sequence-stats.validate", args("dna", bad));
+  const result = await executeTool("sequence-stats.validate", args("dna", bad));
   assert.equal(result.ok, true);
   assert.deepEqual(result.output.validation, validation);
   assert.equal(result.output.validation.file_valid, false);
   assert.equal(result.result_card.status, "invalid");
 });
 
-test("a tool implementation failure is reported, never replaced with fake output", () => {
-  const result = executeTool("sequence-stats.validate", args("dna"), {
+test("a tool implementation failure is reported, never replaced with fake output", async () => {
+  const result = await executeTool("sequence-stats.validate", args("dna"), {
     validateFasta() { throw new Error("injected failure"); }
   });
   assert.equal(result.ok, false);
@@ -81,9 +81,12 @@ test("a tool implementation failure is reported, never replaced with fake output
 test("tool definitions come only from the registry and stay within the allowlist", () => {
   const definitions = getAssistantToolDefinitions();
   assert.deepEqual(definitions.map((item) => item.function.name), [
-    "sequence-stats.validate", "sequence-stats.profile"
+    "sequence-stats.validate", "sequence-stats.profile",
+    "protein.validate", "protein.annotate", "protein.get_result", "protein.get_domain_details"
   ]);
-  for (const definition of definitions) {
+  // The strict wire-shape assertions stay on the two long-standing tools; the
+  // four M7.13 protein manifests are asserted in m7_13_protein_tool.test.mjs.
+  for (const definition of definitions.filter((item) => item.function.name.startsWith("sequence-stats."))) {
     assert.deepEqual(definition.function.parameters.required, [
       "sequence_type", "dataset_id", "fasta_text", "filename"
     ]);

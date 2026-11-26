@@ -235,7 +235,10 @@ test("outgoing request uses the exact /v1 URL, env-only bearer key and server to
   assert.match(outgoing.messages.find((item) => item.role === "system" && item !== outgoing.messages[0]).content, /TOOL USE/);
   assert.equal(outgoing.messages.at(-1).role, "user");
   assert.equal(outgoing.messages.at(-1).content, "Plan a QC step");
-  assert.deepEqual(outgoing.tools.map((tool) => tool.function.name), ["sequence-stats.validate", "sequence-stats.profile"]);
+  assert.deepEqual(outgoing.tools.map((tool) => tool.function.name), [
+    "sequence-stats.validate", "sequence-stats.profile",
+    "protein.validate", "protein.annotate", "protein.get_result", "protein.get_domain_details"
+  ]);
   assert.equal(outgoing.tool_choice, "auto");
   assert.equal(Object.hasOwn(outgoing, "api_key"), false);
   noLeaks(await response.text(), "chat wire");
@@ -328,7 +331,7 @@ test("ncbi.blastn is never executable from chat and needs the approval path", as
   assert.match(body.tool_activity[0].error.message, /approval|consent/i);
   assert.equal(calls.length, 2); // only the two 9Router chat calls
   assert.equal(calls.some((call) => /ncbi|blast/i.test(call.url)), false);
-  const direct = executeTool("ncbi.blastn", { database: "16S", program: "BLASTN" });
+  const direct = await executeTool("ncbi.blastn", { database: "16S", program: "BLASTN" });
   assert.equal(direct.ok, false);
   assert.equal(direct.error.code, "tool_not_executable_from_chat");
 });
@@ -393,12 +396,13 @@ test("reported usage is never invented when the provider omits it", async () => 
   assert.equal(Object.hasOwn(body, "total_tokens"), false);
 });
 
-test("tool definitions expose exactly the two allowlisted registry functions", () => {
+test("tool definitions expose the allowlisted registry functions", async () => {
   assert.deepEqual(getAssistantToolDefinitions().map((item) => item.function.name), [
-    "sequence-stats.validate", "sequence-stats.profile"
+    "sequence-stats.validate", "sequence-stats.profile",
+    "protein.validate", "protein.annotate", "protein.get_result", "protein.get_domain_details"
   ]);
   for (const name of ["unknown.tool", "phylogenetics.tree", "microbiome-16s.taxonomy", "ncbi.blastn"]) {
-    assert.equal(executeTool(name, {}).ok, false, name);
+    assert.equal((await executeTool(name, {})).ok, false, name);
   }
 });
 
