@@ -216,6 +216,9 @@ test("FIXTURE Galaxy adapter getJobOutputs: normalized, read-only, no secret exp
   assert.equal(mafft.state, "ok");
   assert.equal(mafft.extension, "fasta");
   assert.equal(mafft.history_id, FIX.historyId);
+  assert.equal(mafft.galaxyHdaId, FIX.mafftHda);
+  assert.equal(mafft.galaxyDatasetId, "102");
+  assert.equal(mafft.galaxyDatasetUuid, FIX.mafftUuid);
   assert.doesNotMatch(JSON.stringify(result), /stub-secret/);
   assert.equal(stub.calls.filter((call) => call.method !== "GET").length, 0, "must be read-only");
   assert.equal(stub.calls.length, 1, "only GET /api/jobs/{id}/outputs is called");
@@ -329,7 +332,7 @@ test("FIXTURE resume by provider job id: uploaded input dataset is rejected as a
   const outputs = {
     input: { id: FIX.inputHda, uuid: FIX.inputUuid, dataset_id: "101", name: "phylo.fasta",
       state: "ok", extension: "fasta", history_id: FIX.historyId },
-    queued_alignment: { id: FIX.mafftHda, uuid: FIX.mafftUuid, dataset_id: "102", name: "MAFFT on data 1",
+    queued_alignment: { id: FIX.mafftHda, name: "MAFFT on data 1",
       state: "queued", extension: "fasta", history_id: FIX.historyId }
   };
   const { response, body, stub } = await runWorkflow(t, {
@@ -351,7 +354,7 @@ test("FIXTURE resume by provider job id: no_usable_alignment_output returns a sa
       state: "ok", extension: "fasta", history_id: FIX.historyId },
     mafft_log: { id: FIX.logHda, dataset_id: "103", name: "MAFFT log on data 1",
       state: "ok", extension: "log", history_id: FIX.historyId },
-    queued: { id: FIX.mafftHda, uuid: FIX.mafftUuid, dataset_id: "102", name: "MAFFT on data 1",
+    queued: { id: FIX.mafftHda, dataset_id: "999", name: "MAFFT on data 1",
       state: "queued", extension: "fasta", history_id: FIX.historyId }
   };
   const { response, body, stub } = await runWorkflow(t, {
@@ -386,10 +389,12 @@ test("FIXTURE resume by provider job id: no_usable_alignment_output returns a sa
 });
 
 test("FIXTURE resume by provider job id: invalid HDA association exposes safe persistent identity", async (t) => {
-  // FIXTURE: no HDA `id`, so normalizeOutputAssociation marks the association
-  // invalid; its UUID/dataset_id and error reason must still be diagnosable.
+  // FIXTURE: no HDA `id`, and the persistent identity does NOT match any
+  // verified history artifact, so resolution must fail closed with a typed
+  // diagnostic that still exposes the UUID/dataset_id and the reason.
+  const orphanUuid = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
   const outputs = {
-    broken: { uuid: FIX.mafftUuid, dataset_id: "102", name: "MAFFT on data 1",
+    broken: { uuid: orphanUuid, dataset_id: "999", name: "MAFFT on data 1",
       state: "ok", extension: "fasta", history_id: FIX.historyId }
   };
   const { response, body, stub } = await runWorkflow(t, {
@@ -401,16 +406,71 @@ test("FIXTURE resume by provider job id: invalid HDA association exposes safe pe
   assert.equal(body.output_associations.length, 1);
   const entry = body.output_associations[0];
   assert.equal(entry.error, "missing_or_invalid_hda_id");
-  assert.equal(entry.uuid, FIX.mafftUuid, "normalized UUID fallback is exposed");
-  assert.equal(entry.galaxy_dataset_uuid, FIX.mafftUuid);
-  assert.equal(entry.dataset_id, "102", "normalized dataset id fallback is exposed");
-  assert.equal(entry.galaxy_dataset_id, "102");
+  assert.equal(entry.uuid, orphanUuid, "normalized UUID fallback is exposed");
+  assert.equal(entry.galaxy_dataset_uuid, orphanUuid);
+  assert.equal(entry.dataset_id, "999", "normalized dataset id fallback is exposed");
+  assert.equal(entry.galaxy_dataset_id, "999");
   assert.equal(entry.galaxy_hda_id, null);
   assert.equal(entry.usable, false);
   assert.equal(body.history_contents_count, 5);
   const serialized = JSON.stringify(body) + JSON.stringify(stub.calls);
   assert.doesNotMatch(serialized, /stub-secret|X-API-Key|ACGTACGTACG|CMD=Put|rid=/i);
   assert.doesNotMatch(JSON.stringify(body), /"error":\{/, "no raw error object is exposed");
+  assert.equal(stub.calls.filter((call) => call.method === "POST").length, 0, "no submission");
+});
+
+test("FIXTURE resume by provider job id: UUID-only output resolves to the verified history HDA", async (t) => {
+  // FIXTURE: the job output carries ONLY a persistent UUID/dataset id (no HDA
+  // id, no name/state/extension), so normalization marks it invalid. The real
+  // MAFFT HDA is recovered from verified history contents, never resubmitted.
+  const outputs = { mafft_uuid_only: { uuid: FIX.mafftUuid, dataset_id: "102" } };
+  const { response, body, stub } = await runWorkflow(t, {
+    payload: { resume_provider_job_id: FIX.providerJobId, history_id: FIX.historyId },
+    stubOptions: { outputs }
+  });
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(body.workflow_completed, true);
+  assert.equal(body.resume.resumed_from_provider_job, true);
+  assert.equal(body.resume.alignment_hda_id, FIX.mafftHda, "resolved HDA, not the UUID");
+  assert.equal(body.resume.output_uuid, FIX.mafftUuid, "original job-output UUID is preserved");
+  const mafftStep = body.provenance.find((step) => step.step_id === "galaxy_mafft");
+  assert.equal(mafftStep.provider_job_id, FIX.providerJobId);
+  assert.equal(mafftStep.dataset_id, FIX.mafftHda);
+  assert.equal(mafftStep.output_uuid, FIX.mafftUuid);
+  const iqtreeStep = body.provenance.find((step) => step.step_id === "galaxy_iqtree");
+  assert.equal(iqtreeStep.input_dataset_id, FIX.mafftHda, "IQ-TREE uses the resolved HDA");
+  assert.equal(body.alignment_text, ALIGNMENT);
+  const toolPosts = stub.calls.filter((call) => call.method === "POST"
+    && call.url.includes("/api/tools") && !call.url.includes("/fetch"));
+  assert.equal(toolPosts.length, 1, JSON.stringify(toolPosts));
+  assert.match(toolPosts[0].body.tool_id, /iqtree/i);
+  assert.doesNotMatch(JSON.stringify(toolPosts), /mafft/i, "no MAFFT submission");
+});
+
+test("FIXTURE no_usable_alignment_output diagnostic exposes verified artifacts and recovery marker", async (t) => {
+  const orphanUuid = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+  const outputs = { orphan: { uuid: orphanUuid, dataset_id: "999", state: "ok", extension: "fasta" } };
+  const { response, body, stub } = await runWorkflow(t, {
+    payload: { resume_provider_job_id: FIX.providerJobId, history_id: FIX.historyId },
+    stubOptions: { outputs }
+  });
+  assert.equal(response.status, 409);
+  assert.equal(body.error_code, "no_usable_alignment_output");
+  assert.equal(body.recovery_version, "m7111-uuid-resolution");
+  assert.equal(body.history_contents_count, 5);
+  assert.equal(Array.isArray(body.history_artifacts), true);
+  assert.equal(body.history_artifacts.length, 5);
+  const expectedKeys = ["extension", "id", "name", "state", "uuid"];
+  for (const artifact of body.history_artifacts) {
+    assert.deepEqual(Object.keys(artifact).sort(), expectedKeys, JSON.stringify(artifact));
+  }
+  const aligned = body.history_artifacts.find((artifact) => artifact.id === FIX.mafftHda);
+  assert.equal(aligned.uuid, FIX.mafftUuid);
+  assert.equal(aligned.extension, "fasta");
+  assert.equal(aligned.state, "ok");
+  assert.ok(Array.isArray(body.output_associations), "existing diagnostic keys remain");
+  const serialized = JSON.stringify(body) + JSON.stringify(stub.calls);
+  assert.doesNotMatch(serialized, /stub-secret|X-API-Key|ACGTACGTACG|CMD=Put|rid=/i);
   assert.equal(stub.calls.filter((call) => call.method === "POST").length, 0, "no submission");
 });
 

@@ -635,6 +635,12 @@ export function createAdapter(env = {}, deps = {}) {
           hda_id: item.galaxyHdaId,
           uuid: item.galaxyDatasetUuid,
           dataset_id: item.galaxyDatasetId,
+          // Keep the normalized identity fields intact: a job output may carry
+          // only a persistent UUID / dataset id (no HDA id), which callers must
+          // resolve against verified history contents. No key or URL is added.
+          galaxyHdaId: item.galaxyHdaId,
+          galaxyDatasetId: item.galaxyDatasetId,
+          galaxyDatasetUuid: item.galaxyDatasetUuid,
           name: item.name ?? null,
           state: item.state ?? null,
           extension: item.extension ?? null,
