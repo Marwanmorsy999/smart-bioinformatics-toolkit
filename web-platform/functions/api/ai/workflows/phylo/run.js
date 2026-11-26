@@ -70,7 +70,9 @@ export function parseIqtreeReport(text) {
     const match = source.match(pattern);
     return match ? match[1].trim() : null;
   };
-  const model = capture(/(?:^|\n)[^\n]*?(?:Best-fit model|Model of substitution|Substitution model|Model)\s*:\s*([^\r\n]+)/i);
+  // Real IQ-TREE reports use several phrasings, e.g.
+  // "Best-fit model according to BIC: TPM3u+F+I" and plain "Model: TPM3u+F+I".
+  const model = capture(/(?:^|\n)[^\n]*?(?:Best-fit model|Model of substitution|Substitution model|Model)(?:[^\n:]{0,80})?\s*:\s*([^\r\n]+)/i);
   const likelihoodText = capture(/Log-likelihood\s*:\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)/i);
   const likelihood = likelihoodText === null ? null : Number(likelihoodText);
   const support = capture(/((?:^|\n)[^\n]*?(?:UFboot|SH-aLRT|bootstrap support|support values)[^\r\n]*)/i);
@@ -90,10 +92,11 @@ export function parseIqtreeReport(text) {
   };
 }
 
-// Bounded, sanitized excerpt of a GENUINE report for audit. No credentials or
-// markup are carried into the response; null when no report content was read.
+// Bounded excerpt of a GENUINE report for audit. The ONLY redaction applied is
+// for X-API-Key-shaped values; other report text is carried verbatim (bounded).
+// null when no report content was read.
 export function iqtreeReportExcerpt(text) {
-  const clean = safeString(text, 100_000).replace(/X-API-Key[^\r\n]*/gi, "[redacted]");
+  const clean = safeString(text, 100_000).replace(/X-API-Key\s*:\s*\S+/gi, "[redacted]");
   if (!clean) return null;
   if (clean.length <= 2000) return clean;
   return `${clean.slice(0, 2000)}\n...[truncated]...\n${clean.slice(-2000)}`;
@@ -760,7 +763,9 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
       rooting: { status: "unknown", basis: "No tree was retrieved.", declared_outgroup: outgroup || null,
         outgroup_verified: false, invented_outgroup: false } };
   const warnings = [...(tree.warnings ?? []), ...(alignment.warnings ?? [])];
-  const passed = alignment.valid && tree.valid;
+  // A captured alignment/tree is NOT proof the workflow completed: an exception
+  // in the try block sets `failed`, and must force failure everywhere downstream.
+  const passed = !failed && alignment.valid && tree.valid;
   const validationStatus = failed ? "failed"
     : (passed ? (warnings.length ? "pass_with_warnings" : "pass") : "fail");
   const validation = {

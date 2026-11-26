@@ -7,7 +7,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { createAdapter } from "../providers/galaxy/index.js";
-import { handlePhyloRun } from "../functions/api/ai/workflows/phylo/run.js";
+import { handlePhyloRun, parseIqtreeReport, iqtreeReportExcerpt } from "../functions/api/ai/workflows/phylo/run.js";
 import {
   validateInputFasta, validateAlignment
 } from "../functions/api/ai/workflows/phylo/validators.js";
@@ -166,18 +166,35 @@ function makeIdFactory() {
   };
 }
 
-async function runWorkflow(t, { payload = {}, stubOptions = {} } = {}) {
+async function runWorkflow(t, { payload = {}, stubOptions = {}, failAfterCapture = false,
+  withOwner = false } = {}) {
   const fake = createFakeD1AI();
   const stub = makeRecoveryStub(stubOptions);
   const originalFetch = globalThis.fetch;
   globalThis.fetch = stub.fetchImpl;
   t.after(() => { globalThis.fetch = originalFetch; });
   const request = new Request("https://app.example.test/api/ai/workflows/phylo/run", {
-    method: "POST", headers: { "Content-Type": "application/json" },
+    method: "POST", headers: { "Content-Type": "application/json",
+      ...(withOwner ? { "X-Agent-Token": "test-agent-token" } : {}) },
     body: JSON.stringify({ fasta_text: INPUT_FASTA, filename: "phylo.fasta",
       objective: "recovery fixture", ...payload })
   });
-  const response = await handlePhyloRun(request, makeEnv(fake.db), {
+  let db = fake.db;
+  if (failAfterCapture) {
+    // FIXTURE failure: throw on the THIRD artifact write, after the real
+    // alignment and tree texts have already been captured in memory.
+    let artifactWrites = 0;
+    db = {
+      prepare(sql) {
+        if (String(sql).includes("INSERT INTO artifacts")) {
+          artifactWrites += 1;
+          if (artifactWrites === 3) throw new Error("simulated post-capture persistence failure");
+        }
+        return fake.db.prepare(sql);
+      }
+    };
+  }
+  const response = await handlePhyloRun(request, makeEnv(db), {
     now: NOW, idFactory: makeIdFactory(), fetchImpl: stub.fetchImpl
   });
   return { response, body: await response.json(), fake, stub };
@@ -214,6 +231,21 @@ test("FIXTURE: strict validateAlignment STILL rejects unequal lengths (aligned o
   assert.equal(result.valid, false);
   assert.ok(result.errors.some((error) => error.startsWith("alignment_sequences_unequal_length")));
   assert.equal(validateAlignment(ALIGNMENT).valid, true);
+});
+
+test("FIXTURE: report model parsing covers real IQ-TREE phrasings and stays null when absent", () => {
+  assert.equal(parseIqtreeReport("Best-fit model according to BIC: TPM3u+F+I\n").model, "TPM3u+F+I");
+  assert.equal(parseIqtreeReport("Model: TPM3u+F+I\n").model, "TPM3u+F+I");
+  assert.equal(parseIqtreeReport("Model of substitution: GTR+F+R3\n").model, "GTR+F+R3");
+  const absent = parseIqtreeReport("no model information here\n");
+  assert.equal(absent.model, null);
+  assert.equal(absent.log_likelihood, null);
+  assert.deepEqual(absent.support_settings, []);
+  assert.equal(iqtreeReportExcerpt(""), null);
+  const redacted = iqtreeReportExcerpt("X-API-Key: stub-secret\nModel: TPM3u+F+I\n");
+  assert.doesNotMatch(redacted, /stub-secret/);
+  assert.match(redacted, /\[redacted\]/);
+  assert.match(redacted, /Model: TPM3u\+F\+I/);
 });
 
 // ------------------------------------------------------------------ adapter
@@ -644,6 +676,21 @@ test("FIXTURE: a run that failed before any provider job reports a null report e
   assert.ok(report, JSON.stringify(body.provenance));
   assert.equal(report.report_endpoint, null);
   assert.doesNotMatch(JSON.stringify(body.provenance), /\/jobs\/undefined\//);
+});
+
+test("FIXTURE: exception after capture forces workflow_completed false and failed workspace state", async (t) => {
+  const { response, body, fake } = await runWorkflow(t, { failAfterCapture: true, withOwner: true });
+  assert.equal(response.status, 502);
+  assert.match(body.error, /post-capture persistence failure/);
+  assert.equal(body.validation.status, "failed");
+  // The alignment and tree were genuinely captured, but that must NOT be
+  // presented as a completed, succeeded run.
+  assert.equal(body.workflow_completed, false);
+  const workspaceRuns = fake.state.tables.workspace_runs ?? [];
+  assert.equal(workspaceRuns.length, 1);
+  assert.equal(workspaceRuns[0].state, "failed");
+  assert.equal(body.provenance.find((step) => step.step_id === "generate_report").status,
+    "skipped_due_to_failure");
 });
 
 // ------------------------------------- read-only IQ-TREE recovery (M7.11.1)

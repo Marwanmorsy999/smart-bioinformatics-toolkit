@@ -443,7 +443,12 @@ export function validateInputFasta(fastaText) {
 
 export function validateTree(newickText, alignmentNames, options = {}) {
   const expectedRaw = (alignmentNames ?? []).map((name) => String(name).trim()).filter(Boolean);
-  const expected = new Set(expectedRaw.map(normalizeTaxonLabel).filter(Boolean));
+  const normalizedExpected = expectedRaw.map(normalizeTaxonLabel).filter(Boolean);
+  // Two full headers collapsing to the same first token must NOT become a
+  // false PASS: flag the collision on the alignment side as well.
+  const duplicateAlignmentIds = normalizedExpected
+    .filter((name, index) => normalizedExpected.indexOf(name) !== index);
+  const expected = new Set(normalizedExpected);
   let tree = null;
   let parseError = null;
   try {
@@ -454,7 +459,8 @@ export function validateTree(newickText, alignmentNames, options = {}) {
   if (!tree) {
     return { valid: false, error: parseError ?? "newick: parse failed", code: "tree_parse_failed",
       taxa: [], taxa_normalized: [], alignment_names: expectedRaw, label_normalization: "first_token_accession",
-      missing: [], unknown: [], duplicates: [], warnings: [], errors: [parseError ?? "tree_parse_failed"],
+      missing: [], unknown: [], duplicates: [], duplicate_alignment_ids: [...new Set(duplicateAlignmentIds)],
+      warnings: [], errors: [parseError ?? "tree_parse_failed"],
       rooting: { status: "unknown", basis: "No parseable tree was available; rooting cannot be assessed.",
         declared_outgroup: null, outgroup_verified: false, invented_outgroup: false },
       metrics: computeTreeMetrics(null) };
@@ -473,6 +479,7 @@ export function validateTree(newickText, alignmentNames, options = {}) {
   const metrics = computeTreeMetrics(tree, { outgroup: options?.outgroup ?? null });
   const errors = [];
   if (!rootHasTips) errors.push("tree_root_has_no_tips");
+  if (duplicateAlignmentIds.length) errors.push("alignment_duplicate_normalized_ids");
   if (missing.length) errors.push("tree_missing_taxa");
   if (unknown.length) errors.push("tree_unknown_taxa");
   if (duplicates.length) errors.push("tree_duplicate_taxa");
@@ -493,6 +500,7 @@ export function validateTree(newickText, alignmentNames, options = {}) {
     missing,
     unknown,
     duplicates,
+    duplicate_alignment_ids: [...new Set(duplicateAlignmentIds)],
     warnings,
     unnamed_tip_count: unnamedTips,
     root_children: Array.isArray(tree.children) ? tree.children.length : 0,

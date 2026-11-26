@@ -160,6 +160,15 @@ test("FIXTURE: full FASTA headers correspond to accession-only Newick tips", () 
   assert.ok(checked.taxa_normalized.every((label) => !/\s/.test(label)));
 });
 
+test("FIXTURE: two full headers sharing one accession token cannot pass silently", () => {
+  const names = validateAlignment(fixture("duplicate_normalized_headers.fasta")).names;
+  assert.equal(new Set(names).size, names.length, "raw headers are distinct");
+  const checked = validateTree(fixture("accession_tree_negative.nwk"), names);
+  assert.equal(checked.valid, false);
+  assert.ok(checked.errors.includes("alignment_duplicate_normalized_ids"), JSON.stringify(checked.errors));
+  assert.deepEqual(checked.duplicate_alignment_ids, ["NR_115348.1"]);
+});
+
 test("FIXTURE: finite negative ML length is retained verbatim, warned, not clamped", () => {
   const names = validateAlignment(fixture("full_header_alignment.fasta")).names;
   const checked = validateTree(fixture("accession_tree_negative.nwk"), names);
