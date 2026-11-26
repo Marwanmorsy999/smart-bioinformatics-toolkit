@@ -8,8 +8,10 @@
 //   aligned FASTA, so the generic BLAST FASTA gate (which rejects '-') is
 //   deliberately NOT reused here.
 // - validateTree(newick, alignmentNames, options): parseable with an INDEPENDENT
-//   parser below; taxa-set equality, duplicate/unnamed tips, finite/non-negative
-//   branch lengths, parsed support labels and an explicit rooting statement.
+//   parser below; taxa-set equality on first-token accession labels (raw names
+//   retained), duplicate/unnamed tips, finite branch lengths (negative ML
+//   lengths are retained verbatim and warned about, never clamped), parsed
+//   support labels and an explicit rooting statement.
 // Every number returned here is computed from the supplied text. No value is
 // inferred from a fixture, a model or an illustrative example.
 
@@ -241,6 +243,17 @@ export function parseSupportValues(label) {
   };
 }
 
+// --------------------------------------------------------- taxon label mapping
+//
+// IQ-TREE frequently writes accession-only tip labels while the aligned FASTA
+// keeps the full header ("NR_115348.1 Francisella ..."). Correspondence is
+// checked on the FIRST whitespace-delimited token on BOTH sides; the raw tree
+// labels and raw alignment names are always retained in the report.
+export function normalizeTaxonLabel(label) {
+  const text = String(label ?? "").trim();
+  return text ? text.split(/\s+/)[0] : "";
+}
+
 // ------------------------------------------------------------------- metrics
 
 export function computeAlignmentMetrics(fastaText) {
@@ -284,7 +297,10 @@ export function computeTreeMetrics(root, { outgroup = null } = {}) {
     raw: node.raw_length,
     invalid: node.invalid_length || (node.raw_length !== null && !Number.isFinite(node.length))
   })).filter((entry) => entry.raw !== null);
-  const invalid = branchLengths.filter((entry) => entry.invalid || entry.value < 0);
+  // Finite/parseable validity and non-negativity are DISTINCT properties.
+  // A tiny negative ML branch length is real evidence, never clamped or dropped.
+  const invalid = branchLengths.filter((entry) => entry.invalid);
+  const negative = branchLengths.filter((entry) => Number.isFinite(entry.value) && entry.value < 0);
   const missingCount = nonRoot.filter((node) => node.raw_length === null).length;
   const supportValues = internal.map((node) => ({
     node_id: node.id,
@@ -292,8 +308,12 @@ export function computeTreeMetrics(root, { outgroup = null } = {}) {
     ...parseSupportValues(node.label_raw)
   })).filter((entry) => entry.values.length > 0);
   const tipNames = tips.map((node) => String(node.name ?? "").trim()).filter(Boolean);
+  const normalizedTipNames = tipNames.map(normalizeTaxonLabel).filter(Boolean);
   const declaredOutgroup = outgroup ? String(outgroup).trim() : null;
-  const outgroupPresent = Boolean(declaredOutgroup && tipNames.includes(declaredOutgroup));
+  const outgroupPresent = Boolean(declaredOutgroup && (
+    tipNames.includes(declaredOutgroup)
+    || normalizedTipNames.includes(normalizeTaxonLabel(declaredOutgroup))
+  ));
   let rootingStatus = "unknown";
   let rootingBasis = "No outgroup was declared; biological rooting cannot be established from Newick text alone.";
   if (outgroupPresent) {
@@ -317,14 +337,19 @@ export function computeTreeMetrics(root, { outgroup = null } = {}) {
       missing: missingCount,
       invalid_count: invalid.length,
       invalid: invalid.map((entry) => ({ node_id: entry.node_id, raw: entry.raw })),
+      negative_count: negative.length,
+      negative: negative.map((entry) => ({ node_id: entry.node_id, value: entry.value, raw: entry.raw })),
       min: branchLengths.some((e) => Number.isFinite(e.value))
         ? Math.min(...branchLengths.filter((e) => Number.isFinite(e.value)).map((e) => e.value)) : null,
       max: branchLengths.some((e) => Number.isFinite(e.value))
         ? Math.max(...branchLengths.filter((e) => Number.isFinite(e.value)).map((e) => e.value)) : null
     },
+    // `branch_length_valid` = all present lengths are finite/parseable.
     branch_length_valid: invalid.length === 0,
+    branch_length_nonnegative: negative.length === 0,
     branch_lengths_complete: invalid.length === 0 && missingCount === 0,
-    usable_for_length_layout: invalid.length === 0 && missingCount === 0,
+    // Negative lengths are retained verbatim but must not drive layout.
+    usable_for_length_layout: invalid.length === 0 && negative.length === 0 && missingCount === 0,
     rooting: {
       status: rootingStatus,
       basis: rootingBasis,
@@ -417,7 +442,13 @@ export function validateInputFasta(fastaText) {
 }
 
 export function validateTree(newickText, alignmentNames, options = {}) {
-  const expected = new Set((alignmentNames ?? []).map((name) => String(name).trim()).filter(Boolean));
+  const expectedRaw = (alignmentNames ?? []).map((name) => String(name).trim()).filter(Boolean);
+  const normalizedExpected = expectedRaw.map(normalizeTaxonLabel).filter(Boolean);
+  // Two full headers collapsing to the same first token must NOT become a
+  // false PASS: flag the collision on the alignment side as well.
+  const duplicateAlignmentIds = normalizedExpected
+    .filter((name, index) => normalizedExpected.indexOf(name) !== index);
+  const expected = new Set(normalizedExpected);
   let tree = null;
   let parseError = null;
   try {
@@ -427,37 +458,50 @@ export function validateTree(newickText, alignmentNames, options = {}) {
   }
   if (!tree) {
     return { valid: false, error: parseError ?? "newick: parse failed", code: "tree_parse_failed",
-      taxa: [], missing: [], unknown: [], duplicates: [], errors: [parseError ?? "tree_parse_failed"],
+      taxa: [], taxa_normalized: [], alignment_names: expectedRaw, label_normalization: "first_token_accession",
+      missing: [], unknown: [], duplicates: [], duplicate_alignment_ids: [...new Set(duplicateAlignmentIds)],
+      warnings: [], errors: [parseError ?? "tree_parse_failed"],
       rooting: { status: "unknown", basis: "No parseable tree was available; rooting cannot be assessed.",
         declared_outgroup: null, outgroup_verified: false, invented_outgroup: false },
       metrics: computeTreeMetrics(null) };
   }
 
+  // RAW labels stay in `taxa`; correspondence uses the first-token accession
+  // on both the Newick tips and the alignment headers.
   const taxa = collectTipNames(tree);
-  const taxaSet = new Set(taxa);
+  const taxaNormalized = taxa.map(normalizeTaxonLabel).filter(Boolean);
+  const taxaSet = new Set(taxaNormalized);
   const missing = [...expected].filter((name) => !taxaSet.has(name));
   const unknown = expected.size ? [...taxaSet].filter((name) => !expected.has(name)) : [];
-  const duplicates = taxa.filter((name, index) => taxa.indexOf(name) !== index);
+  const duplicates = taxaNormalized.filter((name, index) => taxaNormalized.indexOf(name) !== index);
   const unnamedTips = allNodes(tree).filter((node) => node.is_tip && !node.name).length;
   const rootHasTips = Array.isArray(tree.children) && tree.children.length > 0;
   const metrics = computeTreeMetrics(tree, { outgroup: options?.outgroup ?? null });
   const errors = [];
   if (!rootHasTips) errors.push("tree_root_has_no_tips");
+  if (duplicateAlignmentIds.length) errors.push("alignment_duplicate_normalized_ids");
   if (missing.length) errors.push("tree_missing_taxa");
   if (unknown.length) errors.push("tree_unknown_taxa");
   if (duplicates.length) errors.push("tree_duplicate_taxa");
   if (unnamedTips) errors.push("tree_unnamed_tips");
   if (!metrics.branch_length_valid) errors.push("tree_invalid_branch_length");
-  if (metrics.branch_lengths.invalid_count > 0) errors.push("tree_invalid_branch_length");
+  // Finite negative ML lengths are evidence, not errors: warn without clamping.
+  const warnings = [];
+  if (metrics.branch_lengths.negative_count > 0) warnings.push("tree_negative_branch_lengths");
 
   return {
     valid: errors.length === 0,
     error: errors.length ? errors.join("; ") : null,
     code: errors.length ? "tree_invalid" : null,
     taxa,
+    taxa_normalized: taxaNormalized,
+    alignment_names: expectedRaw,
+    label_normalization: "first_token_accession",
     missing,
     unknown,
     duplicates,
+    duplicate_alignment_ids: [...new Set(duplicateAlignmentIds)],
+    warnings,
     unnamed_tip_count: unnamedTips,
     root_children: Array.isArray(tree.children) ? tree.children.length : 0,
     rooting: metrics.rooting,

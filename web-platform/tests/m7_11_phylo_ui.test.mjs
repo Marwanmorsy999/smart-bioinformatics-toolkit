@@ -199,6 +199,35 @@ test("FIXTURE UI: a run without a tree fails honestly and offers no tree export"
   await page.close();
 });
 
+test("FIXTURE UI: negative ML length warning draws a cladogram and reports honestly", async () => {
+  const negativeTree = "(taxon_a:-0.0070265625,(taxon_b:0.2,taxon_c:0.3)95/87:0.4);";
+  const withWarning = {
+    ...RUN_RESPONSE,
+    tree_newick: negativeTree,
+    workflow_completed: true,
+    validation: { ...RUN_RESPONSE.validation, status: "pass_with_warnings",
+      warnings: ["tree_negative_branch_lengths"], label_normalization: "first_token_accession" },
+    metrics: { ...RUN_RESPONSE.metrics, warnings: ["tree_negative_branch_lengths"],
+      tree: { ...RUN_RESPONSE.metrics.tree, branch_length_valid: true,
+        branch_length_nonnegative: false, usable_for_length_layout: false,
+        branch_lengths: { invalid_count: 0, negative_count: 1 } } }
+  };
+  const { page, errors } = await openPage(withWarning);
+  await loadFasta(page, FASTA);
+  await page.click("#phylo-plan");
+  await page.waitForFunction(() => document.querySelectorAll("#phylo-plan-steps li").length === 7);
+  await page.check("#phylo-approve-check");
+  await page.click("#phylo-run");
+  await page.waitForSelector("#phylo-results:not([hidden])");
+  assert.match(await page.locator("#phylo-status").innerText(), /warnings/i);
+  assert.match(await page.locator(".phylo-layout-mode").innerText(), /cladogram/i);
+  assert.match(await page.locator("#phylo-metrics").innerText(), /Negative branch lengths[\s\S]*1/);
+  assert.match(await page.locator("#phylo-interpretation").innerText(), /negative/i);
+  assert.equal(await page.locator("#phylo-tree svg .phylo-tip").count(), 3);
+  assert.deepEqual(errors, []);
+  await page.close();
+});
+
 test("FIXTURE UI: URL resume params are forwarded only after approval; no secrets are sent", async () => {
   const jobId = "4838ba20a6d8676526e1c47a033d95de";
   const iqtreeJobId = "4838ba20a6d8676542ae6f938b169e38";

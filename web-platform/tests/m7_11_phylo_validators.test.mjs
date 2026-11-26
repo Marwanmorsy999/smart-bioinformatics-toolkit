@@ -106,13 +106,21 @@ test("FIXTURE: an unrecognized numeric-support prefix stays a support label", ()
   assert.equal(withLength.length, 0.3);
 });
 
-test("FIXTURE: negative and non-numeric branch lengths are invalid", () => {
+test("FIXTURE: non-finite lengths are invalid; finite negative lengths are retained and warned", () => {
+  // Scientific semantics: "NaN" is INVALID (not parseable); "-0.1" is finite
+  // but negative, so it is retained verbatim, counted separately and warned.
   const checked = validateTree(fixture("tree_invalid_branch.nwk"), ["A", "B", "C", "D"]);
-  assert.equal(checked.valid, false);
+  assert.equal(checked.valid, false, "the non-finite NaN still fails strict validity");
   assert.ok(checked.errors.includes("tree_invalid_branch_length"));
-  assert.equal(checked.branch_lengths.invalid_count, 2);
+  assert.equal(checked.branch_lengths.invalid_count, 1);
+  assert.deepEqual(checked.branch_lengths.invalid.map((item) => item.raw), ["NaN"]);
+  assert.equal(checked.branch_lengths.negative_count, 1);
+  assert.deepEqual(checked.branch_lengths.negative.map((item) => item.raw), ["-0.1"]);
+  assert.equal(checked.branch_lengths.negative[0].value, -0.1, "no clamping or invention");
+  assert.equal(checked.metrics.branch_length_valid, false);
+  assert.equal(checked.metrics.branch_length_nonnegative, false);
   assert.equal(checked.metrics.usable_for_length_layout, false);
-  assert.deepEqual(checked.branch_lengths.invalid.map((item) => item.raw).sort(), ["-0.1", "NaN"]);
+  assert.ok(checked.warnings.includes("tree_negative_branch_lengths"));
 });
 
 test("FIXTURE: wrong and duplicate tips are detected independently", () => {
@@ -135,6 +143,45 @@ test("FIXTURE: unrooted representation is explicit and no outgroup is invented",
   const absent = validateTree(fixture("tree_support.nwk"), ["A", "B", "C", "D"], { outgroup: "ghost" });
   assert.equal(absent.rooting.status, "outgroup-not-found");
   assert.equal(absent.rooting.outgroup_verified, false);
+});
+
+test("FIXTURE: full FASTA headers correspond to accession-only Newick tips", () => {
+  // Scientific fixture: IQ-TREE writes accession tips; the alignment keeps the
+  // full header. Correspondence is on the first whitespace token on both sides.
+  const names = validateAlignment(fixture("full_header_alignment.fasta")).names;
+  const checked = validateTree(fixture("accession_tree_negative.nwk"), names);
+  assert.equal(checked.valid, true, JSON.stringify(checked));
+  assert.deepEqual(checked.missing, []);
+  assert.deepEqual(checked.unknown, []);
+  assert.equal(checked.label_normalization, "first_token_accession");
+  assert.equal(checked.taxa.length, 5);
+  assert.deepEqual(checked.alignment_names, names, "raw alignment headers are retained");
+  assert.ok(checked.taxa.some((label) => String(label).startsWith("NR_115348.1")), "raw tree labels retained");
+  assert.ok(checked.taxa_normalized.every((label) => !/\s/.test(label)));
+});
+
+test("FIXTURE: two full headers sharing one accession token cannot pass silently", () => {
+  const names = validateAlignment(fixture("duplicate_normalized_headers.fasta")).names;
+  assert.equal(new Set(names).size, names.length, "raw headers are distinct");
+  const checked = validateTree(fixture("accession_tree_negative.nwk"), names);
+  assert.equal(checked.valid, false);
+  assert.ok(checked.errors.includes("alignment_duplicate_normalized_ids"), JSON.stringify(checked.errors));
+  assert.deepEqual(checked.duplicate_alignment_ids, ["NR_115348.1"]);
+});
+
+test("FIXTURE: finite negative ML length is retained verbatim, warned, not clamped", () => {
+  const names = validateAlignment(fixture("full_header_alignment.fasta")).names;
+  const checked = validateTree(fixture("accession_tree_negative.nwk"), names);
+  assert.equal(checked.valid, true, "a finite negative length is not a structural error");
+  assert.deepEqual(checked.warnings, ["tree_negative_branch_lengths"]);
+  assert.equal(checked.metrics.branch_length_valid, true, "negative is still finite/parseable");
+  assert.equal(checked.metrics.branch_length_nonnegative, false);
+  assert.equal(checked.metrics.usable_for_length_layout, false, "the UI must draw a cladogram");
+  const negatives = checked.metrics.branch_lengths.negative;
+  assert.equal(negatives.length, 1);
+  assert.equal(negatives[0].value, -0.0070265625, "no clamping or rounding");
+  assert.equal(negatives[0].raw, "-0.0070265625");
+  assert.equal(checked.metrics.branch_lengths.invalid_count, 0);
 });
 
 test("FIXTURE: malformed Newick fails closed with an explicit unknown rooting", () => {

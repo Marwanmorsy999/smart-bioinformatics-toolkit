@@ -280,7 +280,7 @@ function renderProgress(provenance = []) {
   }
 }
 
-function renderMetrics(metrics) {
+function renderMetrics(metrics, labelNormalization = null) {
   const table = $("phylo-metrics");
   table.replaceChildren();
   const body = document.createElement("tbody");
@@ -304,11 +304,16 @@ function renderMetrics(metrics) {
   add("Tree tips", tree?.tip_count);
   add("Internal nodes", tree?.internal_node_count);
   add("Parsed support values", tree?.support_value_count);
-  add("Branch lengths valid", tree ? (tree.branch_length_valid ? "yes" : "no") : null);
+  add("Branch lengths valid (finite)", tree ? (tree.branch_length_valid ? "yes" : "no") : null);
+  add("Branch lengths non-negative", tree ? (tree.branch_length_nonnegative ? "yes" : "no") : null);
   add("Branch lengths complete", tree ? (tree.branch_lengths_complete ? "yes" : "no") : null);
   add("Invalid branch lengths", tree?.branch_lengths?.invalid_count);
+  add("Negative branch lengths", tree?.branch_lengths?.negative_count);
+  add("Layout", tree ? (tree.usable_for_length_layout ? "branch-length aware" : "cladogram") : null);
+  add("Warnings", (metrics?.warnings ?? []).join(", ") || "none");
   add("Rooting status", tree?.rooting?.status);
   add("Rooting basis", tree?.rooting?.basis);
+  add("Taxon label mapping", labelNormalization);
   table.append(body);
 }
 
@@ -319,10 +324,15 @@ function renderInterpretation(body) {
   if (alignment) parts.push(`The retrieved alignment contains ${alignment.sequence_count} sequences across ${alignment.alignment_length ?? "unknown"} columns, with ${alignment.gap_count} gap characters and ${alignment.conserved_columns} conserved columns.`);
   if (tree) {
     parts.push(`The parsed tree has ${tree.tip_count} tips and ${tree.internal_node_count} internal nodes; ${tree.support_value_count} internal support labels were parsed.`);
-    parts.push(tree.branch_length_valid
-      ? (tree.branch_lengths_complete ? "All branch lengths are finite, non-negative and present, so branch-length-aware layout is used." : "Branch lengths are valid but incomplete; the tree is drawn as a cladogram.")
-      : "At least one branch length is invalid; the tree is drawn as a cladogram.");
+    const negatives = tree.branch_lengths?.negative_count ?? 0;
+    if (!tree.branch_length_valid) parts.push("At least one branch length is not finite or not parseable; the tree is drawn as a cladogram.");
+    else if (negatives > 0) parts.push(`${negatives} finite negative ML branch length(s) were retained verbatim (not clamped); the tree is drawn as a cladogram.`);
+    else if (!tree.usable_for_length_layout) parts.push("Branch lengths are incomplete; the tree is drawn as a cladogram.");
+    else parts.push("All branch lengths are finite, non-negative and present, so branch-length-aware layout is used.");
     parts.push(`Rooting: ${tree.rooting?.status ?? "unknown"}. ${tree.rooting?.basis ?? ""} No outgroup was invented.`);
+  }
+  if ((body.metrics?.warnings ?? []).length) {
+    parts.push(`Warnings: ${body.metrics.warnings.join(", ")}. These are retained as evidence, not silently corrected.`);
   }
   parts.push("These are descriptive checks of the retrieved datasets. Topological accuracy, substitution model choice, taxonomic sampling and publication-grade interpretation require independent validation.");
   $("phylo-interpretation").textContent = parts.join(" ");
@@ -444,12 +454,15 @@ $("phylo-run").addEventListener("click", async () => {
   }
   state.body = body;
   renderProgress(body.provenance ?? []);
-  const completed = body.workflow_completed === true && body.validation?.status === "pass";
+  const pass = body.validation?.status === "pass" || body.validation?.status === "pass_with_warnings";
+  const completed = body.workflow_completed === true && pass;
   $("phylo-status").textContent = !response.ok || !completed
     ? `Run ${body.run_id ?? "unknown"}: ${friendlyError(body, response.status)}`
-    : `Run ${body.run_id}: workflow outputs validated (alignment and tree checks passed).`;
+    : body.validation?.status === "pass_with_warnings"
+      ? `Run ${body.run_id}: outputs validated with warnings ${(body.validation.warnings ?? []).join(", ")}.`
+      : `Run ${body.run_id}: workflow outputs validated (alignment and tree checks passed).`;
   $("phylo-results").hidden = false;
-  renderMetrics(body.metrics);
+  renderMetrics(body.metrics, body.validation?.label_normalization);
   renderInterpretation(body);
   $("phylo-provenance").textContent = JSON.stringify(body.provenance ?? [], null, 2);
   $("phylo-validation").textContent = `Alignment: ${body.validation?.alignment?.valid ? "PASS" : "FAIL"}; Tree: ${body.validation?.tree?.valid ? "PASS" : "FAIL"}. Retrieval: ${(body.validation?.retrieval_errors ?? []).length} issue(s) recorded.`;
@@ -458,7 +471,17 @@ $("phylo-run").addEventListener("click", async () => {
   const referenceTaxa = [...$("phylo-reference-select").querySelectorAll("input:checked")].map((input) => input.value);
   state.treeView = renderTree(body.tree_newick, $("phylo-tree"), {
     metrics: body.metrics, queryTaxon, referenceTaxa,
-    inspector: document.createElement("div")
+    inspector: document.createElement("div"),
+    onSelect: ({ kind, name, branch_length, node_id }) => {
+      if (kind !== "tip") return;
+      const inspector = $("phylo-tree")?.querySelector(".phylo-inspector");
+      if (!inspector) return;
+      const token = String(name ?? "").trim().split(/\s+/)[0] || "";
+      const detail = body.validation?.label_normalization === "first_token_accession"
+        ? ` Accession token: ${token}.`
+        : "";
+      inspector.textContent = `Taxon ${name ?? "unnamed"}${detail} Branch length: ${branch_length ?? "not available"}. Node ${node_id ?? "unknown"}.`;
+    }
   });
   const alignmentBox = $("phylo-alignment");
   if (body.alignment_text) {

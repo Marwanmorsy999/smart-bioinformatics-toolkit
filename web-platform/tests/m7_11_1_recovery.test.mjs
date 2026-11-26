@@ -7,7 +7,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { createAdapter } from "../providers/galaxy/index.js";
-import { handlePhyloRun } from "../functions/api/ai/workflows/phylo/run.js";
+import { handlePhyloRun, parseIqtreeReport, iqtreeReportExcerpt } from "../functions/api/ai/workflows/phylo/run.js";
 import {
   validateInputFasta, validateAlignment
 } from "../functions/api/ai/workflows/phylo/validators.js";
@@ -21,7 +21,10 @@ const UNEQUAL_INPUT = ">taxon_a\nACGTACGTACG\n>taxon_b\nACGTACGTTCGAATC\n>taxon_
 const ALIGNMENT = ">taxon_a\nACGT-ACGTACG\n>taxon_b\nACGTACGTTCGT\n>taxon_c\nACGTTCGTACGT\n";
 const TREE = "(taxon_a:0.1,(taxon_b:0.2,taxon_c:0.3)95/87:0.4);\n";
 // FIXTURE: a genuine-shaped IQ-TREE report with real values to parse.
-const IQ_REPORT = "Model of substitution: GTR+F+R3\nLog-likelihood: -1234.5678\nUFboot: 1000 replicates\n";
+const IQ_REPORT = "Model of substitution: GTR+F+R3\nLog-likelihood: -1234.5678\nUFboot: 1000 replicates\nSH-aLRT test: 1000 replicates\n";
+// FIXTURE: full FASTA headers vs accession-only Newick tips from the real run.
+const FULL_HEADER_FASTA = ">NR_115348.1 Francisella tularensis subsp. holarctica OSU18\nACGTACGTACGT\n>NR_074666.1 Francisella tularensis subsp. tularensis SCHU S4\nACGTACGTTCGT\n>NR_074665.1 Francisella novicida U112\nACGTTCGTACGT\n>NR_043278.1 Francisella philomiragia noatunensis\nACGTTCGTTCGA\n>NR_029362.1 Francisella tularensis subsp. holarctica LVS\nACGTAAGTACGT\n";
+const ACCESSION_TREE = "((NR_115348.1:-0.0070265625,NR_074666.1:0.0070275627):0.016762465,(NR_074665.1:0.0093274489,NR_043278.1:0.057175286):0.0095989406,NR_029362.1:0.13487706);\n";
 
 const FIX = Object.freeze({
   historyId: "11ac94870d0bb33adfdcc31d5164dd84",
@@ -163,18 +166,35 @@ function makeIdFactory() {
   };
 }
 
-async function runWorkflow(t, { payload = {}, stubOptions = {} } = {}) {
+async function runWorkflow(t, { payload = {}, stubOptions = {}, failAfterCapture = false,
+  withOwner = false } = {}) {
   const fake = createFakeD1AI();
   const stub = makeRecoveryStub(stubOptions);
   const originalFetch = globalThis.fetch;
   globalThis.fetch = stub.fetchImpl;
   t.after(() => { globalThis.fetch = originalFetch; });
   const request = new Request("https://app.example.test/api/ai/workflows/phylo/run", {
-    method: "POST", headers: { "Content-Type": "application/json" },
+    method: "POST", headers: { "Content-Type": "application/json",
+      ...(withOwner ? { "X-Agent-Token": "test-agent-token" } : {}) },
     body: JSON.stringify({ fasta_text: INPUT_FASTA, filename: "phylo.fasta",
       objective: "recovery fixture", ...payload })
   });
-  const response = await handlePhyloRun(request, makeEnv(fake.db), {
+  let db = fake.db;
+  if (failAfterCapture) {
+    // FIXTURE failure: throw on the THIRD artifact write, after the real
+    // alignment and tree texts have already been captured in memory.
+    let artifactWrites = 0;
+    db = {
+      prepare(sql) {
+        if (String(sql).includes("INSERT INTO artifacts")) {
+          artifactWrites += 1;
+          if (artifactWrites === 3) throw new Error("simulated post-capture persistence failure");
+        }
+        return fake.db.prepare(sql);
+      }
+    };
+  }
+  const response = await handlePhyloRun(request, makeEnv(db), {
     now: NOW, idFactory: makeIdFactory(), fetchImpl: stub.fetchImpl
   });
   return { response, body: await response.json(), fake, stub };
@@ -211,6 +231,21 @@ test("FIXTURE: strict validateAlignment STILL rejects unequal lengths (aligned o
   assert.equal(result.valid, false);
   assert.ok(result.errors.some((error) => error.startsWith("alignment_sequences_unequal_length")));
   assert.equal(validateAlignment(ALIGNMENT).valid, true);
+});
+
+test("FIXTURE: report model parsing covers real IQ-TREE phrasings and stays null when absent", () => {
+  assert.equal(parseIqtreeReport("Best-fit model according to BIC: TPM3u+F+I\n").model, "TPM3u+F+I");
+  assert.equal(parseIqtreeReport("Model: TPM3u+F+I\n").model, "TPM3u+F+I");
+  assert.equal(parseIqtreeReport("Model of substitution: GTR+F+R3\n").model, "GTR+F+R3");
+  const absent = parseIqtreeReport("no model information here\n");
+  assert.equal(absent.model, null);
+  assert.equal(absent.log_likelihood, null);
+  assert.deepEqual(absent.support_settings, []);
+  assert.equal(iqtreeReportExcerpt(""), null);
+  const redacted = iqtreeReportExcerpt("X-API-Key: stub-secret\nModel: TPM3u+F+I\n");
+  assert.doesNotMatch(redacted, /stub-secret/);
+  assert.match(redacted, /\[redacted\]/);
+  assert.match(redacted, /Model: TPM3u\+F\+I/);
 });
 
 // ------------------------------------------------------------------ adapter
@@ -643,6 +678,21 @@ test("FIXTURE: a run that failed before any provider job reports a null report e
   assert.doesNotMatch(JSON.stringify(body.provenance), /\/jobs\/undefined\//);
 });
 
+test("FIXTURE: exception after capture forces workflow_completed false and failed workspace state", async (t) => {
+  const { response, body, fake } = await runWorkflow(t, { failAfterCapture: true, withOwner: true });
+  assert.equal(response.status, 502);
+  assert.match(body.error, /post-capture persistence failure/);
+  assert.equal(body.validation.status, "failed");
+  // The alignment and tree were genuinely captured, but that must NOT be
+  // presented as a completed, succeeded run.
+  assert.equal(body.workflow_completed, false);
+  const workspaceRuns = fake.state.tables.workspace_runs ?? [];
+  assert.equal(workspaceRuns.length, 1);
+  assert.equal(workspaceRuns[0].state, "failed");
+  assert.equal(body.provenance.find((step) => step.step_id === "generate_report").status,
+    "skipped_due_to_failure");
+});
+
 // ------------------------------------- read-only IQ-TREE recovery (M7.11.1)
 
 const IQ_JOB_ID = "4838ba20a6d8676542ae6f938b169e38";
@@ -681,8 +731,12 @@ test("FIXTURE: completed IQ-TREE job is recovered read-only with zero tool submi
     provider_job_id: IQ_JOB_ID, provider_job_state: "ok",
     output_ids: [FIX.treeHda, FIX.reportHda, FIX.logHda],
     history_ids: [FIX.historyId], model: "GTR+F+R3", log_likelihood: -1234.5678,
-    support: iqStep.support, resumed_from_provider_job: true
+    support: iqStep.support, support_settings: iqStep.support_settings,
+    iqtree_report_excerpt: body.resume_iqtree.iqtree_report_excerpt,
+    resumed_from_provider_job: true
   });
+  assert.match(body.resume_iqtree.iqtree_report_excerpt, /Log-likelihood/);
+  assert.deepEqual(iqStep.support_settings, ["UFboot: 1000 replicates", "SH-aLRT test: 1000 replicates"]);
   // The real bug: retrieve_outputs must carry a non-null tool id into D1.
   const retrieve = body.provenance.find((step) => step.step_id === "retrieve_outputs");
   assert.equal(retrieve.tool_id, "galaxy:retrieve_outputs");
@@ -706,6 +760,51 @@ test("FIXTURE: non-succeeded IQ-TREE job returns honest 409 with zero submission
   assert.equal(body.resumed_from_provider_job, false);
   assert.match(body.error, /running/);
   assert.equal(stub.calls.filter((call) => call.method === "POST").length, 0, "no submission");
+});
+
+test("FIXTURE: genuine accession tree with negative ML length validates with warnings", async (t) => {
+  const { response, body, stub } = await runWorkflow(t, {
+    payload: { resume_provider_job_id: FIX.providerJobId, history_id: FIX.historyId,
+      resume_iqtree_provider_job_id: IQ_JOB_ID },
+    stubOptions: { alignmentContent: FULL_HEADER_FASTA, treeContent: ACCESSION_TREE,
+      reportContent: IQ_REPORT, iqtreeJobId: IQ_JOB_ID,
+      iqtreeJobOutputs: IQ_OUTPUTS, iqtreeOutputs: IQ_OUTPUTS }
+  });
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(body.workflow_completed, true);
+  assert.equal(body.validation.status, "pass_with_warnings");
+  assert.equal(body.validation.tree.valid, true);
+  assert.deepEqual(body.validation.warnings, ["tree_negative_branch_lengths"]);
+  assert.equal(body.validation.label_normalization, "first_token_accession");
+  assert.deepEqual(body.validation.tree.missing, []);
+  assert.deepEqual(body.validation.tree.unknown, []);
+  assert.equal(body.validation.tree.taxa_normalized.length, 5);
+  assert.equal(body.tree_newick, ACCESSION_TREE);
+  assert.equal(body.metrics.tree.branch_lengths.negative_count, 1);
+  assert.equal(body.metrics.tree.usable_for_length_layout, false, "cladogram fallback");
+  assert.deepEqual(body.metrics.warnings, ["tree_negative_branch_lengths"]);
+  assert.equal(body.resume_iqtree.model, "GTR+F+R3");
+  assert.equal(body.resume_iqtree.log_likelihood, -1234.5678);
+  assert.ok(body.resume_iqtree.support_settings.some((line) => /UFboot/.test(line)));
+  assert.match(body.resume_iqtree.iqtree_report_excerpt, /Log-likelihood: -1234\.5678/);
+  assert.equal(stub.calls.filter((call) => call.method === "POST"
+    && call.url.includes("/api/tools") && !call.url.includes("/fetch")).length, 0, "zero submissions");
+});
+
+test("FIXTURE: absent real report keeps model/likelihood/excerpt null (no invention)", async (t) => {
+  const { response, body, stub } = await runWorkflow(t, {
+    payload: { resume_provider_job_id: FIX.providerJobId, history_id: FIX.historyId,
+      resume_iqtree_provider_job_id: IQ_JOB_ID },
+    stubOptions: { reportContent: "", iqtreeJobId: IQ_JOB_ID,
+      iqtreeJobOutputs: IQ_OUTPUTS, iqtreeOutputs: IQ_OUTPUTS }
+  });
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(body.validation.status, "pass");
+  assert.equal(body.resume_iqtree.model, null);
+  assert.equal(body.resume_iqtree.log_likelihood, null);
+  assert.equal(body.resume_iqtree.iqtree_report_excerpt, null);
+  assert.deepEqual(body.resume_iqtree.support_settings, []);
+  assert.equal(stub.calls.filter((call) => call.method === "POST").length, 0, "zero submissions");
 });
 
 test("FIXTURE: an unavailable recovered tree artifact is never fabricated", async (t) => {

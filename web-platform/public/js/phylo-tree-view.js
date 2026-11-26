@@ -196,7 +196,8 @@ export function renderTree(newick, mount, options = {}) {
 
   const metrics = analyzeTree(root);
   const supplied = options.metrics?.tree ?? null;
-  const lengthAware = Boolean(supplied?.usable_for_length_layout ?? metrics.usableForLengthLayout);
+  const lengthAware = Boolean(supplied?.usable_for_length_layout ?? metrics.usableForLengthLayout)
+    && supplied?.branch_length_nonnegative !== false;
   const rowHeight = 30;
   const height = Math.max(140, tips.length * rowHeight + 30);
   let tipIndex = 0;
@@ -291,7 +292,7 @@ export function renderTree(newick, mount, options = {}) {
   const mode = document.createElement("p");
   mode.className = "phylo-layout-mode";
   mode.textContent = lengthAware ? "Layout: branch-length aware (all branch lengths finite and non-negative)."
-    : "Layout: branch-length independent (cladogram); lengths are missing or invalid.";
+    : "Layout: cladogram; branch lengths are missing, non-finite or negative and are not used for spacing.";
   const inspector = options.inspector ?? document.createElement("div");
   if (!inspector.className) inspector.className = "phylo-inspector";
   inspector.textContent = "Select a taxon or internal node to inspect it.";

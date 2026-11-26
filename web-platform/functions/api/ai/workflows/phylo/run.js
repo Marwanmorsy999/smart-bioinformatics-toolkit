@@ -64,21 +64,42 @@ export function classifyPhyloArtifact(artifact = {}) {
 // returned comes from the supplied text; absent fields stay null, never guessed.
 export function parseIqtreeReport(text) {
   const source = String(text ?? "");
-  if (!source.trim()) return { model: null, log_likelihood: null, support: null, available: false };
+  const empty = { model: null, log_likelihood: null, support: null, support_settings: [], available: false };
+  if (!source.trim()) return empty;
   const capture = (pattern) => {
     const match = source.match(pattern);
     return match ? match[1].trim() : null;
   };
-  const model = capture(/(?:^|\n)[^\n]*?(?:Best-fit model|Model of substitution|Substitution model|Model)\s*:\s*([^\r\n]+)/i);
+  // Real IQ-TREE reports use several phrasings, e.g.
+  // "Best-fit model according to BIC: TPM3u+F+I" and plain "Model: TPM3u+F+I".
+  const model = capture(/(?:^|\n)[^\n]*?(?:Best-fit model|Model of substitution|Substitution model|Model)(?:[^\n:]{0,80})?\s*:\s*([^\r\n]+)/i);
   const likelihoodText = capture(/Log-likelihood\s*:\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)/i);
   const likelihood = likelihoodText === null ? null : Number(likelihoodText);
   const support = capture(/((?:^|\n)[^\n]*?(?:UFboot|SH-aLRT|bootstrap support|support values)[^\r\n]*)/i);
+  // Real support settings from the file only; no defaults are invented.
+  const supportSettings = source.split(/\r?\n/)
+    .filter((line) => /(UFboot|SH-aLRT|bootstrap|replicates|support)/i.test(line))
+    .slice(0, 5)
+    .map((line) => safeString(line, 200))
+    .filter(Boolean);
   return {
     model: model ? model.slice(0, 200) : null,
     log_likelihood: likelihood !== null && Number.isFinite(likelihood) ? likelihood : null,
     support: support ? support.slice(0, 300) : null,
-    available: Boolean(model || support || (likelihood !== null && Number.isFinite(likelihood)))
+    support_settings: supportSettings,
+    available: Boolean(model || support || supportSettings.length
+      || (likelihood !== null && Number.isFinite(likelihood)))
   };
+}
+
+// Bounded excerpt of a GENUINE report for audit. The ONLY redaction applied is
+// for X-API-Key-shaped values; other report text is carried verbatim (bounded).
+// null when no report content was read.
+export function iqtreeReportExcerpt(text) {
+  const clean = safeString(text, 100_000).replace(/X-API-Key\s*:\s*\S+/gi, "[redacted]");
+  if (!clean) return null;
+  if (clean.length <= 2000) return clean;
+  return `${clean.slice(0, 2000)}\n...[truncated]...\n${clean.slice(-2000)}`;
 }
 
 export function parseOutputDescriptors(stepId, outputs) {
@@ -175,7 +196,8 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
   let iqtreeResumeState = null;
   let recoveredIqtree = null;
   let recoveredIqtreeRecord = null;
-  let recoveredIqtreeReport = { model: null, log_likelihood: null, support: null, available: false };
+  let recoveredIqtreeReport = { model: null, log_likelihood: null, support: null, support_settings: [], available: false };
+  let recoveredIqtreeExcerpt = null;
 
   function resumeError(message, errorCode, status = 409, extra = {}) {
     return jsonResponse({
@@ -711,7 +733,9 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
           recoveredIqtreeRecord.model = recoveredIqtreeReport.model;
           recoveredIqtreeRecord.log_likelihood = recoveredIqtreeReport.log_likelihood;
           recoveredIqtreeRecord.support = recoveredIqtreeReport.support;
+          recoveredIqtreeRecord.support_settings = recoveredIqtreeReport.support_settings;
         }
+        recoveredIqtreeExcerpt = iqtreeReportExcerpt(downloaded.content);
       }
     }
     if (!alignmentText) retrievalErrors.push({ reason: "no_valid_alignment_retrieved" });
@@ -738,19 +762,27 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
       unknown: [], duplicates: [], errors: ["tree_missing"], metrics: null,
       rooting: { status: "unknown", basis: "No tree was retrieved.", declared_outgroup: outgroup || null,
         outgroup_verified: false, invented_outgroup: false } };
+  const warnings = [...(tree.warnings ?? []), ...(alignment.warnings ?? [])];
+  // A captured alignment/tree is NOT proof the workflow completed: an exception
+  // in the try block sets `failed`, and must force failure everywhere downstream.
+  const passed = !failed && alignment.valid && tree.valid;
+  const validationStatus = failed ? "failed"
+    : (passed ? (warnings.length ? "pass_with_warnings" : "pass") : "fail");
   const validation = {
-    status: failed ? "failed" : (alignment.valid && tree.valid ? "pass" : "fail"),
-    alignment, tree, error: failed, retrieval_errors: retrievalErrors,
+    status: validationStatus,
+    alignment, tree, warnings, error: failed, retrieval_errors: retrievalErrors,
+    label_normalization: tree.label_normalization ?? null,
     checked_rules: ["input_min_three_distinct_records", "input_hash", "alignment_records",
-      "alignment_lengths", "alignment_alphabet", "newick_parse", "taxa_set", "duplicate_taxa",
-      "branch_lengths", "support_labels", "explicit_rooting"]
+      "alignment_lengths", "alignment_alphabet", "newick_parse", "taxa_set_normalized", "duplicate_taxa",
+      "branch_lengths_finite", "branch_lengths_nonnegative_warning", "support_labels", "explicit_rooting"]
   };
   await recordStep("validate_alignment", "phylogenetics.validate", null, alignment.valid ? "succeeded" : "failed",
     createdAt, nowIso(now), { validation: { records: alignment.records, lengths: alignment.lengths,
       metrics: alignment.metrics } });
   await recordStep("validate_tree", "phylogenetics.tree", null, tree.valid ? "succeeded" : "failed",
     createdAt, nowIso(now), { validation: { taxa: tree.taxa, missing: tree.missing, unknown: tree.unknown,
-      duplicates: tree.duplicates, branch_lengths: tree.branch_lengths, rooting: tree.rooting } });
+      duplicates: tree.duplicates, branch_lengths: tree.branch_lengths, rooting: tree.rooting,
+      warnings, label_normalization: tree.label_normalization ?? null } });
   // Never emit `/api/ai/jobs/undefined/report`: a run that failed before any
   // provider job was recorded has no report endpoint (null), not a fake id.
   const jobReportId = jobIds.galaxy_iqtree ?? jobIds.galaxy_mafft ?? null;
@@ -774,8 +806,8 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
       await insertRow(db, SQL.insertWorkspaceRun, [runId, projectId, "msa-phylogenetics", "1.0.0",
         objective || null, JSON.stringify([datasetId]), JSON.stringify({ outgroup: outgroup || null,
           tool_versions: toolVersions }), "galaxy", envExecutionMode(env),
-        validation.status === "pass" ? "succeeded" : "failed", createdAt,
-        validation.status === "pass" ? nowIso(now) : null,
+        passed ? "succeeded" : "failed", createdAt,
+        passed ? nowIso(now) : null,
         JSON.stringify(provenance.map((step) => ({ id: step.step_id, status: step.status }))),
         JSON.stringify(retrievedFiles.map((file) => ({ dataset_id: file.dataset_id, name: file.name, kind: file.kind }))),
         JSON.stringify(validation), JSON.stringify(provenance),
@@ -793,11 +825,11 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
     validation, provenance, execution_mode: envExecutionMode(env),
     error: failed,
     tree_newick: treeText, alignment_text: alignmentText,
-    metrics: { alignment: alignment.metrics ?? null, tree: tree.metrics ?? null },
+    metrics: { alignment: alignment.metrics ?? null, tree: tree.metrics ?? null, warnings },
     retrieval: { started_at: retrievalStartedAt,
       files: retrievedFiles, errors: retrievalErrors,
       classification: "name_extension_and_output_mapping" },
-    workflow_completed: validation.status === "pass",
+    workflow_completed: passed,
     // Recovery provenance: the ORIGINAL provider job and its real, observed
     // state/output — never a resubmitted MAFFT job or an invented identifier.
     resume: resumeByJobId ? {
@@ -819,6 +851,8 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
       model: recoveredIqtreeReport.model,
       log_likelihood: recoveredIqtreeReport.log_likelihood,
       support: recoveredIqtreeReport.support,
+      support_settings: recoveredIqtreeReport.support_settings,
+      iqtree_report_excerpt: recoveredIqtreeExcerpt,
       resumed_from_provider_job: true
     } : null,
     reopen: {
@@ -829,5 +863,5 @@ export async function handlePhyloRun(request, env, { now = Date.now(), idFactory
       workspace_persisted: Boolean(workspaceRunUrl),
       plan_id: planId
     }
-  }, (failed || validation.status !== "pass") ? 502 : 200, request);
+  }, (failed || !passed) ? 502 : 200, request);
 }
