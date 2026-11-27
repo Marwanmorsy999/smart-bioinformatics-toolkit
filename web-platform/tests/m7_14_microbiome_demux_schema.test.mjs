@@ -100,6 +100,9 @@ function makeStub({ submitStatus = 200, submitError = null } = {}) {
         model_class: "Tool", available: true }]);
     }
     if (url.includes("/api/workflows")) return json([]);
+    if (method === "GET" && /\/api\/histories\/[^/]+\/contents/.test(url)) {
+      return json([{ id: QZA, name: "imported-sequences.qza", extension: "qza", state: "ok", history_id: HISTORY }]);
+    }
     if (method === "POST" && url.endsWith("/api/tools")) {
       submissions.push(body);
       if (submitStatus !== 200) return json(submitError ?? { error: "bad_request" }, submitStatus);
@@ -133,7 +136,8 @@ test("LIVE SCHEMA / barcode column comes from the real metadata header; defaults
   const stub = makeStub();
   const { db, state: d1 } = seededDb(stateAtDemux());
   await withStub(stub, async () => {
-    await status(db, stub);
+    await status(db, stub); // unconditional membership proof
+    await status(db, stub); // demux submission
     assert.equal(stub.submissions.length, 1);
     const submission = stub.submissions[0];
     assert.equal(submission.history_id, HISTORY, "the job targets the run history");
@@ -158,6 +162,7 @@ test("LIVE SCHEMA / a different verified barcode header is used, never hardcoded
   const { db } = seededDb(stateAtDemux({ input: { ...stateAtDemux().input, metadata_text: alternate } }));
   await withStub(stub, async () => {
     await status(db, stub);
+    await status(db, stub);
     assert.equal(stub.submissions[0].inputs["barcodes|column"], "BarcodeSequence");
   });
 });
@@ -167,7 +172,8 @@ test("FAILED SUBMISSION / bounded sanitized field-name summary is persisted", as
   const stub = makeStub({ submitStatus: 400, submitError: { error: "bad_request", message: longError } });
   const { db, state: d1 } = seededDb(stateAtDemux());
   await withStub(stub, async () => {
-    const body = await status(db, stub);
+    await status(db, stub); // membership proof
+    const body = await status(db, stub); // demux submission fails
     assert.equal(body.status, "failed");
     const stored = storedState(d1);
     assert.equal(stored.steps.demux.status, "failed");
@@ -189,9 +195,9 @@ test("FAILED SUBMISSION / bounded sanitized field-name summary is persisted", as
   });
 });
 
-test("RESUME / fifth pre-job resume succeeds; sixth cap and provider-job failure are refused", async () => {
+test("RESUME / sixth pre-job resume succeeds; seventh cap and provider-job failure are refused", async () => {
   const failedState = () => stateAtDemux({
-    status: "failed", retry_count: 1, stage_resume_count: 4, current_step: "demux",
+    status: "failed", retry_count: 1, stage_resume_count: 5, current_step: "demux",
     steps: { import_reads: { status: "succeeded", provider_job_id: "uploadjob00000001" },
       demux: { status: "failed", reason: "demux submission failed: HTTP 400", provider_job_id: null } },
     errors: [{ step: "demux", reason: "demux submission failed: HTTP 400" }],
@@ -202,9 +208,9 @@ test("RESUME / fifth pre-job resume succeeds; sixth cap and provider-job failure
   await withStub(stub, async () => {
     const resume = () => handleResumeStages(makePostRequest({ run_id: RUN_ID },
       "/api/ai/workflows/microbiome/resume-stages"), envFor(db, stub), { fetchImpl: stub.fetchImpl });
-    const fifth = await resume();
-    assert.equal(fifth.status, 202, JSON.stringify(await fifth.clone().json()));
-    assert.equal((await fifth.json()).stage_resume_count, 5);
+    const sixth = await resume();
+    assert.equal(sixth.status, 202, JSON.stringify(await sixth.clone().json()));
+    assert.equal((await sixth.json()).stage_resume_count, 6);
     assert.equal(storedState(d1).import.provider_job_id, IMPORT_JOB, "import preparation survived");
     assert.equal(storedState(d1).steps.demux, undefined);
 
@@ -217,7 +223,7 @@ test("RESUME / fifth pre-job resume succeeds; sixth cap and provider-job failure
       row.state_json = JSON.stringify(state);
       row.state = "failed";
     };
-    refail(5, { status: "failed", reason: "demux submission failed: HTTP 400", provider_job_id: null });
+    refail(6, { status: "failed", reason: "demux submission failed: HTTP 400", provider_job_id: null });
     const capped = await resume();
     assert.equal(capped.status, 409);
     assert.equal((await capped.json()).reason, "stage_resume_limit_reached");
