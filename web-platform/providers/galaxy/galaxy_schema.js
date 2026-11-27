@@ -4,12 +4,34 @@
 // MAFFT/IQ-TREE parameters. Secrets stay server-side and are never returned.
 const IDEXT = ["fasta", "fa", "fna", "fas", "aln", "phylip", "nex", "clustal", "msf"];
 
+// In-isolate cache only. Large QIIME 2 wrappers expose thousands of conditional
+// cases; refetching/reparsing them on every status poll exceeded the Worker CPU
+// limit. Keys contain the base URL, tool id and version — never a credential —
+// and the cache is bounded FIFO. Cached schemas are read-only by contract.
+const SCHEMA_CACHE_LIMIT = 24;
+const schemaCache = new Map();
+const fetchIdentities = new WeakMap();
+let nextFetchIdentity = 1;
+
+// Distinguish injected stub fetches from the stable runtime fetch so offline
+// tests with different per-test schemas never share a cached schema.
+function fetchIdentity() {
+  const impl = globalThis.fetch;
+  if (typeof impl !== "function") return "none";
+  if (!fetchIdentities.has(impl)) fetchIdentities.set(impl, nextFetchIdentity++);
+  return String(fetchIdentities.get(impl));
+}
+
+export function clearToolSchemaCache() { schemaCache.clear(); }
+
 export async function fetchToolSchema(env, toolId, version) {
   const base = String(env?.GALAXY_BASE_URL ?? "").trim();
   const key = String(env?.GALAXY_API_KEY ?? "").trim();
   if (!base || !key) throw new Error("Galaxy schema fetch requires server-side credentials");
   const id = String(toolId ?? "").trim();
   if (!/^[A-Za-z0-9._+\-\/]+$/.test(id)) throw new Error("invalid_tool_id");
+  const cacheKey = `${fetchIdentity()}|${base}|${id}|${String(version ?? "")}`;
+  if (schemaCache.has(cacheKey)) return schemaCache.get(cacheKey);
   const suffix = version ? `&tool_version=${encodeURIComponent(version)}` : "";
   const response = await fetch(`${base}/api/tools/${encodeURIComponent(id)}?io_details=true${suffix}`, {
     headers: { "X-API-Key": key, Accept: "application/json" }
@@ -19,6 +41,8 @@ export async function fetchToolSchema(env, toolId, version) {
   if (!Array.isArray(schema?.inputs) || schema.inputs.length === 0) {
     throw new Error("schema_unavailable: tool exposes no usable io_details inputs");
   }
+  if (schemaCache.size >= SCHEMA_CACHE_LIMIT) schemaCache.delete(schemaCache.keys().next().value);
+  schemaCache.set(cacheKey, schema);
   return schema;
 }
 
