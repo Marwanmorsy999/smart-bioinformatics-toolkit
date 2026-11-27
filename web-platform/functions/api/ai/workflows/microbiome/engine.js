@@ -553,23 +553,45 @@ async function collectOutputs(adapter, jobId, historyId, ctx) {
   return { selected, associations, historyContents: contents.artifacts ?? [], status, outputs };
 }
 
-async function downloadSelected(adapter, artifacts, stepId, ctx, { toolVersion = null } = {}) {
+const FINALIZE_MAX_ARTIFACTS_PER_POLL = 2;
+const FINALIZE_MAX_BYTES_PER_POLL = 200 * 1024;
+
+async function downloadSelected(adapter, artifacts, stepId, ctx, { toolVersion = null,
+  maxArtifacts = Infinity, maxBytes = Infinity } = {}) {
   const out = [];
   const errors = [];
+  let bytes = 0;
+  let reachedLimit = false;
   for (const artifact of artifacts) {
+    if (out.length >= maxArtifacts || bytes >= maxBytes) { reachedLimit = true; break; }
     const downloaded = await adapter.downloadArtifact({ dataset_id: artifact.id }, ctx);
     if (!downloaded.ok || typeof downloaded.content !== "string") {
       errors.push({ dataset_id: artifact.id, name: artifact.name, reason: "content_unavailable" });
       continue;
     }
+    const size = new TextEncoder().encode(downloaded.content).length;
+    // A single oversized artifact is reported honestly; it never enters a poll.
+    if (size > maxBytes) {
+      errors.push({ dataset_id: artifact.id, name: artifact.name, bytes: size,
+        reason: "artifact_exceeds_poll_byte_bound" });
+      reachedLimit = true;
+      break;
+    }
+    bytes += size;
     const checksum = await hashInput(downloaded.content);
     out.push({ ...artifact, source_step: stepId, tool_version: toolVersion, text: downloaded.content,
-      checksum, bytes: new TextEncoder().encode(downloaded.content).length });
+      checksum, bytes: size });
   }
-  return { artifacts: out, errors };
+  return { artifacts: out, errors, bytes, reachedLimit };
 }
 
 function parseForKind(kind, text, options = {}) {
+  if (typeof text !== "string" || !text) {
+    return { available: false, reason: `No text was available for a ${kind} artifact.` };
+  }
+  if (text.length > MAX_PARSE_CHARS) {
+    return { available: false, reason: `artifact_exceeds_${MAX_PARSE_CHARS}_character_local_parse_bound` };
+  }
   switch (kind) {
     case "qc": return parseQcSummary(text);
     case "rep_seqs": return parseRepSeqsFasta(text);
@@ -583,15 +605,27 @@ function parseForKind(kind, text, options = {}) {
 }
 
 function bestParsed(artifacts, kind, options) {
+  const limits = [];
   for (const artifact of artifacts) {
     if (artifact.kind !== kind || typeof artifact.text !== "string") continue;
+    if (artifact.text.length > MAX_PARSE_CHARS) {
+      limits.push({ kind, dataset_id: artifact.id, name: artifact.name, chars: artifact.text.length,
+        reason: `artifact_exceeds_${MAX_PARSE_CHARS}_character_local_parse_bound` });
+      continue;
+    }
     const parsed = parseForKind(kind, artifact.text, options);
-    if (parsed.available) return { parsed, artifact };
+    if (parsed.available) return { parsed, artifact, limits };
   }
   return {
     parsed: { available: false, reason: `No parseable ${kind} artifact was retrieved from the tool output.` },
-    artifact: null
+    artifact: null, limits
   };
+}
+
+function recordParseLimits(state, limits) {
+  if (Array.isArray(limits) && limits.length) {
+    state.parse_limits = [...(state.parse_limits ?? []), ...limits].slice(-12);
+  }
 }
 
 // When no tool QC artifact was retrieved, a SMALL user upload may still expose
@@ -2178,12 +2212,22 @@ async function submitStage(adapter, env, state, stepId, ctx) {
 }
 
 async function collectDenoise(state, collected, downloaded) {
-  const { parsed: table } = bestParsed(downloaded.artifacts, "feature_table");
-  const { parsed: repSeqs } = bestParsed(downloaded.artifacts, "rep_seqs");
+  const freshTable = bestParsed(downloaded.artifacts, "feature_table");
+  const freshRepSeqs = bestParsed(downloaded.artifacts, "rep_seqs");
+  // An incremental slice may contain only one of several exported artifacts;
+  // reuse tables parsed earlier in this run instead of resetting them.
+  const table = freshTable.parsed.available ? freshTable.parsed
+    : (state._parsed?.table?.available ? state._parsed.table : freshTable.parsed);
+  const repSeqs = freshRepSeqs.parsed.available ? freshRepSeqs.parsed
+    : (state._parsed?.repSeqs?.available ? state._parsed.repSeqs : freshRepSeqs.parsed);
   const denoiseStats = bestParsed(downloaded.artifacts, "qc");
   // Single canonical key: rolesFor() reads featureTableId for alpha/beta/pcoa.
-  state.frontier.featureTableId = table.available ? downloaded.artifacts.find((artifact) => artifact.kind === "feature_table")?.id ?? null : null;
-  state.frontier.repSeqsId = repSeqs.available ? downloaded.artifacts.find((artifact) => artifact.kind === "rep_seqs")?.id ?? null : null;
+  state.frontier.featureTableId = table.available
+    ? downloaded.artifacts.find((artifact) => artifact.kind === "feature_table")?.id ?? state.frontier.featureTableId ?? null
+    : state.frontier.featureTableId ?? null;
+  state.frontier.repSeqsId = repSeqs.available
+    ? downloaded.artifacts.find((artifact) => artifact.kind === "rep_seqs")?.id ?? state.frontier.repSeqsId ?? null
+    : state.frontier.repSeqsId ?? null;
   state.results.asv = {
     available: table.available,
     reason: table.available ? null : "No parseable feature table was retrieved from the denoising job.",
@@ -2240,7 +2284,10 @@ function exportFailure(state, stepId, reason, datasetId = null) {
 async function submitNeededExports(adapter, env, state, stepId, jobId, collected, ctx) {
   const needed = EXPORT_KINDS_BY_STEP[stepId] ?? [];
   const present = new Set(collected.selected.map((artifact) => artifact.kind));
-  const missing = needed.filter((kind) => !present.has(kind) && EXPORTABLE_KINDS.includes(kind));
+  const exportedKinds = new Set(Object.values(state.exports ?? {})
+    .map((entry) => entry?.expected_kind).filter(Boolean));
+  const missing = needed.filter((kind) => !present.has(kind) && !exportedKinds.has(kind)
+    && EXPORTABLE_KINDS.includes(kind));
   if (!missing.length) return [];
   const alreadyExported = new Set(Object.keys(state.exports ?? {}));
   const candidates = [];
@@ -2290,8 +2337,11 @@ async function submitNeededExports(adapter, env, state, stepId, jobId, collected
 }
 
 async function pollPendingExports(adapter, state, stepId, ctx) {
-  const entries = (state.pending_exports ?? []).filter((entry) => entry.step_id === stepId);
-  if (!entries.length) return { done: true, artifacts: [], errors: [] };
+  const allEntries = (state.pending_exports ?? []).filter((entry) => entry.step_id === stepId);
+  if (!allEntries.length) return { done: true, artifacts: [], errors: [] };
+  // Each export job is downloaded with the same bounded slice; polling all
+  // finished jobs in one request avoids losing text from earlier exports.
+  const entries = allEntries;
   const artifacts = [];
   const errors = [];
   for (const entry of entries) {
@@ -2312,7 +2362,8 @@ async function pollPendingExports(adapter, state, stepId, ctx) {
     }
     const collected = await collectOutputs(adapter, entry.provider_job_id, state.history_id, ctx);
     const downloaded = await downloadSelected(adapter, collected.selected, stepId, ctx,
-      { toolVersion: entry.tool_version });
+      { toolVersion: entry.tool_version, maxArtifacts: FINALIZE_MAX_ARTIFACTS_PER_POLL,
+        maxBytes: FINALIZE_MAX_BYTES_PER_POLL });
     for (const artifact of downloaded.artifacts) {
       artifacts.push({ ...artifact, kind: entry.expected_kind, export_of: entry.source_dataset_id,
         export_tool_id: entry.tool_id, export_tool_version: entry.tool_version });
@@ -2342,11 +2393,174 @@ function labelDiversity(result, state, sourceKind) {
   };
 }
 
+// Apply retrieved artifact text to stage results. Split out so an incremental
+// finalization can process one bounded slice at a time without redoing the
+// provider calls, and so no value is ever invented when text is unavailable.
+function applyStageArtifacts(state, stepId, downloaded, collected) {
+  if (stepId === "demux") {
+    const qzaOutputs = (collected?.selected ?? []).filter((artifact) =>
+      artifact.kind === "qza_artifact" || /\.qza$/i.test(String(artifact.name ?? ""))
+        || /\bqza\b/i.test(String(artifact.extension ?? "")));
+    const perSample = qzaOutputs.find((artifact) => /per_sample_sequences/i.test(String(artifact.name ?? "")))
+      ?? qzaOutputs.find((artifact) => /\bsequences?\b/i.test(String(artifact.name ?? "")))
+      ?? qzaOutputs[0] ?? null;
+    const errorDetails = qzaOutputs.find((artifact) => /error_correction_details/i.test(String(artifact.name ?? "")))
+      ?? null;
+    const fastq = downloaded.artifacts.find((artifact) => ["reads", "rep_seqs", "feature_table"].includes(artifact.kind));
+    state.frontier.demuxReadsId = perSample?.id ?? fastq?.id ?? state.frontier.demuxReadsId ?? null;
+    state.frontier.demuxErrorCorrectionDetailsId = errorDetails?.id
+      ?? state.frontier.demuxErrorCorrectionDetailsId ?? null;
+    state.steps[stepId] = { ...(state.steps[stepId] ?? {}),
+      demux_output_provenance: {
+        per_sample_sequences_dataset_id: perSample?.id ?? null,
+        per_sample_sequences_name: perSample?.name ?? null,
+        error_correction_details_dataset_id: errorDetails?.id ?? null,
+        error_correction_details_name: errorDetails?.name ?? null,
+        basis: "real_demux_job_output_qza",
+        note: "The qza is consumed by QIIME 2 dada2 denoise-single; it is binary and is not parsed as text."
+      } };
+    const stats = bestParsed(downloaded.artifacts, "qc");
+    recordParseLimits(state, stats.limits);
+    state.results.qc = stats.parsed.available ? stats.parsed
+      : (state.results.qc?.available ? state.results.qc : observedQc(state));
+  } else if (stepId === "qc_summary") {
+    const stats = bestParsed(downloaded.artifacts, "qc");
+    recordParseLimits(state, stats.limits);
+    state.results.qc = stats.parsed.available ? stats.parsed
+      : (state.results.qc?.available ? state.results.qc : observedQc(state));
+  } else if (stepId === "dada2_denoise") {
+    collectDenoise(state, collected, downloaded);
+  } else if (stepId === "taxonomy") {
+    const taxonomy = bestParsed(downloaded.artifacts, "taxonomy");
+    recordParseLimits(state, taxonomy.limits);
+    state.results.taxonomy = taxonomy.parsed;
+    state._parsed = { ...(state._parsed ?? {}), taxonomy: taxonomy.parsed };
+  } else if (stepId === "alpha_diversity") {
+    const alpha = bestParsed(downloaded.artifacts, "alpha");
+    recordParseLimits(state, alpha.limits);
+    if (!state.results.alpha?.available || alpha.parsed.available) {
+      state.results.alpha = labelDiversity(
+        alpha.parsed.available ? alpha.parsed : computeAlphaFromTable(state._parsed?.table), state, "alpha");
+    }
+  } else if (stepId === "beta_diversity") {
+    const distance = bestParsed(downloaded.artifacts, "distance_matrix");
+    recordParseLimits(state, distance.limits);
+    if (!state.results.beta?.available || distance.parsed.available) {
+      state.results.beta = labelDiversity(
+        distance.parsed.available ? distance.parsed : computeBrayCurtis(state._parsed?.table), state, "beta");
+    }
+    if (distance.artifact) state.frontier.distanceMatrixId = distance.artifact.id;
+  } else if (stepId === "pcoa") {
+    const pcoa = bestParsed(downloaded.artifacts, "pcoa");
+    recordParseLimits(state, pcoa.limits);
+    if (!state.results.pcoa?.available || pcoa.parsed.available) {
+      state.results.pcoa = labelDiversity(
+        pcoa.parsed.available ? pcoa.parsed : computePcoa(state.results.beta), state, "pcoa");
+    }
+    if (pcoa.artifact) state.frontier.pcoaId = pcoa.artifact.id;
+  }
+}
+
+function makeFinalizeQueue(stepId, jobId, collected) {
+  const items = (collected.selected ?? []).map((artifact) => ({
+    id: String(artifact.id), name: String(artifact.name ?? ""), kind: String(artifact.kind ?? ""),
+    extension: String(artifact.extension ?? artifact.type ?? ""),
+    state: String(artifact.state ?? ""), history_id: artifact.history_id ?? null,
+    uuid: artifact.uuid ?? null
+  }));
+  const qzaIds = items.filter((item) => item.kind === "qza_artifact"
+    || /\.qza$/i.test(item.name) || /\bqza\b/i.test(item.extension))
+    .map((item) => ({ name: item.name, dataset_id: item.id, history_id: item.history_id, uuid: item.uuid }));
+  return { step_id: stepId, job_id: jobId, items, qza_ids: qzaIds, cursor: 0,
+    downloaded: [], errors: [], created_at: nowIso() };
+}
+
+// Process a small slice of a durable finalization queue. Text is never stored
+// in state (only checksums/metadata); each slice is downloaded, inserted and
+// applied inside one bounded request. Stage success is recorded only once the
+// cursor has passed every selected artifact.
+async function processFinalizeQueue(adapter, db, row, state, stepId, ctx, extraArtifacts = []) {
+  const queue = state.finalize_queue;
+  if (!queue || queue.step_id !== stepId) return false;
+  const sliceArtifacts = [];
+  let pollArtifacts = 0;
+  let pollBytes = 0;
+  while (queue.cursor < queue.items.length
+      && pollArtifacts < FINALIZE_MAX_ARTIFACTS_PER_POLL
+      && pollBytes < FINALIZE_MAX_BYTES_PER_POLL) {
+    const slice = queue.items.slice(queue.cursor,
+      queue.cursor + (FINALIZE_MAX_ARTIFACTS_PER_POLL - pollArtifacts));
+    const eligible = slice.filter((item) => !(item.kind === "qza_artifact"
+      || /\.qza$/i.test(item.name) || /\bqza\b/i.test(item.extension)));
+    const downloaded = await downloadSelected(adapter, eligible, stepId, ctx, {
+      maxArtifacts: FINALIZE_MAX_ARTIFACTS_PER_POLL, maxBytes: FINALIZE_MAX_BYTES_PER_POLL
+    });
+    for (const artifact of downloaded.artifacts) {
+      await insertRow(db, SQL.insertArtifact, [makeId("art"), runIdOf(state), artifact.name, artifact.kind,
+        `galaxy:${artifact.id}`, artifact.checksum, artifact.bytes, "text/plain", artifact.text, nowIso()]);
+      queue.downloaded.push({ id: artifact.id, name: artifact.name, kind: artifact.kind,
+        checksum: artifact.checksum, bytes: artifact.bytes });
+      state.artifacts.push({ name: artifact.name, kind: artifact.kind, dataset_id: artifact.id,
+        checksum: artifact.checksum, bytes: artifact.bytes, source_step: stepId,
+        tool_version: state.steps[stepId]?.tool_version ?? null, extension: artifact.type ?? null });
+      sliceArtifacts.push(artifact);
+      pollArtifacts += 1;
+      pollBytes += artifact.bytes;
+    }
+    for (const error of downloaded.errors) {
+      queue.errors.push(error);
+      state.errors.push({ step: stepId, ...error });
+    }
+    queue.cursor += slice.length;
+    if (downloaded.reachedLimit) break;
+  }
+  if (["alpha_diversity", "beta_diversity", "pcoa"].includes(stepId)) {
+    await rehydrateParsed(db, state, { force: Boolean(state.parsed_rehydrated && !state._parsed) });
+  }
+  const allArtifacts = [...sliceArtifacts, ...extraArtifacts];
+  applyStageArtifacts(state, stepId, { artifacts: allArtifacts, errors: [] }, { selected: queue.items });
+  const pendingRemaining = (state.pending_exports ?? []).filter((entry) => entry.step_id === stepId).length;
+  // Exported qza text is stored in D1 as it arrives; rebuild the bounded parsed
+  // view once the export set is drained so denoise results include every table.
+  if (stepId === "dada2_denoise" && pendingRemaining === 0) {
+    await rehydrateParsed(db, state, { force: true });
+    applyStageArtifacts(state, stepId, { artifacts: allArtifacts, errors: [] }, { selected: queue.items });
+  }
+  if (queue.cursor >= queue.items.length && pendingRemaining > 0) {
+    // Export text for this stage is still in flight; keep the stage open and
+    // apply each finished export on a later bounded poll.
+    await persistState(db, row, state);
+    return false;
+  }
+  if (queue.cursor >= queue.items.length) {
+    state.steps[stepId] = { ...(state.steps[stepId] ?? {}), status: "succeeded", finished_at: nowIso(),
+      output_artifacts: [
+        ...queue.downloaded.map((item) => ({ name: item.name, kind: item.kind,
+          dataset_id: item.id, checksum: item.checksum })),
+        ...queue.qza_ids.map((item) => ({ name: item.name, kind: "qza_artifact",
+          dataset_id: item.dataset_id, checksum: null }))
+      ],
+      qza_dataset_ids: queue.qza_ids,
+      ...(queue.downloaded.some((item) => item.export_of) ? { exports: queue.downloaded
+        .filter((item) => item.export_of).map((item) => ({ source_dataset_id: item.export_of,
+          exported_dataset_id: item.id, kind: item.kind, tool_id: item.export_tool_id ?? null,
+          tool_version: item.export_tool_version ?? null, basis: "derived_from_executed_tool_output" })) } : {}),
+      basis: "retrieved_provider_outputs_incremental_finalization"
+    };
+    state.pending_exports = (state.pending_exports ?? []).filter((entry) => entry.step_id !== stepId);
+    await recordStep(db, state, stepId, "succeeded", { details: state.steps[stepId] });
+    delete state.finalize_queue;
+    return true;
+  }
+  await persistState(db, row, state);
+  return false;
+}
+
 async function finalizeStage(adapter, env, db, row, state, stepId, jobId, ctx, options = {}) {
   const toolMeta = state.steps[stepId]?.tool_id ? { id: state.steps[stepId].tool_id, version: state.steps[stepId].tool_version } : null;
   // Diversity fallbacks compute from the REAL retrieved feature table. Reuse
   // the once-per-state parsed view rather than parsing on every poll.
-  if (["alpha_diversity", "beta_diversity", "pcoa"].includes(stepId)) {
+  if (["dada2_denoise", "alpha_diversity", "beta_diversity", "pcoa"].includes(stepId)) {
     await rehydrateParsed(db, state, { force: Boolean(state.parsed_rehydrated && !state._parsed) });
   }
   let collected = { selected: [], errors: [] };
@@ -2372,55 +2586,7 @@ async function finalizeStage(adapter, env, db, row, state, stepId, jobId, ctx, o
     extension: artifact.type ?? null
   })));
   state.errors.push(...downloaded.errors.map((error) => ({ step: stepId, ...error })));
-  if (stepId === "demux") {
-    // The real demux job emits qza artifacts. Identify them by their ACTUAL
-    // output names/extensions; the per-sample qza is a valid dada2 input.
-    const qzaOutputs = (collected.selected ?? []).filter((artifact) =>
-      artifact.kind === "qza_artifact" || /\.qza$/i.test(String(artifact.name ?? ""))
-        || /\bqza\b/i.test(String(artifact.extension ?? "")));
-    const perSample = qzaOutputs.find((artifact) => /per_sample_sequences/i.test(String(artifact.name ?? "")))
-      ?? qzaOutputs.find((artifact) => /\bsequences?\b/i.test(String(artifact.name ?? "")))
-      ?? qzaOutputs[0] ?? null;
-    const errorDetails = qzaOutputs.find((artifact) => /error_correction_details/i.test(String(artifact.name ?? "")))
-      ?? null;
-    const fastq = downloaded.artifacts.find((artifact) => ["reads", "rep_seqs", "feature_table"].includes(artifact.kind));
-    state.frontier.demuxReadsId = perSample?.id ?? fastq?.id ?? state.frontier.demuxReadsId ?? null;
-    state.frontier.demuxErrorCorrectionDetailsId = errorDetails?.id ?? null;
-    state.steps[stepId] = { ...(state.steps[stepId] ?? {}),
-      demux_output_provenance: {
-        per_sample_sequences_dataset_id: perSample?.id ?? null,
-        per_sample_sequences_name: perSample?.name ?? null,
-        error_correction_details_dataset_id: errorDetails?.id ?? null,
-        error_correction_details_name: errorDetails?.name ?? null,
-        basis: "real_demux_job_output_qza",
-        note: "The qza is consumed by QIIME 2 dada2 denoise-single; it is binary and is not parsed as text."
-      } };
-    const stats = bestParsed(downloaded.artifacts, "qc");
-    state.results.qc = stats.parsed.available ? stats.parsed : observedQc(state);
-  } else if (stepId === "qc_summary") {
-    const stats = bestParsed(downloaded.artifacts, "qc");
-    state.results.qc = stats.parsed.available ? stats.parsed : observedQc(state);
-  } else if (stepId === "dada2_denoise") {
-    await collectDenoise(state, collected, downloaded);
-  } else if (stepId === "taxonomy") {
-    const taxonomy = bestParsed(downloaded.artifacts, "taxonomy");
-    state.results.taxonomy = taxonomy.parsed;
-    state._parsed = { ...(state._parsed ?? {}), taxonomy: taxonomy.parsed };
-  } else if (stepId === "alpha_diversity") {
-    const alpha = bestParsed(downloaded.artifacts, "alpha");
-    state.results.alpha = labelDiversity(
-      alpha.parsed.available ? alpha.parsed : computeAlphaFromTable(state._parsed?.table), state, "alpha");
-  } else if (stepId === "beta_diversity") {
-    const distance = bestParsed(downloaded.artifacts, "distance_matrix");
-    state.results.beta = labelDiversity(
-      distance.parsed.available ? distance.parsed : computeBrayCurtis(state._parsed?.table), state, "beta");
-    if (distance.artifact) state.frontier.distanceMatrixId = distance.artifact.id;
-  } else if (stepId === "pcoa") {
-    const pcoa = bestParsed(downloaded.artifacts, "pcoa");
-    state.results.pcoa = labelDiversity(
-      pcoa.parsed.available ? pcoa.parsed : computePcoa(state.results.beta), state, "pcoa");
-    if (pcoa.artifact) state.frontier.pcoaId = pcoa.artifact.id;
-  }
+  applyStageArtifacts(state, stepId, downloaded, collected);
   const exportProvenance = downloaded.artifacts.filter((artifact) => artifact.export_of).map((artifact) => ({
     source_dataset_id: artifact.export_of, exported_dataset_id: artifact.id, kind: artifact.kind,
     tool_id: artifact.export_tool_id ?? null, tool_version: artifact.export_tool_version ?? null,
@@ -2720,30 +2886,53 @@ async function advanceOneStage(db, row, state, env, ctx, options = {}) {
       return;
     }
 
-    // Export jobs already in flight belong to this stage. Poll them before
-    // finalizing; the original job's outputs are re-collected (read-only) for
-    // merging with the exported text.
-    if ((state.pending_exports ?? []).some((entry) => entry.step_id === stepId)) {
-      const pending = await pollPendingExports(adapter, state, stepId, ctx);
-      if (!pending.done) return;
-      const original = await collectOutputs(adapter, step.provider_job_id, state.history_id, ctx);
-      const originalDownloaded = await downloadSelected(adapter, original.selected, stepId, ctx,
-        { toolVersion: state.steps[stepId]?.tool_version ?? null });
-      await finalizeStage(adapter, env, db, row, state, stepId, step.provider_job_id, ctx, {
-        prefetched: [...originalDownloaded.artifacts, ...pending.artifacts],
-        prefetchedErrors: [...originalDownloaded.errors, ...pending.errors]
-      });
+    // Create a DURABLE queue once per succeeded job. Every later poll processes
+    // only a small slice, so no single request finalizes a large artifact set.
+    if (!state.finalize_queue || state.finalize_queue.step_id !== stepId
+        || state.finalize_queue.job_id !== step.provider_job_id) {
+      const collected = await collectOutputs(adapter, step.provider_job_id, state.history_id, ctx);
+      const submitted = await submitNeededExports(adapter, env, state, stepId, step.provider_job_id, collected, ctx);
+      // Create the durable queue even when an export was submitted: later
+      // polls poll that export BEFORE processing the artifact slice.
+      state.finalize_queue = makeFinalizeQueue(stepId, step.provider_job_id, collected);
+      if (submitted.length) state.pending_exports = [...(state.pending_exports ?? []), ...submitted];
+      await persistState(db, row, state);
       return;
     }
 
-    const collected = await collectOutputs(adapter, step.provider_job_id, state.history_id, ctx);
-    const submitted = await submitNeededExports(adapter, env, state, stepId, step.provider_job_id, collected, ctx);
-    if (submitted.length) {
-      state.pending_exports = [...(state.pending_exports ?? []), ...submitted];
-      await persistState(db, row, state);
-      return; // bounded: later polls finish the exports before finalizing
+    // Submit any still-missing export kinds one at a time; state.exports and
+    // exportedKinds prevent a second submission for the same source/kind.
+    const stillNeeded = await submitNeededExports(adapter, env, state, stepId, step.provider_job_id,
+      { selected: state.finalize_queue.items }, ctx);
+    if (stillNeeded.length) {
+      state.pending_exports = [...(state.pending_exports ?? []), ...stillNeeded];
     }
-    await finalizeStage(adapter, env, db, row, state, stepId, step.provider_job_id, ctx, { collected });
+    const pendingTextArtifacts = [];
+    if ((state.pending_exports ?? []).some((entry) => entry.step_id === stepId)) {
+      const pending = await pollPendingExports(adapter, state, stepId, ctx);
+      if (!pending.done) {
+        await persistState(db, row, state);
+        return;
+      }
+      for (const artifact of pending.artifacts) {
+        await insertRow(db, SQL.insertArtifact, [makeId("art"), runIdOf(state), artifact.name,
+          artifact.kind, `galaxy:${artifact.id}`, artifact.checksum, artifact.bytes, "text/plain",
+          artifact.text, nowIso()]);
+        state.finalize_queue.downloaded.push({ id: artifact.id, name: artifact.name, kind: artifact.kind,
+          checksum: artifact.checksum, bytes: artifact.bytes, export_of: artifact.export_of ?? null,
+          export_tool_id: artifact.export_tool_id ?? null, export_tool_version: artifact.export_tool_version ?? null });
+        state.artifacts.push({ name: artifact.name, kind: artifact.kind, dataset_id: artifact.id,
+          checksum: artifact.checksum, bytes: artifact.bytes, source_step: stepId,
+          tool_version: artifact.export_tool_version ?? null, extension: artifact.type ?? null });
+        pendingTextArtifacts.push(artifact);
+      }
+      for (const error of pending.errors) state.errors.push(error);
+      // Export text and queue slices share the same per-poll download budget;
+      // never do both in one request.
+      await persistState(db, row, state);
+      return;
+    }
+    await processFinalizeQueue(adapter, db, row, state, stepId, ctx, pendingTextArtifacts);
     return;
   }
 
@@ -2818,7 +3007,10 @@ export async function handleStatus(request, env, options = {}) {
   // state and the provider, and re-parsing artifacts on every poll exceeded
   // the Worker CPU limit on the live run.
   if (state.status === "running" && needsParsedFor(state.current_step, state)) {
-    await rehydrateParsed(db, state);
+    // Already-computed local summaries need no reopening of artifact text.
+    const computed = ["composition", "alpha", "beta", "pcoa", "ordination"]
+      .some((key) => state.results?.[key]?.available);
+    await rehydrateParsed(db, state, { force: Boolean(state.parsed_rehydrated && !state._parsed && !computed) });
   }
   if (state.status === "running" && state.current_step) {
     state.poll_count = Math.min((state.poll_count ?? 0) + 1, LIMITS.maxProviderPolls);

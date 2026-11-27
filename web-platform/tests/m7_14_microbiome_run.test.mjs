@@ -183,7 +183,7 @@ function envFor(db, stub) {
     GALAXY_API_KEY: "stub-secret", FETCH_IMPL: stub.fetchImpl };
 }
 
-async function driveToCompletion(handler, env, stub, runId, limit = 30) {
+async function driveToCompletion(handler, env, stub, runId, limit = 60) {
   let last = null;
   for (let index = 0; index < limit; index += 1) {
     last = await handleStatus(makeGetRequest(`/api/ai/workflows/microbiome/status?run_id=${runId}`), env, { fetchImpl: stub.fetchImpl });

@@ -237,7 +237,7 @@ async function withStub(stub, fn) {
   try { return await fn(); } finally { globalThis.fetch = previousFetch; }
 }
 
-async function startAndDrive(stub, { polls = 40 } = {}) {
+async function startAndDrive(stub, { polls = 60 } = {}) {
   const { db, state: d1 } = createFakeD1AI();
   const env = envFor(db, stub);
   const started = await handleRun(makePostRequest(PAYLOAD, "/api/ai/workflows/microbiome/run"), env,

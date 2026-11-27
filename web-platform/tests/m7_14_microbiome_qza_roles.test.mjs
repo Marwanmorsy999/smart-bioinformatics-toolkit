@@ -119,7 +119,7 @@ function makeStub() {
   return { fetchImpl, submissions };
 }
 
-async function drive(db, stub, limit = 18) {
+async function drive(db, stub, limit = 30) {
   for (let index = 0; index < limit; index += 1) {
     await handleStatus(makeGetRequest(`/api/ai/workflows/microbiome/status?run_id=${RUN_ID}`),
       { ...mockAIEnv(db), GALAXY_ENABLED: "true", GALAXY_BASE_URL: "https://galaxy.example.test",
