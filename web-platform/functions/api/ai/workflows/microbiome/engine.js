@@ -288,6 +288,58 @@ function barcodeColumnPosition(metadataText) {
   return { found: true, header: columns[index], columns, position: index + 1, reason: null };
 }
 
+const METRIC_PROVENANCE_KEY = "__diversity_metric_provenance";
+
+// Read option values from the LIVE diversity schema only. A metric is never
+// guessed from a tool name, and a select whose only option is Galaxy's
+// "__q2galaxy__::literal::None" is NOT evidence of a usable metric.
+function liveSelectOptions(schema, fieldPattern) {
+  const options = [];
+  const seen = new Set();
+  const walk = (inputs, prefix, depth) => {
+    if (!Array.isArray(inputs) || depth > 8) return;
+    for (const raw of inputs) {
+      const item = raw && typeof raw === "object" ? raw : {};
+      const name = safeString(item.name, 200);
+      if (!name) continue;
+      const full = `${prefix}${name}`;
+      if (fieldPattern.test(full)) {
+        for (const rawOption of [...(Array.isArray(item.options) ? item.options : []),
+          ...(Array.isArray(item.select_options) ? item.select_options : [])]) {
+          const value = safeString(rawOption?.value ?? rawOption?.id, 300) || null;
+          if (!value || seen.has(value)) continue;
+          seen.add(value);
+          options.push({ field: full, value, label: safeString(rawOption?.label ?? rawOption?.name, 300) || null });
+        }
+      }
+      if (Array.isArray(item.inputs)) walk(item.inputs, `${full}|`, depth + 1);
+      for (const rawCase of (Array.isArray(item.cases) ? item.cases : [])) {
+        walk(rawCase && typeof rawCase === "object" ? rawCase.inputs : null, `${full}|`, depth + 1);
+      }
+    }
+  };
+  walk(schema?.inputs, "", 0);
+  return options;
+}
+
+function normalizedMetric(value) {
+  return String(value ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function chooseLiveMetric(options, preferred, stepId) {
+  for (const name of preferred) {
+    const hit = options.find((entry) => normalizedMetric(entry.value) === normalizedMetric(name)
+      || normalizedMetric(entry.label) === normalizedMetric(name));
+    if (hit) return { chosen: hit, provenance: { step_id: stepId, field: hit.field,
+      value: hit.value, label: hit.label, basis: "live_schema_option",
+      candidates: options.slice(0, 40).map((entry) => ({ value: entry.value, label: entry.label })) } };
+  }
+  return { chosen: null,
+    provenance: { step_id: stepId, basis: "live_schema_option_unavailable",
+      reason: `no_matching_live_metric_option: preferred ${preferred.join(", ")} were absent from the live schema options`,
+      candidates: options.slice(0, 40).map((entry) => ({ value: entry.value, label: entry.label })) } };
+}
+
 function overridesFor(stepId, schema, state, discovery) {
   const overrides = {};
   if (!schema) return overrides;
@@ -325,9 +377,25 @@ function overridesFor(stepId, schema, state, discovery) {
       && discovery.classifier.option_value) {
     overrides[discovery.classifier.parameter_name] = discovery.classifier.option_value;
   }
+  if (stepId === "alpha_diversity") {
+    const fieldPattern = /(?:^|\|)metric$/i;
+    const options = liveSelectOptions(schema, fieldPattern);
+    if (options.length) {
+      const { chosen, provenance } = chooseLiveMetric(options, ["shannon", "observed_features"], stepId);
+      state.steps[stepId] = { ...(state.steps[stepId] ?? {}), metric: provenance };
+      if (chosen) overrides[chosen.field] = chosen.value;
+      else overrides[METRIC_PROVENANCE_KEY] = provenance;
+    }
+  }
   if (stepId === "beta_diversity") {
-    const metric = find(/(?:^|\|)(?:metric|distance_method|distance)$/i);
-    if (metric) overrides[metric] = "bray_curtis";
+    const options = liveSelectOptions(schema, /(?:^|\|)(?:metric|distance_method|distance)$/i);
+    if (options.length) {
+      // Live Galaxy writes this option as "braycurtis", not "bray_curtis".
+      const { chosen, provenance } = chooseLiveMetric(options, ["bray_curtis", "Bray-Curtis"], stepId);
+      state.steps[stepId] = { ...(state.steps[stepId] ?? {}), metric: provenance };
+      if (chosen) overrides[chosen.field] = chosen.value;
+      else overrides[METRIC_PROVENANCE_KEY] = provenance;
+    }
   }
   return overrides;
 }
@@ -2577,6 +2645,10 @@ async function submitStage(adapter, env, state, stepId, ctx) {
   }
   const schema = await fetchToolSchema(env, toolMeta.id, toolMeta.version);
   const overrides = overridesFor(stepId, schema, state, { classifier: state.discovery.classifier });
+  const metricFailure = overrides[METRIC_PROVENANCE_KEY];
+  if (metricFailure?.reason) {
+    throw new Error(`${stepId} metric unavailable: ${metricFailure.reason}`);
+  }
   const payload = buildMicrobiomePayload(schema, rolesFor(stepId, state), overrides);
   if (!payload.valid) {
     recordSubmissionFailure(state, env, stepId, toolMeta, payload,
@@ -2603,7 +2675,8 @@ async function submitStage(adapter, env, state, stepId, ctx) {
     recordSubmissionFailure(state, env, stepId, toolMeta, payload, submission);
     throw new Error(`${stepId} submission failed: ${submission.error.message ?? submission.error.code}`);
   }
-  state.steps[stepId] = { status: "running", provider_job_id: submission.provider_job_id ?? null,
+  state.steps[stepId] = { ...(state.steps[stepId] ?? {}),
+    status: "running", provider_job_id: submission.provider_job_id ?? null,
     tool_id: toolMeta.id, tool_version: toolMeta.version ?? null,
     applied_overrides: payload.applied_overrides, dataset_fields: payload.dataset_fields,
     started_at: nowIso(),
@@ -4105,6 +4178,13 @@ async function runAdvanceOperation(operation, adapter, db, row, state, env, ctx,
       return setCursor(state, "poll_current_job");
     } catch (caught) {
       const reason = safeString(caught?.message ?? caught, 500);
+      if (/metric unavailable:/.test(reason)) {
+        state.steps[stepId] = { ...(state.steps[stepId] ?? step), status: "unavailable",
+          reason, finished_at: nowIso() };
+        await recordStep(db, state, stepId, "unavailable", { details: { reason } });
+        const next = advanceStep(state);
+        return setCursor(state, next ? "poll_current_job" : "finalize_result");
+      }
       if (/schema_traversal_node_limit/.test(reason) || stepId === "qc_summary") {
         state.steps[stepId] = { ...step, status: "unavailable", reason, finished_at: nowIso() };
         await recordStep(db, state, stepId, "unavailable", { details: { reason } });
