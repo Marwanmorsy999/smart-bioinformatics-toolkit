@@ -92,7 +92,7 @@ function diversitySchema(toolId, options) {
   ] };
 }
 
-async function submit(stepId, toolId, options) {
+async function submit(stepId, toolId, options, schemaOverride = null) {
   const s = diversityState(stepId, toolId);
   const { db, state: d1 } = createFakeD1AI({ microbiome_runs: [{
     public_id: RUN, input_sha256: s.input_sha256, metadata_sha256: s.metadata_sha256,
@@ -102,7 +102,9 @@ async function submit(stepId, toolId, options) {
   const submissions = [];
   const fetchImpl = async (input, init = {}) => {
     const url = String(input);
-    if (url.includes("io_details=true")) return json(diversitySchema(toolId, options));
+    if (url.includes("io_details=true")) {
+      return json(schemaOverride ?? diversitySchema(toolId, options));
+    }
     if (String(init.method).toUpperCase() === "POST" && url.endsWith("/api/tools")) {
       submissions.push(JSON.parse(String(init.body)));
       return json({ outputs: [{ id: "dddddddddddddddddddddddddddddddd" }],
@@ -151,4 +153,53 @@ test("DIVERSITY METRIC / a select with only the None option fails closed with no
   assert.equal(stored.steps.alpha_diversity.status, "unavailable");
   assert.match(stored.steps.alpha_diversity.reason, /^alpha_diversity metric unavailable: no_matching_live_metric_option/);
   assert.equal(body.operation, "submit_stage");
+});
+
+// Real Galaxy io_details tuples are [label, value, selected], not objects.
+const ALPHA_TUPLE_SCHEMA = { tool_id: ALPHA_TOOL, inputs: [
+  { model_class: "DataToolParameter", name: "table", optional: false, extensions: ["qza"] },
+  { model_class: "Select", name: "metric", optional: false, value: NONE,
+    options: [
+      ["Selection required", NONE, false],
+      ["shannon", "shannon", false],
+      ["observed_features", "observed_features", false]
+    ] }
+] };
+
+test("ALPHA METRIC / real Galaxy option tuples apply shannon, never the None sentinel", async () => {
+  const { submissions, stored } = await submit("alpha_diversity", ALPHA_TOOL, [], ALPHA_TUPLE_SCHEMA);
+  assert.equal(submissions.length, 1);
+  assert.equal(submissions[0].inputs.metric, "shannon");
+  assert.notEqual(submissions[0].inputs.metric, NONE);
+  assert.equal(stored.steps.alpha_diversity.metric.value, "shannon");
+  assert.equal(stored.steps.alpha_diversity.metric.field, "metric");
+  assert.equal(stored.steps.alpha_diversity.metric.basis, "live_schema_option");
+  assert.ok(stored.steps.alpha_diversity.metric.candidates.some((entry) => entry.value === "observed_features"));
+});
+
+test("BETA METRIC / a real Galaxy [label, value] tuple resolves to braycurtis", async () => {
+  const schema = { tool_id: BETA_TOOL, inputs: [
+    { model_class: "DataToolParameter", name: "table", optional: false, extensions: ["qza"] },
+    { model_class: "Select", name: "metric", optional: false, value: NONE,
+      options: [["Selection required", NONE, false], ["Bray-Curtis", "braycurtis", false]] }
+  ] };
+  const { submissions, stored } = await submit("beta_diversity", BETA_TOOL, [], schema);
+  assert.equal(submissions.length, 1);
+  assert.equal(submissions[0].inputs.metric, "braycurtis");
+  assert.equal(stored.steps.beta_diversity.metric.value, "braycurtis");
+  assert.equal(stored.steps.beta_diversity.metric.label, "Bray-Curtis");
+});
+
+test("DIVERSITY METRIC / a metric select with zero parseable option values fails closed", async () => {
+  const schema = { tool_id: ALPHA_TOOL, inputs: [
+    { model_class: "DataToolParameter", name: "table", optional: false, extensions: ["qza"] },
+    { model_class: "Select", name: "metric", optional: false, value: NONE,
+      options: [[], ["", "", false]] }
+  ] };
+  const { submissions, stored } = await submit("alpha_diversity", ALPHA_TOOL, [], schema);
+  assert.equal(submissions.length, 0);
+  assert.equal(stored.steps.alpha_diversity.status, "unavailable");
+  assert.match(stored.steps.alpha_diversity.reason,
+    /^alpha_diversity metric unavailable: live_schema_option_unavailable: no parseable option values/);
+  assert.equal(stored.steps.alpha_diversity.metric.basis, "live_schema_option_unavailable");
 });

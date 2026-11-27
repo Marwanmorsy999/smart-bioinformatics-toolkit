@@ -293,9 +293,26 @@ const METRIC_PROVENANCE_KEY = "__diversity_metric_provenance";
 // Read option values from the LIVE diversity schema only. A metric is never
 // guessed from a tool name, and a select whose only option is Galaxy's
 // "__q2galaxy__::literal::None" is NOT evidence of a usable metric.
+// Galaxy io_details exposes select options either as objects
+// ({value,label}) or as tuples [label, value, selected]. Both are real schema
+// evidence; a tuple's element 1 is the authoritative submitted value.
+function schemaOptionEntry(raw) {
+  if (Array.isArray(raw)) {
+    return { value: safeString(raw[1], 300) || null,
+      label: safeString(raw[0], 300) || null };
+  }
+  if (raw && typeof raw === "object") {
+    return { value: safeString(raw.value ?? raw.id, 300) || null,
+      label: safeString(raw.label ?? raw.name, 300) || null };
+  }
+  return { value: safeString(raw, 300) || null, label: null };
+}
+
 function liveSelectOptions(schema, fieldPattern) {
   const options = [];
+  const fields = [];
   const seen = new Set();
+  const seenFields = new Set();
   const walk = (inputs, prefix, depth) => {
     if (!Array.isArray(inputs) || depth > 8) return;
     for (const raw of inputs) {
@@ -304,12 +321,13 @@ function liveSelectOptions(schema, fieldPattern) {
       if (!name) continue;
       const full = `${prefix}${name}`;
       if (fieldPattern.test(full)) {
+        if (!seenFields.has(full)) { seenFields.add(full); fields.push(full); }
         for (const rawOption of [...(Array.isArray(item.options) ? item.options : []),
-          ...(Array.isArray(item.select_options) ? item.select_options : [])]) {
-          const value = safeString(rawOption?.value ?? rawOption?.id, 300) || null;
-          if (!value || seen.has(value)) continue;
-          seen.add(value);
-          options.push({ field: full, value, label: safeString(rawOption?.label ?? rawOption?.name, 300) || null });
+          ...(Array.isArray(item.select_options) ? item.select_options : [])].slice(0, 80)) {
+          const entry = schemaOptionEntry(rawOption);
+          if (!entry.value || seen.has(entry.value)) continue;
+          seen.add(entry.value);
+          options.push({ field: full, value: entry.value, label: entry.label });
         }
       }
       if (Array.isArray(item.inputs)) walk(item.inputs, `${full}|`, depth + 1);
@@ -319,7 +337,7 @@ function liveSelectOptions(schema, fieldPattern) {
     }
   };
   walk(schema?.inputs, "", 0);
-  return options;
+  return { options, fields };
 }
 
 function normalizedMetric(value) {
@@ -377,25 +395,31 @@ function overridesFor(stepId, schema, state, discovery) {
       && discovery.classifier.option_value) {
     overrides[discovery.classifier.parameter_name] = discovery.classifier.option_value;
   }
-  if (stepId === "alpha_diversity") {
-    const fieldPattern = /(?:^|\|)metric$/i;
-    const options = liveSelectOptions(schema, fieldPattern);
-    if (options.length) {
-      const { chosen, provenance } = chooseLiveMetric(options, ["shannon", "observed_features"], stepId);
-      state.steps[stepId] = { ...(state.steps[stepId] ?? {}), metric: provenance };
-      if (chosen) overrides[chosen.field] = chosen.value;
-      else overrides[METRIC_PROVENANCE_KEY] = provenance;
+  const applyMetric = (fieldPattern, preferred) => {
+    const { options, fields } = liveSelectOptions(schema, fieldPattern);
+    if (!fields.length) return; // an older schema with no metric selector needs no override
+    let chosen = null;
+    let provenance;
+    if (!options.length) {
+      // A select exists but NO usable option was parsed: never send its None default.
+      provenance = { step_id: stepId, basis: "live_schema_option_unavailable",
+        reason: `live_schema_option_unavailable: no parseable option values were exposed by the live ${stepId} metric select (${fields.join(", ")}); no default was used`,
+        candidates: [] };
+    } else {
+      const picked = chooseLiveMetric(options, preferred, stepId);
+      chosen = picked.chosen;
+      provenance = picked.provenance;
     }
+    state.steps[stepId] = { ...(state.steps[stepId] ?? {}), metric: provenance };
+    if (chosen) overrides[chosen.field] = chosen.value;
+    else overrides[METRIC_PROVENANCE_KEY] = provenance;
+  };
+  if (stepId === "alpha_diversity") {
+    applyMetric(/(?:^|\|)metric$/i, ["shannon", "observed_features"]);
   }
   if (stepId === "beta_diversity") {
-    const options = liveSelectOptions(schema, /(?:^|\|)(?:metric|distance_method|distance)$/i);
-    if (options.length) {
-      // Live Galaxy writes this option as "braycurtis", not "bray_curtis".
-      const { chosen, provenance } = chooseLiveMetric(options, ["bray_curtis", "Bray-Curtis"], stepId);
-      state.steps[stepId] = { ...(state.steps[stepId] ?? {}), metric: provenance };
-      if (chosen) overrides[chosen.field] = chosen.value;
-      else overrides[METRIC_PROVENANCE_KEY] = provenance;
-    }
+    // Live Galaxy writes this option as "braycurtis", not "bray_curtis".
+    applyMetric(/(?:^|\|)(?:metric|distance_method|distance)$/i, ["bray_curtis", "Bray-Curtis"]);
   }
   return overrides;
 }
