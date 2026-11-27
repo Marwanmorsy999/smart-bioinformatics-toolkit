@@ -99,8 +99,16 @@ function makeStub(options = {}) {
   let throwOnJob = Boolean(options.throwOnJob);
   const contents = () => [
     { id: REP_SEQS, name: "representative_sequences.qza", extension: "qza", state: "ok", history_id: HISTORY },
-    { id: TABLE_QZA, name: "qiime2 dada2 denoise-single on dataset 5: table.qza",
-      extension: "qza", state: "ok", history_id: HISTORY },
+    ...(options.noTableQza ? [] : [{ id: TABLE_QZA, name: "qiime2 dada2 denoise-single on dataset 5: table.qza",
+      extension: "qza", state: "ok", history_id: HISTORY,
+      creating_job: options.tableCreatingJob ?? "dada2-job-0001", checksum: "f".repeat(64) }]),
+    ...(options.foreignTableId ? [{ id: options.foreignTableId,
+      name: "qiime2 dada2 denoise-single on dataset 9: table.qza", extension: "qza",
+      state: "ok", history_id: "ffffffffffffffffffffffffffffffff",
+      creating_job: "dada2-job-0001" }] : []),
+    ...(options.otherJobTableId ? [{ id: options.otherJobTableId,
+      name: "qiime2 dada2 denoise-single on dataset 8: table.qza", extension: "qza",
+      state: "ok", history_id: HISTORY, creating_job: "some-other-job" }] : []),
     ...(options.noClassifier ? [] : [{ id: CLASSIFIER_DS, name: QIIME_CLASSIFIER.filename,
       extension: "qza", state: "ok", history_id: HISTORY,
       checksum: `sha256$${QIIME_CLASSIFIER.expected_sha256}`, file_size: QIIME_CLASSIFIER.expected_bytes }]),
@@ -318,6 +326,79 @@ test("REGRESSION / intendedExportKind routes the real DADA2 ': table.qza' name",
   assert.equal(intendedExportKind("representative_sequences.qza"), "rep_seqs");
   assert.equal(intendedExportKind("denoising_stats.qza"), "qc");
   assert.equal(intendedExportKind("something else.qza"), null);
+});
+
+// Live-shaped state: only the two exported TEXT artifacts were recorded, the
+// frontier featureTableId is null, and the real table.qza exists only in the
+// run's Galaxy history (never in stored state).
+function liveShapedState(extra = {}) {
+  const textArtifacts = [
+    { name: "rep_seqs.fasta", kind: "rep_seqs", dataset_id: "40160950115d555edb600ea9dd17fdb5",
+      checksum: "d".repeat(64), bytes: 111618, source_step: "dada2_denoise" },
+    { name: "DADA2Stats.tsv", kind: "qc", dataset_id: "40160950115d555eebdabe0cf3c121d3",
+      checksum: "a".repeat(64), bytes: 1487, source_step: "dada2_denoise" }
+  ];
+  return state({ feature_table_recovery: undefined,
+    frontier: { demuxReadsId: "55555555555555555555555555555555", repSeqsId: REP_SEQS,
+      featureTableId: null },
+    steps: { ...state().steps, dada2_denoise: { status: "succeeded",
+      provider_job_id: "dada2-job-0001", output_artifacts: textArtifacts } },
+    artifacts: textArtifacts,
+    ...extra });
+}
+
+test("RECOVERY / live-shaped state resolves table.qza from its own history once, refuses a foreign history", async () => {
+  const foreign = "99999999999999999999999999999999";
+  const s = liveShapedState();
+  const { db, d1 } = seed(s);
+  const stub = makeStub({ foreignTableId: foreign });
+  const env = envFor(db, stub.fetchImpl);
+  const summary = await status(db, env, stub.fetchImpl);
+  assert.equal(summary.next_operation, "recover_table_reference", "default cursor starts with reference recovery");
+  const body = await (await advance(db, env, stub.fetchImpl)).json();
+  assert.equal(body.operation, "recover_table_reference");
+  assert.equal(body.next_operation, "recover_feature_table");
+  const ref = stored(d1).recovered_table_qza;
+  assert.equal(ref.id, TABLE_QZA);
+  assert.equal(ref.name, "qiime2 dada2 denoise-single on dataset 5: table.qza");
+  assert.equal(ref.history_id, HISTORY);
+  assert.equal(ref.source_job_id, "dada2-job-0001");
+  assert.equal(ref.provenance_match, true);
+  assert.equal(ref.checksum, "f".repeat(64));
+  assert.notEqual(ref.id, foreign, "a same-named dataset from another history is never selected");
+  assert.equal(stored(d1).frontier.featureTableId, null, "reference recovery never sets the frontier");
+  assert.equal(stored(d1).recovered_table_qza_attempted, true);
+  assert.equal(stub.historyReads(), 1, "exactly one history inventory read");
+  assert.equal(stub.posts().length, 0, "no job, upload or export was submitted");
+  // The at-most-once guard keeps a replayed cursor from re-reading the history.
+  const replay = await (await advance(db, env, stub.fetchImpl, {})).json();
+  assert.equal(replay.operation, "recover_feature_table");
+  assert.equal(stub.historyReads(), 1);
+});
+
+test("RECOVERY / prefers the DADA2-created table.qza over another same-history table.qza", async () => {
+  const other = "77777777777777777777777777777777";
+  const { db, d1 } = seed(liveShapedState());
+  const stub = makeStub({ otherJobTableId: other });
+  await advance(db, envFor(db, stub.fetchImpl), stub.fetchImpl);
+  const ref = stored(d1).recovered_table_qza;
+  assert.equal(ref.id, TABLE_QZA);
+  assert.equal(ref.provenance_match, true);
+  assert.notEqual(ref.id, other);
+  assert.equal(stub.posts().length, 0);
+});
+
+test("RECOVERY / no table.qza in the run history fails closed with an exact reason", async () => {
+  const { db, d1 } = seed(liveShapedState());
+  const stub = makeStub({ noTableQza: true, foreignTableId: "88888888888888888888888888888888" });
+  const body = await (await advance(db, envFor(db, stub.fetchImpl), stub.fetchImpl)).json();
+  assert.equal(body.next_operation, "poll_current_job");
+  const finalState = stored(d1);
+  assert.equal(finalState.feature_table_recovery.status, "unavailable");
+  assert.match(finalState.feature_table_recovery.reason, /^no_table_qza_in_run_history:/);
+  assert.equal(finalState.recovered_table_qza, undefined);
+  assert.equal(finalState.frontier.featureTableId, null);
+  assert.equal(stub.posts().length, 0, "nothing was guessed or resubmitted");
 });
 
 test("ADVANCE / recover_feature_table submits one genuine export for table.qza, never DADA2", async () => {

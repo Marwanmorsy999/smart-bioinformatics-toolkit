@@ -3328,7 +3328,14 @@ function featureTableRecoveryNeeded(state) {
 
 function defaultAdvanceOp(state) {
   if (state.status !== "running") return null;
-  if (featureTableRecoveryNeeded(state)) return "recover_feature_table";
+  if (featureTableRecoveryNeeded(state)) {
+    // The real qza identity may be absent from stored state (it was never
+    // recorded before the first attempt died). Resolve it once from the run's
+    // own history BEFORE trying to export it. Both outcomes are durable, so
+    // this branch cannot repeat forever.
+    return !tableQzaOf(state) && !state.recovered_table_qza_attempted
+      ? "recover_table_reference" : "recover_feature_table";
+  }
   const stepId = state.current_step;
   if (!stepId) return "finalize_result";
   const step = state.steps?.[stepId] ?? {};
@@ -3480,6 +3487,14 @@ function verifyClassifierDetail(detail, descriptor, expectedHistoryId) {
 }
 
 function tableQzaOf(state) {
+  // A reference recovered from the run's own history wins: it is the only
+  // identity that was verified against the live provider, not inferred from a
+  // stale stored artifact list. Never claim a dataset from another history.
+  const recovered = state.recovered_table_qza;
+  const recoveredId = safeString(recovered?.id, 200);
+  if (recoveredId && String(recovered.history_id ?? "") === String(state.history_id ?? "")) {
+    return { id: recoveredId, name: String(recovered.name ?? "recovered table.qza") };
+  }
   const candidates = [
     ...(state.steps?.dada2_denoise?.output_artifacts ?? []),
     ...(state.artifacts ?? [])
@@ -3756,6 +3771,60 @@ async function runAdvanceOperation(operation, adapter, db, row, state, env, ctx,
     if (!done) return setCursor(state, "finalize_slice");
     const next = advanceStep(state);
     return setCursor(state, next ? "poll_current_job" : "finalize_result");
+  }
+
+  if (operation === "recover_table_reference") {
+    // The live run recorded only exported TEXT artifacts, so the real table
+    // qza id must be resolved once from the run's own history. One read-only
+    // inventory lookup; no job submission, upload or frontier mutation.
+    if (!featureTableRecoveryNeeded(state)) return setCursor(state, "poll_current_job");
+    if (state.recovered_table_qza_attempted) return setCursor(state, "recover_feature_table");
+    const recovery = state.feature_table_recovery ?? {};
+    state.recovered_table_qza_attempted = true; // durable at-most-once marker
+    const dada2JobId = safeString(state.steps?.dada2_denoise?.provider_job_id, 200) || null;
+    if (!state.history_id) {
+      state.feature_table_recovery = { ...recovery, status: "unavailable",
+        reason: "no_table_qza_in_run_history: the run has no history id; no dataset was guessed" };
+      return setCursor(state, "poll_current_job");
+    }
+    const inventory = await adapter.getArtifacts({ history_id: state.history_id }, ctx);
+    if (inventory?.ok !== true) {
+      state.feature_table_recovery = { ...recovery, status: "unavailable",
+        reason: "no_table_qza_in_run_history_inventory_unavailable: Galaxy history contents were unreadable; no dataset was guessed" };
+      return setCursor(state, "poll_current_job");
+    }
+    const candidates = (inventory.artifacts ?? []).filter((item) => {
+      const id = safeString(item?.id, 200);
+      const name = String(item?.name ?? "");
+      const ext = String(item?.type ?? item?.extension ?? "").replace(/^\./, "").toLowerCase();
+      const qza = /\.qza$/i.test(name) || ext === "qza";
+      const table = /(?:^|[\s_:-])table\.qza$/i.test(name) || /feature.?table/i.test(name);
+      const sameHistory = String(item?.history_id ?? "") === String(state.history_id);
+      return Boolean(id) && qza && table && sameHistory;
+    });
+    if (!candidates.length) {
+      state.feature_table_recovery = { ...recovery, status: "unavailable",
+        reason: "no_table_qza_in_run_history: no ready table.qza exists in this run's history; no dataset was guessed and no job was resubmitted" };
+      state.results.asv = { ...(state.results.asv ?? {}), available: false,
+        reason: state.feature_table_recovery.reason };
+      return setCursor(state, "poll_current_job");
+    }
+    // Prefer the dataset whose provider-reported creating job is the real
+    // DADA2 job. A different-history table was already excluded above.
+    const provenanceMatches = candidates.filter((item) => dada2JobId
+      && String(item.creating_job ?? "") === dada2JobId);
+    const chosen = provenanceMatches[0] ?? candidates[0];
+    state.recovered_table_qza = {
+      id: safeString(chosen.id, 200), name: String(chosen.name ?? ""),
+      history_id: String(chosen.history_id ?? state.history_id),
+      source_job_id: safeString(chosen.creating_job, 200) || null,
+      dada2_job_id: dada2JobId,
+      provenance_match: Boolean(dada2JobId && String(chosen.creating_job ?? "") === dada2JobId),
+      checksum: safeString(chosen.checksum, 200) || null,
+      state: safeString(chosen.state, 80) || null,
+      at: nowIso(), basis: "read_only_run_history_inventory"
+    };
+    return setCursor(state, "recover_feature_table");
   }
 
   if (operation === "recover_feature_table") {
