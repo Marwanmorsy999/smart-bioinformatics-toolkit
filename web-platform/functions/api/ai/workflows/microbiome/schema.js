@@ -16,7 +16,8 @@ function extensionMatch(parameter, role) {
   const exts = (Array.isArray(parameter.extensions) ? parameter.extensions : [])
     .map((ext) => String(ext).toLowerCase().replace(/^\./, ""));
   if (!exts.length) return true; // an untyped data parameter is a candidate
-  const wanted = role === "table" ? TABLE_EXT : role === "fasta" ? FASTA_EXT : role === "artifact" ? QZA_EXT : RAW_EXT;
+  const wanted = role === "table" ? TABLE_EXT : role === "fasta" ? FASTA_EXT
+    : (role === "artifact" || role === "classifier") ? QZA_EXT : RAW_EXT;
   return exts.some((ext) => wanted.includes(ext) || wanted.some((wantedExt) => ext.includes(wantedExt)));
 }
 

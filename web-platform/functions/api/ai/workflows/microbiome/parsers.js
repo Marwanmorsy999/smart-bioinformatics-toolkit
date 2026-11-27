@@ -638,6 +638,38 @@ export function computeAlphaFromTable(table) {
     reason: null };
 }
 
+// Rarefaction depth is derived ONLY from real post-denoising per-sample counts
+// in the retrieved feature table. Samples with no assignable reads are listed
+// with an explicit exclusion reason; no tutorial depth is ever copied.
+export function chooseRarefactionDepth(table, { metadata = null, minimumCount = 1 } = {}) {
+  if (!table?.available) {
+    return { available: false, depth: null, included: [], excluded: [],
+      basis: "retrieved_feature_table_post_denoising_counts",
+      reason: "No retrieved feature table is available; no rarefaction depth is asserted." };
+  }
+  const metadataIds = Array.isArray(metadata?.sample_ids) ? metadata.sample_ids : null;
+  const included = [];
+  const excluded = [];
+  for (const sampleId of table.sample_ids) {
+    const count = Number(table.totals?.[sampleId] ?? 0);
+    let reason = null;
+    if (!Number.isFinite(count) || count < minimumCount) reason = "zero_or_insufficient_assignable_reads_after_denoising";
+    else if (metadataIds && !metadataIds.includes(sampleId)) reason = "sample_absent_from_metadata";
+    if (reason) excluded.push({ sample_id: sampleId, post_denoising_reads: count, reason });
+    else included.push({ sample_id: sampleId, post_denoising_reads: count });
+  }
+  const depth = included.length ? Math.min(...included.map((entry) => entry.post_denoising_reads)) : null;
+  return {
+    available: depth !== null, depth, included, excluded,
+    samples_total: table.sample_ids.length,
+    basis: "derived_from_retrieved_feature_table_post_denoising_counts",
+    reason: depth === null
+      ? "No sample had usable post-denoising counts; no rarefaction depth was chosen."
+      : `Depth ${depth} is the smallest per-sample assignable-read count among ${included.length} usable sample(s); ` +
+        `${excluded.length} sample(s) were excluded with recorded reasons.`
+  };
+}
+
 export function parseDistanceMatrix(text, { metric = "bray_curtis" } = {}) {
   const source = norm(text).trim();
   if (!source) return { available: false, reason: "Distance matrix is empty.", samples: [], matrix: [], metric };

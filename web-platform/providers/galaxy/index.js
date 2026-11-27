@@ -15,6 +15,9 @@
 //   POST /api/tools                   -> tool execution (inputs map + hda refs)
 //   POST /api/tools/fetch             -> dataset upload (multipart/form-data;
 //                                       VERIFIED against /openapi.json 2026-11-25)
+//                                       URL elements {src:"url",url,name,ext}
+//                                       import into the EXISTING history without
+//                                       ever buffering remote bytes in the Worker
 //   POST /api/invocations             -> workflow invocation
 //   GET  /api/jobs/:id                -> job state
 //   POST /api/jobs/:id/cancel         -> cancellation
@@ -329,6 +332,48 @@ export function createAdapter(env = {}, deps = {}) {
       history_id: safeString(asObject(outputs[0]).history_id, 200) || historyId,
       job_id: safeId(asObject(jobs[0]).id, { max: 200 }) || null
     };
+  }
+
+  // Import a remote URL into an ALREADY EXISTING history via the same verified
+  // /api/tools/fetch multipart contract, using the verified url element shape
+  // {src:"url", url, name, ext}. No Blob/File part is created: a large remote
+  // artifact is fetched by Galaxy itself, never through Worker memory. The API
+  // key stays in the request header only and is never returned or logged.
+  async function importUrl(request = {}, ctx = {}) {
+    const at = makeNow(ctx);
+    const bad = (code, message, status = 400) => failure(PROVIDER,
+      Object.assign(new Error(message), { code, status, retryable: false }), at);
+    const historyId = safeId(request?.history_id, { max: 200 });
+    if (!historyId) return bad("history_id_required", "URL import requires an existing history_id.");
+    const rawUrl = safeString(request?.url, 2048).trim();
+    let parsed = null;
+    try { parsed = new URL(rawUrl); } catch { /* invalid below */ }
+    if (!parsed || !["http:", "https:"].includes(parsed.protocol)) {
+      return bad("invalid_url", "URL import requires an absolute http(s) URL.");
+    }
+    const name = safeString(request?.name, 300).trim() || "remote-input";
+    const ext = safeString(request?.ext, 40).replace(/^\./, "").trim() || extFromFilename(name);
+    const element = { src: "url", url: parsed.toString(), name, ext };
+    const targets = [{ destination: { type: "hdas" }, elements: [element] }];
+    try {
+      const { body } = await callFetch(historyId, targets, [], ctx);
+      const output = asObject(asArray(body?.outputs)[0]);
+      const job = asObject(asArray(body?.jobs)[0]);
+      const datasetId = safeId(output.id, { max: 200 }) || null;
+      const jobId = safeId(job.id, { max: 200 }) || null;
+      return {
+        provider: PROVIDER, ok: true, status: "queued", at, submitted_at: at,
+        dataset_id: datasetId, history_id: safeString(output.history_id, 200) || historyId,
+        job_id: jobId, provider_job_id: jobId || makeId(ctx, "galaxy"),
+        name, ext, element_source: "url",
+        output: { structured: { dataset_id: datasetId, history_id: safeString(output.history_id, 200) || historyId,
+          job_id: jobId, name, ext, element_source: "url" } },
+        source: "galaxy:/api/tools/fetch"
+      };
+    } catch (error) {
+      return { ...failure(PROVIDER, error, at), ok: false, dataset_id: null, job_id: null,
+        history_id: historyId, element_source: "url" };
+    }
   }
 
   // Legacy path for inline {src:"upload"} descriptors that feed a *scientific*
@@ -857,6 +902,12 @@ export function createAdapter(env = {}, deps = {}) {
       } catch (error) {
         return { ...empty, error: normalizeProviderError(PROVIDER, error, { at }) };
       }
+    },
+
+    // Bounded URL import into the caller's EXISTING history. Off the advertised
+    // operation list: it is a platform primitive, not a scientific capability.
+    async importUrlIntoHistory(request = {}, ctx = {}) {
+      return importUrl(request, ctx);
     },
 
     async getUsage(request = {}, ctx = {}) {
