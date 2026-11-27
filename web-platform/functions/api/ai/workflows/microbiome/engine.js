@@ -3221,6 +3221,19 @@ function localStage(state, stepId) {
     }
     return state.results.alpha;
   }
+  if (stepId === "pcoa") {
+    if (state.results.pcoa?.available) return state.results.pcoa;
+    // Emperor needs an actual PCoA qza, not the distance-matrix qza. Compute
+    // genuine coordinates from the REAL retrieved Bray-Curtis matrix instead:
+    // no new Galaxy job and no invented ordination.
+    const computed = computePcoa(state.results.beta);
+    const pcoa = labelDiversity(computed, state, "pcoa");
+    state.results.pcoa = { ...pcoa,
+      basis_detail: pcoa.available
+        ? "Deterministic PCoA computed from the actual retrieved Bray-Curtis distance matrix; no significance or group-separation claim is made."
+        : (pcoa.reason ?? "No usable distance matrix was available; no coordinates were fabricated.") };
+    return state.results.pcoa;
+  }
   if (stepId === "ordination") {
     state.results.ordination = ordinationEvidence(state.artifacts, state.results.pcoa,
       { visualizationTool: state.discovery.tools.pcoa?.id ?? null });
@@ -3634,7 +3647,7 @@ function defaultAdvanceOp(state) {
   if (stepId === "taxonomy") return classifierNextOp(state);
   if (stepId === "demux") return "prepare_demux_import";
   if (stepId === "import_reads") return "poll_current_job";
-  if (["composition", "ordination", "report"].includes(stepId)) return "local_stage";
+  if (["composition", "pcoa", "ordination", "report"].includes(stepId)) return "local_stage";
   return "submit_stage";
 }
 
@@ -4036,7 +4049,7 @@ async function runAdvanceOperation(operation, adapter, db, row, state, env, ctx,
       if (stepId === "taxonomy") return setCursor(state, classifierNextOp(state));
       if (stepId === "demux") return setCursor(state, "prepare_demux_import");
       if (stepId === "import_reads") return setCursor(state, "poll_current_job");
-      if (["composition", "ordination", "report"].includes(stepId)) return setCursor(state, "local_stage");
+      if (["composition", "pcoa", "ordination", "report"].includes(stepId)) return setCursor(state, "local_stage");
       return setCursor(state, "submit_stage");
     }
     if (!step.provider_job_id) return advanceFail(state, stepId, "provider_job_id_missing");
@@ -4226,6 +4239,9 @@ async function runAdvanceOperation(operation, adapter, db, row, state, env, ctx,
 
   if (operation === "submit_stage") {
     if (step.status) return setCursor(state, "poll_current_job");
+    // PCoA is a deterministic local computation from the real distance matrix.
+    // The discovered emperor tool stays as provenance only; no job is submitted.
+    if (stepId === "pcoa") return setCursor(state, "local_stage");
     const roleFor = { demux: "demux", qc_summary: "qc", dada2_denoise: "denoise", taxonomy: "classify",
       alpha_diversity: "alpha", beta_diversity: "beta", pcoa: "pcoa" }[stepId];
     if (!roleFor || !state.discovery?.tools?.[roleFor]?.id) {
