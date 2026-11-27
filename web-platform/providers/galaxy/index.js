@@ -648,6 +648,47 @@ export function createAdapter(env = {}, deps = {}) {
       }
     },
 
+    // READ-ONLY diagnostic view of one job. It performs the same GET
+    // /api/jobs/:id as getJobStatus but exposes only an allowlist of job
+    // fields (state, tool_id, exit_code, stderr, stdout, params, inputs). No
+    // headers, credentials, full response body or dataset content leaves this
+    // boundary; callers sanitize and length-cap each value. Deliberately off
+    // the advertised operation list: this is a GET-only inspection helper,
+    // never a submission or mutation.
+    async getJobDetail(request = {}, ctx = {}) {
+      const args = normalizeCallArgs(request, ctx);
+      request = args.request;
+      ctx = args.ctx;
+      const jobId = jobIdFrom(request);
+      const at = makeNow(ctx);
+      if (!enabled || !configured) {
+        return { ...failure(PROVIDER, Object.assign(new Error(availability()), {
+          code: "provider_unavailable", status: 503, retryable: false
+        }), at), provider: PROVIDER, provider_job_id: jobId || null, ok: false, at };
+      }
+      if (!jobId) {
+        return { ...failure(PROVIDER, Object.assign(new Error("job_id_required"), {
+          code: "validation_error", status: 400, retryable: false
+        }), at), provider: PROVIDER, provider_job_id: null, ok: false, at };
+      }
+      try {
+        const { body } = await call("GET", `/api/jobs/${encodeURIComponent(jobId)}`, undefined, ctx);
+        const raw = asObject(body);
+        return {
+          provider: PROVIDER, provider_job_id: jobId, ok: true, at,
+          state: safeString(raw.state, 200) || null,
+          tool_id: safeString(raw.tool_id, 400) || null,
+          exit_code: raw.exit_code === undefined || raw.exit_code === null ? null : safeString(String(raw.exit_code), 200),
+          stderr: typeof raw.stderr === "string" ? raw.stderr : null,
+          stdout: typeof raw.stdout === "string" ? raw.stdout : null,
+          params: raw.params ?? null,
+          inputs: raw.inputs ?? null
+        };
+      } catch (error) {
+        return { ...failure(PROVIDER, error, at), provider: PROVIDER, provider_job_id: jobId, ok: false, at };
+      }
+    },
+
     // READ-ONLY recovery of an existing job's output associations. This never
     // submits, cancels or mutates a job, and the API key stays in the request
     // header only. Kept off the advertised operation list (like downloadArtifact)
