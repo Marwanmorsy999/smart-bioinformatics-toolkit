@@ -226,7 +226,12 @@ async function refreshStatus() {
 
 function sourceLabel(result) {
   const source = result?.input?.source ?? {};
-  if (source.urls?.metadata) return `Public dataset URLs: ${source.urls.metadata} · checksums ${JSON.stringify(source.checksums)}`;
+  if (source.urls?.metadata) {
+    const urls = Object.entries(source.urls).filter(([, value]) => value)
+      .map(([key, value]) => `${key} ${value}`).join(" · ");
+    return `Public dataset direct sources: ${urls} · verified SHA-256 ${JSON.stringify(source.checksums)}` +
+      (source.provenance_note ? ` · ${source.provenance_note}` : "");
+  }
   return "User-uploaded reads and metadata; original filenames recorded in the stored run.";
 }
 

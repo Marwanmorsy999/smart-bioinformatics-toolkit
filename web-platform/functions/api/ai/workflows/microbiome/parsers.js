@@ -71,7 +71,14 @@ export function parseFastq(text, { label = "reads" } = {}) {
     index += 4;
   }
   const lengths = records.map((record) => record.sequence_length);
-  const maxLength = lengths.reduce((max, length) => Math.max(max, length), 0);
+  // Spread into Math.min/Math.max would overflow the stack on the real
+  // 302,581-read file; accumulate in bounded loops instead.
+  let minLength = null;
+  let maxLength = 0;
+  for (const length of lengths) {
+    if (minLength === null || length < minLength) minLength = length;
+    if (length > maxLength) maxLength = length;
+  }
   const qualityByPosition = [];
   for (let position = 0; position < maxLength; position += 1) {
     let total = 0;
@@ -86,7 +93,7 @@ export function parseFastq(text, { label = "reads" } = {}) {
     valid: errors.length === 0 && records.length > 0,
     label, records, record_count: records.length, read_count: records.length, lengths,
     total_bases: lengths.reduce((sum, length) => sum + length, 0),
-    min_length: lengths.length ? Math.min(...lengths) : null,
+    min_length: minLength,
     max_length: maxLength,
     quality_by_position: qualityByPosition,
     errors

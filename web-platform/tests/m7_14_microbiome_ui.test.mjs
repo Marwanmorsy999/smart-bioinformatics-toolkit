@@ -34,6 +34,10 @@ test("PAGE: public dataset option uses the verified URLs and checksum provenance
   assert.match(zip, /emp-single-end-sequences\.zip/);
   assert.match(zip, /245f8e389ddf3dd05a95d870d214de918a06d03c5ce17750860446e09f9a7cc6/);
   assert.match(zip, /992740724f9a8000e5d81bc23a6c2bb74e4aed4cc3542768a220a36bae22d373/);
+  assert.match(zip, /https:\/\/data\.qiime2\.org\/2025\.4\/tutorials\/moving-pictures\/emp-single-end-sequences\/sequences\.fastq\.gz/);
+  assert.match(zip, /https:\/\/data\.qiime2\.org\/2025\.4\/tutorials\/moving-pictures\/emp-single-end-sequences\/barcodes\.fastq\.gz/);
+  assert.match(zip, /7d9b2cea2aebfb46015796c073be6ba514018028cc1452d063aa0d716c059768/);
+  assert.match(zip, /73c235c8185be1deef3038fd2b6497b7cc02acf3d7a37fda39e65a4a293e0d86/);
   assert.match(zip, /expected_samples: 34/);
   assert.match(zip, /expected_reads: 302581/);
   assert.match(zip, /trim-left 0 and trunc-len 120 follow the observed data/);
@@ -54,6 +58,7 @@ test("CONTROLLER: server-only analysis, bounded polling and honest assistant con
   assert.match(js, /pcoa_variance_fraction/);
   assert.match(js, /fraction_of_total_variance/);
   assert.match(js, /body\.params\?\.trunc_rationale/);
+  assert.match(js, /Public dataset direct sources/);
   assert.match(js, /no significance claim/i);
 });
 
