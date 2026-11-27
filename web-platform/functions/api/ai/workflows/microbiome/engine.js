@@ -604,7 +604,9 @@ export async function handleRun(request, env, options = {}) {
       : { raw: inspection.rawQc, observed_quality: inspection.truncation.observed },
     dataset_ids: { sequences: null, barcodes: null, metadata: null },
     filenames: { reads: resolved.reads_filename, barcodes: resolved.barcodes_filename, metadata: resolved.metadata_filename },
-    frontier: {}, steps: {}, results: {}, artifacts: [], errors: [], poll_count: 0
+    frontier: {}, steps: {}, results: {}, artifacts: [], errors: [], poll_count: 0,
+    // Bounded qza text-export phase: provenance per source dataset and in-flight jobs.
+    exports: {}, pending_exports: []
   };
 
   try {
@@ -1062,12 +1064,137 @@ async function collectDenoise(state, collected, downloaded) {
   return { table, repSeqs };
 }
 
-async function finalizeStage(adapter, env, db, row, state, stepId, jobId, ctx) {
+// ---------------------------------------------------------- qza text export
+//
+// Several real QIIME 2 2026.1 tools return .qza (binary) datasets. They cannot
+// be parsed by /get_content_as_text, so a genuinely DISCOVERED export tool must
+// derive text first. This is a derivation of an already-executed tool output,
+// never a new scientific analysis. No tool id, parameter or release is invented.
+
+const EXPORTABLE_KINDS = Object.freeze([
+  "feature_table", "rep_seqs", "taxonomy", "alpha", "distance_matrix", "pcoa", "qc"
+]);
+const EXPORT_KINDS_BY_STEP = Object.freeze({
+  demux: ["qc"], qc_summary: ["qc"], dada2_denoise: ["feature_table", "rep_seqs", "qc"],
+  taxonomy: ["taxonomy"], alpha_diversity: ["alpha"], beta_diversity: ["distance_matrix"], pcoa: ["pcoa"]
+});
+const MAX_EXPORTS_PER_STAGE = 3;
+
+// Infer the intended artifact kind from the provider's own output name. This is
+// a routing hint for the export only; the parsed result still comes from real
+// exported text, never from the name itself.
+function intendedExportKind(name) {
+  const text = String(name ?? "").toLowerCase().replace(/\.qza$/, "");
+  if (/feature.?table|(?:^|_)table$|^table$/.test(text)) return "feature_table";
+  if (/rep(?:resentative)?[_-]?seq|repseq/.test(text)) return "rep_seqs";
+  if (/taxonomy|classif/.test(text)) return "taxonomy";
+  if (/(?:^|_)alpha|alpha[_-]/.test(text)) return "alpha";
+  if (/distance|bray|jaccard|unifrac/.test(text)) return "distance_matrix";
+  if (/pcoa|ordination|emperor|coordinates/.test(text)) return "pcoa";
+  if (/stats|summary|quality|(?:^|_)qc(?:_|$)/.test(text)) return "qc";
+  return null;
+}
+
+function exportFailure(state, stepId, reason, datasetId = null) {
+  state.errors.push({ step: stepId, reason, ...(datasetId ? { dataset_id: datasetId } : {}) });
+}
+
+async function submitNeededExports(adapter, env, state, stepId, jobId, collected, ctx) {
+  const needed = EXPORT_KINDS_BY_STEP[stepId] ?? [];
+  const present = new Set(collected.selected.map((artifact) => artifact.kind));
+  const missing = needed.filter((kind) => !present.has(kind) && EXPORTABLE_KINDS.includes(kind));
+  if (!missing.length) return [];
+  const alreadyExported = new Set(Object.keys(state.exports ?? {}));
+  const candidates = [];
+  for (const artifact of collected.selected) {
+    if (artifact.kind !== "qza_artifact" || alreadyExported.has(String(artifact.id))) continue;
+    const kind = intendedExportKind(artifact.name);
+    if (!kind || !missing.includes(kind)) continue;
+    if (candidates.some((candidate) => candidate.kind === kind)) continue;
+    candidates.push({ kind, artifact });
+    if (candidates.length >= MAX_EXPORTS_PER_STAGE) break;
+  }
+  if (!candidates.length) return [];
+
+  const tool = state.discovery?.tools?.exportTool;
+  if (!tool?.id) {
+    exportFailure(state, stepId, "qza_export_unavailable: no genuine export tool was discovered; no tool id was invented.");
+    return [];
+  }
+  const submitted = [];
+  for (const { kind, artifact } of candidates) {
+    try {
+      const schema = await fetchToolSchema(env, tool.id, tool.version);
+      const payload = buildMicrobiomePayload(schema, [{ id: artifact.id, role: "artifact" }], {});
+      if (!payload.valid) {
+        exportFailure(state, stepId, `qza_export_payload_invalid: ${payload.errors.join(", ")}`, artifact.id);
+        continue;
+      }
+      const result = await adapter.submitJob({ operation: "submit_job", tool_id: tool.id, inputs: payload.inputs }, ctx);
+      if (result.error) {
+        exportFailure(state, stepId, `qza_export_submission_failed: ${result.error.message ?? result.error.code}`, artifact.id);
+        continue;
+      }
+      const entry = {
+        step_id: stepId, source_job_id: jobId, source_dataset_id: artifact.id, expected_kind: kind,
+        provider_job_id: result.provider_job_id ?? null, tool_id: tool.id, tool_version: tool.version ?? null,
+        submitted_at: nowIso()
+      };
+      submitted.push(entry);
+      state.exports = { ...(state.exports ?? {}), [String(artifact.id)]: { ...entry, status: "running" } };
+    } catch (caught) {
+      exportFailure(state, stepId, `qza_export_failed: ${caught?.message ?? caught}`, artifact.id);
+    }
+  }
+  return submitted;
+}
+
+async function pollPendingExports(adapter, state, stepId, ctx) {
+  const entries = (state.pending_exports ?? []).filter((entry) => entry.step_id === stepId);
+  if (!entries.length) return { done: true, artifacts: [], errors: [] };
+  const artifacts = [];
+  const errors = [];
+  for (const entry of entries) {
+    const datasetKey = String(entry.source_dataset_id);
+    if (!entry.provider_job_id) {
+      exportFailure(state, stepId, "qza_export_job_id_missing", entry.source_dataset_id);
+      if (state.exports?.[datasetKey]) state.exports[datasetKey].status = "failed";
+      continue;
+    }
+    const status = await adapter.getJobStatus({ job_id: entry.provider_job_id }, ctx);
+    const observed = status.output?.structured?.state ?? status.status;
+    const classified = classifyJobState(observed);
+    if (classified === "running" || classified === "unknown") return { done: false, artifacts: [], errors: [] };
+    if (classified === "failed") {
+      exportFailure(state, stepId, `qza_export_job_failed: provider job ${entry.provider_job_id} ended in state ${observed}`, entry.source_dataset_id);
+      if (state.exports?.[datasetKey]) state.exports[datasetKey].status = "failed";
+      continue;
+    }
+    const collected = await collectOutputs(adapter, entry.provider_job_id, state.history_id, ctx);
+    const downloaded = await downloadSelected(adapter, collected.selected, stepId, ctx,
+      { toolVersion: entry.tool_version });
+    for (const artifact of downloaded.artifacts) {
+      artifacts.push({ ...artifact, kind: entry.expected_kind, export_of: entry.source_dataset_id,
+        export_tool_id: entry.tool_id, export_tool_version: entry.tool_version });
+    }
+    for (const error of downloaded.errors) errors.push({ step: stepId, ...error, export_of: entry.source_dataset_id });
+    if (state.exports?.[datasetKey]) {
+      state.exports[datasetKey] = { ...state.exports[datasetKey], status: "succeeded",
+        exported_dataset_ids: downloaded.artifacts.map((artifact) => artifact.id) };
+    }
+  }
+  state.pending_exports = (state.pending_exports ?? []).filter((entry) => entry.step_id !== stepId);
+  return { done: true, artifacts, errors };
+}
+
+async function finalizeStage(adapter, env, db, row, state, stepId, jobId, ctx, options = {}) {
   const toolMeta = state.steps[stepId]?.tool_id ? { id: state.steps[stepId].tool_id, version: state.steps[stepId].tool_version } : null;
   let collected = { selected: [], errors: [] };
   let downloaded = { artifacts: [], errors: [] };
-  if (jobId) {
-    collected = await collectOutputs(adapter, jobId, state.history_id, ctx);
+  if (options.prefetched) {
+    downloaded = { artifacts: options.prefetched, errors: options.prefetchedErrors ?? [] };
+  } else if (jobId) {
+    collected = options.collected ?? await collectOutputs(adapter, jobId, state.history_id, ctx);
     downloaded = await downloadSelected(adapter, collected.selected, stepId, ctx, { toolVersion: toolMeta?.version ?? null });
   }
   for (const artifact of downloaded.artifacts) {
@@ -1106,9 +1233,15 @@ async function finalizeStage(adapter, env, db, row, state, stepId, jobId, ctx) {
     state.results.pcoa = pcoa.parsed.available ? pcoa.parsed : computePcoa(state.results.beta);
     if (pcoa.artifact) state.frontier.pcoaId = pcoa.artifact.id;
   }
+  const exportProvenance = downloaded.artifacts.filter((artifact) => artifact.export_of).map((artifact) => ({
+    source_dataset_id: artifact.export_of, exported_dataset_id: artifact.id, kind: artifact.kind,
+    tool_id: artifact.export_tool_id ?? null, tool_version: artifact.export_tool_version ?? null,
+    basis: "derived_from_executed_tool_output"
+  }));
   state.steps[stepId] = { ...(state.steps[stepId] ?? {}), status: "succeeded", finished_at: nowIso(),
     output_artifacts: downloaded.artifacts.map((artifact) => ({ name: artifact.name, kind: artifact.kind,
-      dataset_id: artifact.id, checksum: artifact.checksum })) };
+      dataset_id: artifact.id, checksum: artifact.checksum })),
+    ...(exportProvenance.length ? { exports: exportProvenance } : {}) };
   await recordStep(db, state, stepId, "succeeded", { details: state.steps[stepId] });
 }
 
@@ -1326,7 +1459,31 @@ async function advanceOneStage(db, row, state, env, ctx) {
       await recordStep(db, state, stepId, "failed", { details: { reason: state.errors.at(-1).reason } });
       return;
     }
-    await finalizeStage(adapter, env, db, row, state, stepId, step.provider_job_id, ctx);
+
+    // Export jobs already in flight belong to this stage. Poll them before
+    // finalizing; the original job's outputs are re-collected (read-only) for
+    // merging with the exported text.
+    if ((state.pending_exports ?? []).some((entry) => entry.step_id === stepId)) {
+      const pending = await pollPendingExports(adapter, state, stepId, ctx);
+      if (!pending.done) return;
+      const original = await collectOutputs(adapter, step.provider_job_id, state.history_id, ctx);
+      const originalDownloaded = await downloadSelected(adapter, original.selected, stepId, ctx,
+        { toolVersion: state.steps[stepId]?.tool_version ?? null });
+      await finalizeStage(adapter, env, db, row, state, stepId, step.provider_job_id, ctx, {
+        prefetched: [...originalDownloaded.artifacts, ...pending.artifacts],
+        prefetchedErrors: [...originalDownloaded.errors, ...pending.errors]
+      });
+      return;
+    }
+
+    const collected = await collectOutputs(adapter, step.provider_job_id, state.history_id, ctx);
+    const submitted = await submitNeededExports(adapter, env, state, stepId, step.provider_job_id, collected, ctx);
+    if (submitted.length) {
+      state.pending_exports = [...(state.pending_exports ?? []), ...submitted];
+      await persistState(db, row, state);
+      return; // bounded: later polls finish the exports before finalizing
+    }
+    await finalizeStage(adapter, env, db, row, state, stepId, step.provider_job_id, ctx, { collected });
     return;
   }
 
