@@ -21,6 +21,7 @@ const RUN_HISTORY = "11ac94870d0bb33aff42f70766c41aa1";
 const OUTPUT_HISTORY = "11ac94870d0bb33aa1d667180c20abd0";
 const IMPORT_JOB = "4838ba20a6d8676539a8440d60cb5a98";
 const REAL_QZA = "40160950115d555e26f11fc9fc50ace4";
+const COPIED_QZA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const REAL_UUID = "6ffd23da-534e-4574-b11f-2172f639a1aa";
 const READS = "311309378", BARCODES = "311309379";
 const METADATA = "44444444444444444444444444444444";
@@ -106,6 +107,8 @@ function makeStub({ outputHistory = OUTPUT_HISTORY, outputState = "ok", outputEx
   outputName = "imported-sequences.qza", outputsOk = true, includeOutput = true } = {}) {
   const calls = [];
   const submissions = [];
+  const copyCalls = [];
+  let copied = false;
   const fetchImpl = async (input, init = {}) => {
     const url = String(input);
     const method = String(init.method ?? "GET").toUpperCase();
@@ -127,12 +130,21 @@ function makeStub({ outputHistory = OUTPUT_HISTORY, outputState = "ok", outputEx
         return json([{ id: REAL_QZA, uuid: REAL_UUID, name: outputName, extension: outputExtension,
           state: outputState, history_id: historyId }]);
       }
-      // The run history contains only the three uploaded inputs: no qza.
-      return json([
+      // The run history has only the three uploads until a copy is made.
+      const items = [
         { id: READS, name: "sequences.fastq.gz", extension: "fastq.gz", state: "ok", history_id: RUN_HISTORY },
         { id: BARCODES, name: "barcodes.fastq.gz", extension: "fastq.gz", state: "ok", history_id: RUN_HISTORY },
         { id: METADATA, name: "sample-metadata.tsv", extension: "tsv", state: "ok", history_id: RUN_HISTORY }
-      ]);
+      ];
+      if (copied) items.push({ id: COPIED_QZA, name: "imported-sequences.qza", extension: "qza",
+        state: "ok", history_id: RUN_HISTORY });
+      return json(items);
+    }
+    if (method === "POST" && /\/api\/histories\/[^/]+\/contents/.test(url)) {
+      copyCalls.push({ url, body });
+      copied = true;
+      const target = decodeURIComponent(url.slice(url.lastIndexOf("/histories/") + 11).split("/")[0]);
+      return json({ id: COPIED_QZA, history_id: target });
     }
     if (method === "GET" && /\/api\/jobs\/[^/]+\/outputs/.test(url)) {
       if (!outputsOk) return json({ error: "outputs_unavailable" }, 404);
@@ -149,7 +161,7 @@ function makeStub({ outputHistory = OUTPUT_HISTORY, outputState = "ok", outputEx
     return json({ error: "unexpected_stub_route", url }, 404);
   };
   return {
-    calls, submissions, fetchImpl,
+    calls, submissions, copyCalls, fetchImpl,
     importSubmissions: () => submissions.filter((entry) => entry.tool_id === IMPORT_TOOL),
     historyLookups: () => calls.filter((call) => call.method === "GET" && call.url.includes(`/histories/${OUTPUT_HISTORY}/contents`))
   };
@@ -180,17 +192,23 @@ test("RECOVERY / cross-history output yields the real qza id with no second impo
     assert.equal(stub.importSubmissions().length, 0, "a real job is never resubmitted");
     assert.equal(stub.historyLookups().length, 1, "the association's own history is read");
     const stored = storedState(d1);
-    assert.equal(stored.frontier.importedSeqsId, REAL_QZA);
+    assert.equal(stored.frontier.importedSeqsId, COPIED_QZA, "demux uses the copy in the run history");
     assert.equal(stored.import.status, "succeeded");
-    assert.equal(stored.import.output_dataset_id, REAL_QZA);
+    assert.equal(stored.import.output_dataset_id, REAL_QZA, "original id stays in provenance");
     assert.equal(stored.import.recovery.output_history_id, OUTPUT_HISTORY);
     assert.equal(stored.import.recovery.history_mismatch, true);
     assert.equal(stored.import.recovery.basis, "read_only_job_output_resolution_in_output_own_history");
     assert.equal(stored.import.output_history_id, OUTPUT_HISTORY);
-    // A later poll must not re-recover or re-submit.
+    assert.equal(stored.import.copy_dataset_id, COPIED_QZA);
+    assert.equal(stored.import.copy.copied_from_history, OUTPUT_HISTORY);
+    assert.equal(stored.import.copy.original_dataset_id, REAL_QZA);
+    assert.equal(stored.import.copy.copied_dataset_id, COPIED_QZA);
+    assert.match(stored.import.copy.copy_basis, /hda_copy_into_run_history/);
+    // A later poll must not re-recover, re-copy or re-submit.
     await status(db, stub);
     assert.equal(stub.importSubmissions().length, 0);
-    assert.equal(storedState(d1).frontier.importedSeqsId, REAL_QZA);
+    assert.equal(stub.copyCalls.length, 1, "the qza is copied exactly once");
+    assert.equal(storedState(d1).frontier.importedSeqsId, COPIED_QZA);
   });
 });
 
@@ -228,6 +246,8 @@ test("SAME HISTORY / unchanged path still resolves the real qza with no mismatch
     assert.equal(stored.import.status, "succeeded");
     assert.equal(stored.import.recovery.output_history_id, RUN_HISTORY);
     assert.equal(stored.import.recovery.history_mismatch, false);
+    assert.equal(stub.copyCalls.length, 0, "no copy is needed inside the same history");
+    assert.equal(stored.import.copy_dataset_id, undefined);
     assert.equal(stub.importSubmissions().length, 0);
   });
 });

@@ -189,9 +189,9 @@ test("FAILED SUBMISSION / bounded sanitized field-name summary is persisted", as
   });
 });
 
-test("RESUME / fourth pre-job resume succeeds; fifth cap and provider-job failure are refused", async () => {
+test("RESUME / fifth pre-job resume succeeds; sixth cap and provider-job failure are refused", async () => {
   const failedState = () => stateAtDemux({
-    status: "failed", retry_count: 1, stage_resume_count: 3, current_step: "demux",
+    status: "failed", retry_count: 1, stage_resume_count: 4, current_step: "demux",
     steps: { import_reads: { status: "succeeded", provider_job_id: "uploadjob00000001" },
       demux: { status: "failed", reason: "demux submission failed: HTTP 400", provider_job_id: null } },
     errors: [{ step: "demux", reason: "demux submission failed: HTTP 400" }],
@@ -202,9 +202,9 @@ test("RESUME / fourth pre-job resume succeeds; fifth cap and provider-job failur
   await withStub(stub, async () => {
     const resume = () => handleResumeStages(makePostRequest({ run_id: RUN_ID },
       "/api/ai/workflows/microbiome/resume-stages"), envFor(db, stub), { fetchImpl: stub.fetchImpl });
-    const fourth = await resume();
-    assert.equal(fourth.status, 202, JSON.stringify(await fourth.clone().json()));
-    assert.equal((await fourth.json()).stage_resume_count, 4);
+    const fifth = await resume();
+    assert.equal(fifth.status, 202, JSON.stringify(await fifth.clone().json()));
+    assert.equal((await fifth.json()).stage_resume_count, 5);
     assert.equal(storedState(d1).import.provider_job_id, IMPORT_JOB, "import preparation survived");
     assert.equal(storedState(d1).steps.demux, undefined);
 
@@ -217,7 +217,7 @@ test("RESUME / fourth pre-job resume succeeds; fifth cap and provider-job failur
       row.state_json = JSON.stringify(state);
       row.state = "failed";
     };
-    refail(4, { status: "failed", reason: "demux submission failed: HTTP 400", provider_job_id: null });
+    refail(5, { status: "failed", reason: "demux submission failed: HTTP 400", provider_job_id: null });
     const capped = await resume();
     assert.equal(capped.status, 409);
     assert.equal((await capped.json()).reason, "stage_resume_limit_reached");

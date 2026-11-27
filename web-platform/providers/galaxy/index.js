@@ -376,6 +376,35 @@ export function createAdapter(env = {}, deps = {}) {
     }
   }
 
+  // Copy an existing HDA into an ALREADY EXISTING history with Galaxy's
+  // authenticated history-contents endpoint. No new history is created and no
+  // credentials are returned or logged. The caller verifies the copy's state
+  // and format before using the returned dataset id.
+  async function copyDataset(request = {}, ctx = {}) {
+    const at = makeNow(ctx);
+    const bad = (code, message) => failure(PROVIDER,
+      Object.assign(new Error(message), { code, status: 400, retryable: false }), at);
+    const datasetId = safeId(request?.dataset_id, { max: 200 });
+    const historyId = safeId(request?.history_id, { max: 200 });
+    if (!datasetId) return bad("dataset_id_required", "Dataset copy requires a source dataset id.");
+    if (!historyId) return bad("history_id_required", "Dataset copy requires an existing target history_id.");
+    try {
+      const { body } = await call("POST", `/api/histories/${encodeURIComponent(historyId)}/contents`,
+        { source: "hda", id: datasetId }, ctx, { attempts: 2 });
+      const output = asObject(body);
+      return {
+        provider: PROVIDER, ok: true, at, source_dataset_id: datasetId,
+        dataset_id: safeId(output.id, { max: 200 }) || null,
+        history_id: safeString(output.history_id, 200) || historyId,
+        target_history_id: historyId,
+        source: "galaxy:/api/histories/:id/contents"
+      };
+    } catch (error) {
+      return { ...failure(PROVIDER, error, at), ok: false, dataset_id: null,
+        source_dataset_id: datasetId, history_id: historyId, target_history_id: historyId };
+    }
+  }
+
   // Legacy path for inline {src:"upload"} descriptors that feed a *scientific*
   // tool: it still needs an hda id to substitute into that tool's inputs. The
   // direct upload primitive above never uses this body; the old form is known
@@ -867,6 +896,12 @@ export function createAdapter(env = {}, deps = {}) {
     // operation list: it is a platform primitive, not a scientific capability.
     async importUrlIntoHistory(request = {}, ctx = {}) {
       return importUrl(request, ctx);
+    },
+
+    // HDA copy into the caller's EXISTING history. Off the advertised list:
+    // a platform primitive, never a scientific capability.
+    async copyDatasetToHistory(request = {}, ctx = {}) {
+      return copyDataset(request, ctx);
     },
 
     async getUsage(request = {}, ctx = {}) {
