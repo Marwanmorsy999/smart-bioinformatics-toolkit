@@ -7,7 +7,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { createAdapter } from "../providers/galaxy/index.js";
-import { handleStatus, handleSubmissionFailures } from "../functions/api/ai/workflows/microbiome/engine.js";
+import { handleStatus } from "../functions/api/ai/workflows/microbiome/engine.js";
 import { createFakeD1AI, makeGetRequest, mockAIEnv } from "./helpers/fake-d1.mjs";
 
 const RUN_ID = "job_a8817e35d7534d98";
@@ -95,7 +95,7 @@ test("ADAPTER / non-JSON 400 body also yields a redacted bounded excerpt", async
   assert.doesNotMatch(result.error.upstream_excerpt, new RegExp(SECRET));
 });
 
-test("DIAGNOSTIC / excerpt is stored allowlisted and re-scrubbed by GET endpoint", async () => {
+test("PERSISTED / excerpt is stored allowlisted and redacted in run state", async () => {
   const fetchImpl = makeEngineStub({ err_msg: BAD_TEXT, error: "bad_request" });
   const { db, state: d1 } = seededDb(state());
   const env = { ...mockAIEnv(db), GALAXY_ENABLED: "true", GALAXY_BASE_URL: "https://galaxy.example.test",
@@ -114,30 +114,10 @@ test("DIAGNOSTIC / excerpt is stored allowlisted and re-scrubbed by GET endpoint
     assert.doesNotMatch(JSON.stringify(entry), new RegExp(QZA));
     assert.doesNotMatch(JSON.stringify(entry), new RegExp(META));
     assert.doesNotMatch(JSON.stringify(entry), /"src":"hda"/, "field names only, no payload values");
-
-    const response = await handleSubmissionFailures(
-      makeGetRequest(`/api/ai/workflows/microbiome/submission-failures?run_id=${RUN_ID}`), env);
-    assert.equal(response.status, 200);
-    const body = await response.json();
-    assert.equal(body.basis, "sanitized_failed_submission_request_summary");
-    const returned = body.submission_failures[0];
     const allowed = new Set(["step_id", "at", "tool_id", "tool_version", "field_names",
       "http_status", "error_code", "error_message", "upstream_excerpt", "basis"]);
-    assert.ok(Object.keys(returned).every((key) => allowed.has(key)),
-      `non-allowlisted field: ${Object.keys(returned).join(", ")}`);
-    assert.equal(returned.upstream_excerpt, entry.upstream_excerpt);
-    assert.doesNotMatch(JSON.stringify(body), new RegExp(SECRET));
-    assert.doesNotMatch(JSON.stringify(body), /https?:\/\//);
+    assert.ok(Object.keys(entry).every((key) => allowed.has(key)),
+      `non-allowlisted persisted field: ${Object.keys(entry).join(", ")}`);
+    assert.doesNotMatch(JSON.stringify(entry), /https?:\/\//);
   } finally { globalThis.fetch = previousFetch; }
-});
-
-test("DIAGNOSTIC / POST is refused and unknown runs return 404", async () => {
-  const { db } = seededDb(state());
-  const env = { ...mockAIEnv(db), GALAXY_ENABLED: "true", GALAXY_API_KEY: SECRET };
-  const post = await handleSubmissionFailures(new Request(
-    "https://worker.internal/api/ai/workflows/microbiome/submission-failures", { method: "POST" }), env);
-  assert.ok(post.status === 405 || post.status === 400);
-  const missing = await handleSubmissionFailures(
-    makeGetRequest("/api/ai/workflows/microbiome/submission-failures?run_id=job_ffffffffffffffff"), env);
-  assert.equal(missing.status, 404);
 });
