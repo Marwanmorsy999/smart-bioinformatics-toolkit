@@ -3470,8 +3470,53 @@ function featureTableRecoveryNeeded(state) {
   return !["submitted", "collected", "unavailable"].includes(recovery.status);
 }
 
+// A real `qiime2 tools export` of a FeatureTable[Frequency] can yield an HDF5
+// BIOMV210DirFmt dataset whose text route is unavailable. The one-off, bounded
+// BIOM->TSV conversion below is the honest fallback: it uses a genuinely
+// discovered Galaxy tool and its LIVE schema, never an invented tool id.
+function biomConversionNeeded(state) {
+  const recovery = state.feature_table_recovery ?? {};
+  if (recovery.status !== "submitted" || state.results?.asv?.available) return false;
+  const conversion = state.biom_conversion ?? {};
+  if (["collected", "unavailable"].includes(conversion.status)) return false;
+  if (conversion.status === "submitted" || conversion.pending_text) return true;
+  return (state.errors ?? []).some((entry) =>
+    /content_unavailable|BIOMV210|get_content_as_text|biom/i.test(JSON.stringify(entry ?? {})));
+}
+
+// A classifier imported by URL is NOT ready merely because a dataset id was
+// returned: its provider job must finish before a checksum can be exposed.
+function classifierNextOp(state) {
+  const prep = state.classifier_prep ?? {};
+  if (prep.usable === true && prep.dataset_id) return "submit_stage";
+  if (["unavailable", "failed", "not_found", "pending"].includes(prep.status)) return "submit_stage";
+  if (prep.dataset_id && ["uploaded", "imported"].includes(prep.status)) return "classifier_wait";
+  return "classifier_inventory";
+}
+
+const CLASSIFIER_READY_RESUME = "m7143_classifier_ready";
+
+function classifierResumeEligible(state) {
+  if (state.status !== "failed") return false;
+  const marker = CLASSIFIER_READY_RESUME;
+  if ((state.resume_markers ?? []).includes(marker)) return false;
+  const errors = Array.isArray(state.errors) ? state.errors : [];
+  const exactFailure = errors.some((entry) => String(entry?.step) === "taxonomy"
+    && /^provider_job_id_missing$/.test(String(entry?.reason ?? "").trim()));
+  const taxonomy = state.steps?.taxonomy ?? {};
+  const skippedSubmission = !safeString(taxonomy.provider_job_id, 200)
+    && /No classifier\/reference option was exposed by the live tool schema/.test(String(taxonomy.reason ?? ""));
+  return exactFailure && skippedSubmission;
+}
+
 function defaultAdvanceOp(state) {
   if (state.status !== "running") return null;
+  if (biomConversionNeeded(state)) {
+    const conversion = state.biom_conversion ?? {};
+    if (conversion.pending_text) return "finalize_converted_table";
+    if (conversion.status === "submitted") return "poll_biom_conversion";
+    return "convert_biom_to_tsv";
+  }
   if (featureTableRecoveryNeeded(state)) {
     // The real qza identity may be absent from stored state (it was never
     // recorded before the first attempt died). Resolve it once from the run's
@@ -3487,7 +3532,7 @@ function defaultAdvanceOp(state) {
   if (step.status === "succeeded" || step.status === "unavailable" || step.status === "running") {
     return "poll_current_job";
   }
-  if (stepId === "taxonomy") return "classifier_inventory";
+  if (stepId === "taxonomy") return classifierNextOp(state);
   if (stepId === "demux") return "prepare_demux_import";
   if (stepId === "import_reads") return "poll_current_job";
   if (["composition", "ordination", "report"].includes(stepId)) return "local_stage";
@@ -3672,6 +3717,154 @@ function tableQzaOf(state) {
   return frontier ? { id: frontier, name: "stored feature table qza" } : null;
 }
 
+function exportedBiomDatasetOf(state) {
+  const sourceId = safeString(state.feature_table_recovery?.dataset_id, 200) || null;
+  const candidates = [];
+  const add = (value, name, basis) => {
+    const id = safeString(value, 200);
+    if (!id || id === sourceId || !/^[0-9a-f]{8,64}$/i.test(id)) return;
+    candidates.push({ id, name: String(name ?? ""), basis });
+  };
+  for (const entry of Object.values(state.exports ?? {})) {
+    if (entry?.expected_kind !== "feature_table") continue;
+    for (const id of entry.exported_dataset_ids ?? []) {
+      add(id, entry.name ?? null, "export_output");
+    }
+  }
+  for (const error of state.errors ?? []) {
+    if (!/content_unavailable|BIOMV210|biom/i.test(JSON.stringify(error ?? {}))) continue;
+    add(error?.dataset_id, error?.name, "stored_export_error");
+  }
+  for (const artifact of state.artifacts ?? []) {
+    if (!/biom|feature.?table/i.test(String(artifact?.name ?? ""))) continue;
+    add(artifact?.dataset_id ?? artifact?.id, artifact?.name, "stored_artifact");
+  }
+  for (const item of state.finalize_queue?.downloaded ?? []) {
+    if (!/biom|feature.?table/i.test(String(item?.name ?? ""))) continue;
+    add(item?.id, item?.name, "finalize_queue");
+  }
+  return candidates.sort((left, right) =>
+    Number(/biom/i.test(right.name)) - Number(/biom/i.test(left.name)))[0] ?? null;
+}
+
+function schemaFieldValue(item) {
+  if (item?.value && typeof item.value === "object" && "value" in item.value) return item.value.value;
+  if (item?.value !== undefined && item.value !== null) return item.value;
+  if (item?.default_value && typeof item.default_value === "object" && "value" in item.default_value) {
+    return item.default_value.value;
+  }
+  return item?.default_value ?? null;
+}
+
+function normalizedSchemaChoice(value) {
+  return String(value ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+// Build a payload ONLY from names/case values the LIVE biom_convert schema
+// exposes. Target strings (biom/tsv) are used to RECOGNISE a case; the value
+// actually submitted is the case's own verbatim value.
+function biomConversionPayload(schema, datasetId) {
+  const inputs = {};
+  const evidence = { selectors: [], dataset_field: null, fields: [] };
+  const errors = [];
+  let nodes = 0;
+  let overflow = false;
+
+  const findCase = (conditional, target) => {
+    const options = [
+      ...(Array.isArray(conditional?.test_param?.options) ? conditional.test_param.options : []),
+      ...(Array.isArray(conditional?.test_param?.select_options) ? conditional.test_param.select_options : [])
+    ];
+    return (Array.isArray(conditional?.cases) ? conditional.cases : []).find((entry) => {
+      const option = options.find((item) => String(item?.value) === String(entry?.value));
+      return [entry?.value, entry?.name, option?.value, option?.label, option?.name]
+        .some((raw) => normalizedSchemaChoice(raw) === target);
+    }) ?? null;
+  };
+
+  const walk = (list, prefix, depth) => {
+    if (depth > 8 || overflow) return;
+    for (const raw of Array.isArray(list) ? list : []) {
+      if (++nodes > 2000) { overflow = true; return; }
+      const item = raw && typeof raw === "object" ? raw : {};
+      const name = safeString(item.name, 200);
+      if (!name) continue;
+      const full = `${prefix}${name}`;
+      evidence.fields.push(full);
+      const kind = safeString(item.model_class, 100);
+      if (kind === "Section") { walk(item.inputs, `${full}|`, depth + 1); continue; }
+      if (kind === "Conditional") {
+        const testName = safeString(item.test_param?.name, 200);
+        if (!testName) { errors.push(`conditional_test_param_missing:${full}`); continue; }
+        const desired = /input/i.test(name) ? "biom" : /output/i.test(name) ? "tsv" : null;
+        const chosen = desired ? findCase(item, desired) : null;
+        if (desired && !chosen) { errors.push(`no_${desired}_case_in_schema:${full}`); continue; }
+        const caseValue = safeString(chosen?.value ?? schemaFieldValue(item.test_param), 200);
+        if (caseValue) inputs[`${full}|${testName}`] = caseValue;
+        if (desired) evidence.selectors.push({ field: `${full}|${testName}`,
+          value: caseValue, normalized: normalizedSchemaChoice(caseValue),
+          case_name: safeString(chosen?.name, 200) || null });
+        const branchInputs = chosen ? chosen.inputs
+          : (Array.isArray(item.cases) ? item.cases.flatMap((entry) => entry?.inputs ?? []) : []);
+        walk(branchInputs, `${full}|`, depth + 1);
+        continue;
+      }
+      if (kind.includes("DataToolParameter")) {
+        const exts = (Array.isArray(item.extensions) ? item.extensions : [])
+          .map((ext) => String(ext ?? "").toLowerCase().replace(/^\./, ""));
+        if (/input_fp/i.test(name) && exts.some((ext) => /biom/.test(ext))) {
+          inputs[full] = { src: "hda", id: datasetId };
+          evidence.dataset_field = full;
+        } else {
+          const value = schemaFieldValue(item);
+          if (value !== null && value !== undefined && String(value) !== "") inputs[full] = value;
+        }
+        continue;
+      }
+      const value = schemaFieldValue(item);
+      if (value !== null && value !== undefined && String(value) !== "") inputs[full] = value;
+    }
+  };
+  walk(schema?.inputs, "", 0);
+  if (overflow) errors.push("schema_traversal_node_limit");
+  if (!evidence.dataset_field) errors.push("no_schema_biom_input_fp_field");
+  if (!evidence.selectors.some((entry) => /input/i.test(entry.field) && entry.normalized === "biom")) {
+    errors.push("no_schema_biom_source_selector");
+  }
+  if (!evidence.selectors.some((entry) => /output/i.test(entry.field) && entry.normalized === "tsv")) {
+    errors.push("no_schema_tsv_target_selector");
+  }
+  return { valid: errors.length === 0, errors, inputs, evidence };
+}
+
+// The ASV summary fields are deliberately identical to finalize_feature_table;
+// that path itself is left untouched for genuinely text-exportable tables.
+function applyConvertedTableResult(state, table, qzaId, textDatasetId, basis) {
+  const rarefaction = chooseRarefactionDepth(table, { metadata: { sample_ids: state.input?.sample_ids ?? [] } });
+  state.params.rarefaction_depth = rarefaction.depth;
+  state.results.rarefaction = rarefaction;
+  state.results.asv = {
+    available: true, reason: null, feature_count: table.feature_ids.length,
+    sample_count: table.sample_ids.length,
+    total_assignable_reads: Object.values(table.totals).reduce((sum, value) => sum + value, 0),
+    rep_seq_count: state.results.asv?.rep_seq_count ?? null,
+    denoising_stats: state.results.asv?.denoising_stats ?? { available: false,
+      reason: "No denoising statistics table was recorded for this run." },
+    parameter_rationale: state.params.trunc_rationale,
+    basis, format: table.format ?? null,
+    feature_table_dataset_id: qzaId ?? null, text_dataset_id: textDatasetId ?? null
+  };
+}
+
+function conversionFail(state, reason) {
+  const text = safeString(reason, 500);
+  state.errors.push({ step: "dada2_denoise", reason: text });
+  state.biom_conversion = { ...(state.biom_conversion ?? {}), status: "unavailable",
+    reason: text, at: nowIso() };
+  state.results.asv = { ...(state.results.asv ?? {}), available: false, reason: text };
+  return setCursor(state, "poll_current_job");
+}
+
 function advanceStep(state) {
   const index = STEP_IDS.indexOf(state.current_step);
   state.current_step = STEP_IDS[index + 1] ?? null;
@@ -3702,10 +3895,7 @@ async function runAdvanceOperation(operation, adapter, db, row, state, env, ctx,
     }
     if (step.status === "failed") return setCursor(state, null);
     if (!step.status) {
-      if (stepId === "taxonomy") {
-        return setCursor(state, state.classifier_prep?.usable === true && state.classifier_prep?.dataset_id
-          ? "submit_stage" : "classifier_inventory");
-      }
+      if (stepId === "taxonomy") return setCursor(state, classifierNextOp(state));
       if (stepId === "demux") return setCursor(state, "prepare_demux_import");
       if (stepId === "import_reads") return setCursor(state, "poll_current_job");
       if (["composition", "ordination", "report"].includes(stepId)) return setCursor(state, "local_stage");
@@ -3736,11 +3926,7 @@ async function runAdvanceOperation(operation, adapter, db, row, state, env, ctx,
 
   if (operation === "classifier_inventory") {
     const prep = state.classifier_prep;
-    if (prep?.usable === true && prep.dataset_id) return setCursor(state, "submit_stage");
-    if (prep?.status === "uploaded" && prep.dataset_id) return setCursor(state, "classifier_verify");
-    if (prep && ["unavailable", "failed", "not_found"].includes(prep.status)) {
-      return setCursor(state, "submit_stage");
-    }
+    if (prep?.dataset_id) return setCursor(state, classifierNextOp(state));
     const descriptor = QIIME_CLASSIFIER;
     const fresh = { ...classifierProvenance(descriptor), status: "running", started_at: nowIso(),
       attempts: 1, dataset_id: null, history_id: state.history_id ?? null, job_id: null,
@@ -3795,7 +3981,8 @@ async function runAdvanceOperation(operation, adapter, db, row, state, env, ctx,
 
   if (operation === "classifier_import") {
     const prep = state.classifier_prep ?? {};
-    if (prep.dataset_id) return setCursor(state, "classifier_verify");
+    // An imported dataset id is NOT proof the URL job finished. Wait first.
+    if (prep.dataset_id) return setCursor(state, classifierNextOp(state));
     if (!state.history_id) {
       state.classifier_prep = { ...prep, ...classifierProvenance(QIIME_CLASSIFIER), status: "unavailable",
         usable: false, reason: "history_unavailable: no existing history for a URL import." };
@@ -3821,6 +4008,32 @@ async function runAdvanceOperation(operation, adapter, db, row, state, env, ctx,
       history_id: upload.history_id ?? state.history_id, job_id: upload.job_id ?? null,
       provider_job_id: upload.provider_job_id ?? null, computed_sha256: null, at: nowIso(),
       reason: "provider_checksum_verification_pending" };
+    return setCursor(state, "classifier_wait");
+  }
+
+  if (operation === "classifier_wait") {
+    const prep = state.classifier_prep ?? {};
+    if (prep.usable === true) return setCursor(state, "submit_stage");
+    const jobId = safeString(prep.provider_job_id ?? prep.job_id, 200);
+    // Inventory reuse has no provider job; verification is safe there.
+    if (!jobId) return setCursor(state, "classifier_verify");
+    // ONE job-status read. No other state mutation while the job is in flight.
+    const status = await adapter.getJobStatus({ job_id: jobId }, ctx);
+    const observed = status.output?.structured?.state ?? status.status;
+    const classified = classifyJobState(observed);
+    if (classified === "running" || classified === "unknown") return setCursor(state, "classifier_wait");
+    if (classified === "failed") {
+      const reason = `classifier_import_job_failed: provider job ${jobId} ended in state ${observed}`;
+      state.classifier_prep = { ...prep, status: "unavailable", usable: false,
+        reason, detail_state: observed ?? null, checked_at: nowIso() };
+      if (state.steps?.taxonomy) {
+        state.steps.taxonomy = { ...state.steps.taxonomy, status: "unavailable",
+          reason, finished_at: nowIso() };
+        await recordStep(db, state, "taxonomy", "unavailable", { details: { reason } });
+      }
+      const next = advanceStep(state);
+      return setCursor(state, next ? "poll_current_job" : "finalize_result");
+    }
     return setCursor(state, "classifier_verify");
   }
 
@@ -3873,7 +4086,18 @@ async function runAdvanceOperation(operation, adapter, db, row, state, env, ctx,
       return setCursor(state, next ? "poll_current_job" : "finalize_result");
     }
     try {
-      await submitStage(adapter, env, state, stepId, ctx);
+      const submission = await submitStage(adapter, env, state, stepId, ctx);
+      if (submission?.skipped) {
+        // NO job was submitted. Never record a running step with a null
+        // provider job id: that dead-ends the workflow with provider_job_id_missing.
+        const reason = safeString(submission.reason ?? state.steps[stepId]?.reason
+          ?? `No provider job was submitted for ${stepId}.`, 500);
+        state.steps[stepId] = { ...step, status: "unavailable", reason,
+          provider_job_id: null, finished_at: nowIso() };
+        await recordStep(db, state, stepId, "unavailable", { details: { reason } });
+        const next = advanceStep(state);
+        return setCursor(state, next ? "poll_current_job" : "finalize_result");
+      }
       await recordStep(db, state, stepId, "running", {
         providerJobId: state.steps[stepId]?.provider_job_id ?? null,
         details: { tool_id: state.steps[stepId]?.tool_id ?? null, tool_version: state.steps[stepId]?.tool_version ?? null }
@@ -3948,6 +4172,121 @@ async function runAdvanceOperation(operation, adapter, db, row, state, env, ctx,
     if (!done) return setCursor(state, "finalize_slice");
     const next = advanceStep(state);
     return setCursor(state, next ? "poll_current_job" : "finalize_result");
+  }
+
+  if (operation === "convert_biom_to_tsv") {
+    const conversion = state.biom_conversion ?? {};
+    if (conversion.status === "submitted") return setCursor(state, "poll_biom_conversion");
+    if (conversion.pending_text) return setCursor(state, "finalize_converted_table");
+    if (["collected", "unavailable"].includes(conversion.status)) return setCursor(state, "poll_current_job");
+    const target = exportedBiomDatasetOf(state);
+    if (!target) {
+      return conversionFail(state, "biom_conversion_source_unavailable: no exported BIOM dataset id was recorded for the succeeded table.qza export; nothing was guessed or resubmitted");
+    }
+    // ONE read-only lookup proves the exported dataset belongs to this run.
+    const detail = await adapter.getArtifacts({ dataset_id: target.id }, ctx);
+    const item = (detail?.artifacts ?? []).find((entry) => String(entry.id) === target.id);
+    if (!item || String(item.history_id ?? "") !== String(state.history_id)) {
+      return conversionFail(state, `biom_conversion_wrong_history: dataset ${target.id} is not a ready dataset in run history ${state.history_id}; no conversion was submitted`);
+    }
+    // Discover the real installed tool; never hardcode or invent its id.
+    const capabilities = await adapter.getCapabilities(ctx);
+    const tool = (capabilities?.tools ?? []).find((entry) =>
+      String(entry?.id ?? "").includes("/repos/iuc/biom_convert/biom_convert/"));
+    if (!tool?.id) {
+      return conversionFail(state, "biom_conversion_tool_unavailable: no installed /repos/iuc/biom_convert/biom_convert/ tool was discovered; no tool id was invented");
+    }
+    let schema;
+    try {
+      schema = await fetchToolSchema(env, tool.id, tool.version);
+    } catch (caught) {
+      return conversionFail(state, `biom_conversion_schema_unavailable: ${safeString(caught?.message ?? caught, 300)}`);
+    }
+    const payload = biomConversionPayload(schema, target.id);
+    if (!payload.valid) {
+      return conversionFail(state, `biom_conversion_schema_failure: ${payload.errors.join(", ")}`);
+    }
+    let submission;
+    try {
+      submission = await adapter.submitJob({ operation: "submit_job", tool_id: tool.id,
+        history_id: state.history_id ?? null, inputs: payload.inputs }, ctx);
+    } catch (caught) {
+      return conversionFail(state, `biom_conversion_submission_threw: ${safeString(caught?.message ?? caught, 300)}`);
+    }
+    if (submission.error) {
+      return conversionFail(state, `biom_conversion_submission_failed: ${submission.error.message ?? submission.error.code}`);
+    }
+    state.biom_conversion = { status: "submitted", source_dataset_id: target.id,
+      source_dataset_name: target.name || item.name || null,
+      provider_job_id: submission.provider_job_id ?? null, tool_id: tool.id,
+      tool_version: tool.version ?? null, at: nowIso(), schema_evidence: payload.evidence };
+    return setCursor(state, "poll_biom_conversion");
+  }
+
+  if (operation === "poll_biom_conversion") {
+    const conversion = state.biom_conversion ?? {};
+    if (conversion.status !== "submitted" || !conversion.provider_job_id) {
+      return setCursor(state, "poll_current_job");
+    }
+    // ONE job-status read in this invocation.
+    const status = await adapter.getJobStatus({ job_id: conversion.provider_job_id }, ctx);
+    const observed = status.output?.structured?.state ?? status.status;
+    const classified = classifyJobState(observed);
+    if (classified === "running" || classified === "unknown") return setCursor(state, "poll_biom_conversion");
+    if (classified === "failed") {
+      return conversionFail(state, `biom_conversion_job_failed: provider job ${conversion.provider_job_id} ended in state ${observed}`);
+    }
+    const collected = await collectOutputs(adapter, conversion.provider_job_id, state.history_id, ctx);
+    const textEligible = collected.selected.filter((artifact) =>
+      artifact.kind !== "qza_artifact" && !/\bqza\b/i.test(String(artifact.extension ?? "")));
+    const downloaded = await downloadSelected(adapter, textEligible, "dada2_denoise", ctx,
+      { maxArtifacts: FINALIZE_MAX_ARTIFACTS_PER_POLL, maxBytes: FINALIZE_MAX_BYTES_PER_POLL });
+    const text = downloaded.artifacts.find((artifact) => /feature.?table|biom|tsv/i.test(String(artifact.name ?? "")))
+      ?? downloaded.artifacts[0] ?? null;
+    if (!text) {
+      return conversionFail(state, `biom_conversion_text_unavailable: no text artifact could be downloaded from provider job ${conversion.provider_job_id} (${downloaded.errors.map((error) => error.reason).join("; ") || "no outputs selected"})`);
+    }
+    await insertRow(db, SQL.insertArtifact, [makeId("art"), runIdOf(state), text.name,
+      "feature_table", `galaxy:${text.id}`, text.checksum, text.bytes, "text/plain", text.text, nowIso()]);
+    state.artifacts.push({ name: text.name, kind: "feature_table", dataset_id: text.id,
+      checksum: text.checksum, bytes: text.bytes, source_step: "dada2_denoise",
+      tool_version: conversion.tool_version ?? null, extension: text.type ?? null });
+    state.biom_conversion = { ...conversion, status: "text_collected",
+      pending_text: { dataset_id: text.id, name: text.name, checksum: text.checksum,
+        bytes: text.bytes, at: nowIso() } };
+    return setCursor(state, "finalize_converted_table");
+  }
+
+  if (operation === "finalize_converted_table") {
+    const conversion = state.biom_conversion ?? {};
+    if (conversion.status === "collected") return setCursor(state, "poll_current_job");
+    if (!conversion.pending_text) return conversionFail(state, "biom_conversion_text_unavailable: no converted TSV text was recorded");
+    await rehydrateParsed(db, state, { force: true });
+    const table = state._parsed?.table;
+    if (!table?.available) {
+      return conversionFail(state, "no_parseable_converted_feature_table_text: the genuine BIOM->TSV output was not a parseable QIIME OTU table; no table was fabricated");
+    }
+    const integrity = validateFeatureTableIntegrity({ table,
+      repSeqs: state._parsed?.repSeqs ?? null, taxonomy: state._parsed?.taxonomy ?? null,
+      metadata: { sample_ids: state.input?.sample_ids ?? [] } });
+    const blocking = (integrity.errors ?? []).filter((error) => !/_unavailable$/.test(String(error)));
+    if (blocking.length) {
+      return conversionFail(state, `converted_table_integrity_failed: ${blocking.join(", ")}`);
+    }
+    const qzaId = safeString(state.feature_table_recovery?.dataset_id, 200);
+    state.frontier = { ...(state.frontier ?? {}), featureTableId: qzaId || null,
+      featureTableTextDatasetId: safeString(conversion.pending_text.dataset_id, 200) || null };
+    applyConvertedTableResult(state, table, qzaId, conversion.pending_text.dataset_id,
+      "parsed_from_genuine_biom_converted_tsv");
+    state.feature_table_recovery = { ...(state.feature_table_recovery ?? {}), status: "collected",
+      available: true, feature_count: table.feature_ids.length, sample_count: table.sample_ids.length,
+      basis: "genuine_biom_convert_tsv" };
+    state.biom_conversion = { ...conversion, status: "collected",
+      tsv_dataset_id: conversion.pending_text.dataset_id,
+      dataset_id: conversion.pending_text.dataset_id,
+      checksum: conversion.pending_text.checksum, bytes: conversion.pending_text.bytes,
+      integrity, collected_at: nowIso() };
+    return setCursor(state, "poll_current_job");
   }
 
   if (operation === "recover_table_reference") {
@@ -4126,6 +4465,31 @@ export async function handleAdvance(request, env, options = {}) {
   const state = parseJson(row.state_json);
   if (!state) return errorResponse("The stored run has no state record.", 409, request);
   if (state.workflow_type !== "microbiome") return errorResponse("The referenced run is not a microbiome workflow.", 400, request);
+  // Explicit, single-use recovery is checked BEFORE the terminal-state return.
+  // Normal polls can never revive a failed run.
+  const resume = safeString(payload?.resume, 80);
+  if (resume) {
+    const refuseResume = (reason) => jsonResponse({ workflow_type: "microbiome", run_id: row.public_id,
+      operation: null, resumed: false, reason, status: state.status,
+      current_step: state.current_step, steps_summary: statusStepSummary(state),
+      execution_mode: envExecutionMode(env) }, 409, request);
+    if (resume !== CLASSIFIER_READY_RESUME) return refuseResume("unknown_resume_token");
+    if (!classifierResumeEligible(state)) return refuseResume("resume_not_eligible");
+    state.status = "running";
+    state.steps = state.steps ?? {};
+    state.errors = (state.errors ?? []).filter((entry) =>
+      !(String(entry?.step) === "taxonomy"
+        && /^provider_job_id_missing$/.test(String(entry?.reason ?? "").trim())));
+    state.steps.taxonomy = {};
+    state.advance_op = null;
+    state.resume_markers = [...(state.resume_markers ?? []), CLASSIFIER_READY_RESUME];
+    state.resumed_at = nowIso();
+    await persistState(db, row, state);
+    return jsonResponse({ workflow_type: "microbiome", run_id: row.public_id,
+      operation: "resume_failed", resumed: true, status: "running",
+      current_step: state.current_step, next_operation: defaultAdvanceOp(state),
+      steps_summary: statusStepSummary(state), execution_mode: envExecutionMode(env) }, 200, request);
+  }
   if (state.status !== "running") {
     return jsonResponse({ workflow_type: "microbiome", run_id: row.public_id, operation: null,
       status: state.status, current_step: state.current_step, next_operation: null,
