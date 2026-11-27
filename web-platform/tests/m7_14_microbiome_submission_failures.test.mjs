@@ -141,6 +141,29 @@ test("LABELLED STUB / secrets, key patterns and URLs are redacted at this bounda
   assert.ok(body.submission_failures[0].error_message.length <= 300, "error message stays bounded");
 });
 
+test("LABELLED STUB / stored upstream_excerpt appears, is redacted and capped at 600", async () => {
+  const stub = makeStub();
+  const entry = storedFailure({
+    upstream_excerpt: `X-API-Key: ${SECRET} https://galaxy.example.test/api/tools?key=${SECRET} ` + "E".repeat(1200)
+  });
+  const { response, body } = await callDiagnostic(stateWithFailures([entry]), stub);
+  assert.equal(response.status, 200);
+  assert.equal(body.available, true, "the response contract is unchanged");
+  const excerpt = body.submission_failures[0].upstream_excerpt;
+  assert.ok(excerpt, "the stored excerpt is surfaced");
+  assert.ok(excerpt.length <= 600, `excerpt stays bounded: ${excerpt.length}`);
+  assert.match(excerpt, /\[redacted\]/, "secrets are redacted");
+  assert.match(excerpt, /\[url\]/, "URLs are redacted");
+  const raw = JSON.stringify(body);
+  assert.equal(raw.includes(SECRET), false, "configured secret never appears");
+  assert.equal(raw.includes("https://"), false, "no signed URL appears");
+  assert.equal(stub.calls.some((call) => call.method === "POST"), false, "zero POSTs");
+
+  // An entry without the newer field keeps the original response shape.
+  const plain = await callDiagnostic(stateWithFailures([storedFailure()]), stub);
+  assert.equal("upstream_excerpt" in plain.body.submission_failures[0], false);
+});
+
 // ------------------------------------------- zero provider POSTs / no mutation
 
 test("LABELLED STUB / zero provider calls, no POST, no state mutation and no new run", async () => {
