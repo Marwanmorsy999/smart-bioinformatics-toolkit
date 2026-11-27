@@ -195,12 +195,39 @@ function caseExposesManifestYaml(caseEntry) {
   return /manifest|ya?ml|yml/.test(text);
 }
 
+// Galaxy's `qiime2 tools import` wrapper declares a generic `data` extension
+// for its per-file data inputs and puts the real format in the help text
+// (`This data should be formatted as a FastqGzFormat...`). Accept EITHER a
+// specific FASTQ extension OR an explicit FASTQ format statement in the live
+// help/label/description. A generic `data`/`file`/`dataset` extension is not
+// evidence either way; only absent or contradictory evidence fails closed.
 function fastqEvidence(input) {
-  const exts = (Array.isArray(input?.extensions) ? input.extensions : [])
-    .map((ext) => String(ext).toLowerCase().replace(/^\./, ""));
-  if (!exts.length) return { compatible: true, basis: "no_extensions_declared", extensions: [] };
-  const hit = exts.find((ext) => /fastq|fq/.test(ext));
-  return { compatible: Boolean(hit), basis: hit ? "declared_fastq_extension" : "extension_not_fastq", extensions: exts };
+  const item = asObject(input);
+  const exts = (Array.isArray(item.extensions) ? item.extensions : [])
+    .map((ext) => String(ext ?? "").toLowerCase().replace(/^\./, ""));
+  const text = `${item.help ?? ""} ${item.label ?? ""} ${item.description ?? ""}`.toLowerCase();
+  const extFastq = exts.find((ext) => /fastq|fq|gz/.test(ext));
+  const extSpecificOther = exts.find((ext) => ext && !/fastq|fq|gz|data|file|dataset|input|raw/.test(ext));
+  const textFastq = /fastqgzformat|fastq[ _-]?format|\bfastq\b|\bfq\b/.test(text);
+  const textSpecificOther = /\b(?:tsv|csv|biom|fasta|qza|qzv|txt)\b|tabular|manifest|ya?ml/.test(text);
+  // When a specific FASTQ extension is present it is the primary evidence; the
+  // help text is still recorded but does not replace the old extension basis.
+  if (textFastq && !extSpecificOther && !extFastq) {
+    return { compatible: true, basis: "fastq_format_help", extensions: exts,
+      text_evidence: "FastqGzFormat/Fastq Format/FASTQ" };
+  }
+  if (extFastq && !textSpecificOther) {
+    return { compatible: true, basis: "declared_fastq_extension", extensions: exts, text_evidence: null };
+  }
+  if ((textFastq && extSpecificOther) || (extFastq && textSpecificOther)) {
+    return { compatible: false, basis: "contradictory_fastq_evidence", extensions: exts,
+      text_evidence: textFastq ? "FastqGzFormat/Fastq Format/FASTQ" : "non-FASTQ format statement" };
+  }
+  return { compatible: false, basis: "no_fastq_evidence", extensions: exts, text_evidence: null };
+}
+
+function asNullableString(value) {
+  return value === undefined || value === null ? null : String(value);
 }
 
 function compactEvidence(evidence) {
@@ -325,11 +352,27 @@ function importRoleOf(input) {
   const text = `${input?.name ?? ""} ${input?.help ?? ""} ${input?.label ?? ""} ${input?.description ?? ""}`.toLowerCase();
   const barcode = /barcode|\bbc\b/.test(text);
   const sequence = /sequenc|\bseq\b/.test(text);
-  const reads = /reads|fastq/.test(text);
+  // `fastq` alone names a FILE FORMAT, not a dataset role: the live wrapper
+  // writes "formatted as a FastqGzFormat" on both inputs. Only `reads` is a
+  // role signal here; format text is handled by fastqEvidence().
+  const reads = /reads/.test(text);
   if (barcode && sequence) return "ambiguous";
   if (barcode) return "barcodes";
   if (sequence || reads) return "reads";
   return "unknown";
+}
+
+// The live wrapper names the data input simply `data` inside per-file groups
+// such as `import_sequences` / `import_barcodes`. The full field path carries
+// that role evidence even when the leaf input's own help only names the format.
+function roleFromFieldPath(field) {
+  const text = String(field ?? "").toLowerCase();
+  const barcode = /barcode|\bbc\b/.test(text);
+  const sequence = /sequenc|\bseq\b/.test(text);
+  if (barcode && sequence) return "ambiguous";
+  if (barcode) return "barcodes";
+  if (sequence) return "reads";
+  return null;
 }
 
 // The live import case may describe its two files through a `name` text
@@ -394,11 +437,14 @@ function resolveCaseRoles(entries, { allowOrderFallback = false } = {}) {
   const mapped = dataIndices.map((index) => {
     const nameParam = nearestNameParam(entries, index);
     const fromName = nameParam ? nameParamEvidence(nameParam.entry) : null;
+    const fromField = roleFromFieldPath(entries[index].field);
     const fromInput = importRoleOf(entries[index].input);
-    const conflict = fromName === "conflict" || fromInput === "ambiguous";
-    const role = conflict ? "conflict"
-      : (fromName && fromName !== "conflict" ? fromName : (fromInput === "unknown" ? null : fromInput));
-    return { entry: entries[index], nameParam, fromName, fromInput, role,
+    const rolesSeen = [fromName, fromField, fromInput]
+      .filter((value) => value && value !== "unknown" && value !== "conflict");
+    const conflict = fromName === "conflict" || fromField === "ambiguous"
+      || fromInput === "ambiguous" || new Set(rolesSeen).size > 1;
+    const role = conflict ? "conflict" : (rolesSeen[0] ?? null);
+    return { entry: entries[index], nameParam, fromName, fromField, fromInput, role,
       fastq: fastqEvidence(entries[index].input) };
   });
   if (mapped.some((item) => !item.fastq.compatible)) return fail("A live data input is not FASTQ-compatible.");
@@ -410,8 +456,11 @@ function resolveCaseRoles(entries, { allowOrderFallback = false } = {}) {
   let mappingBasis;
   if (reads.length === 1 && barcodes.length === 1) {
     pairs = { reads: reads[0], barcodes: barcodes[0] };
-    mappingBasis = mapped.some((item) => item.fromName && item.fromName !== "conflict")
-      ? "name_text_help" : "input_text";
+    mappingBasis = mapped.some((item) => item.fromField)
+      && mapped.some((item) => item.fastq.basis === "fastq_format_help")
+      ? "field_name_and_fastq_format_help"
+      : (mapped.some((item) => item.fromName && item.fromName !== "conflict")
+        ? "name_text_help" : "input_text");
   } else if (allowOrderFallback && mapped.every((item) => item.role === null)) {
     // Legacy-only: order is the sole schema-backed signal and is recorded as
     // such. The live EMP path never reaches this branch.
@@ -477,7 +526,8 @@ export function buildImportPayload(schema, matched, { readsId, barcodesId, reads
     mapping_basis: mappingBasis,
     mapping: roles.mapping,
     mapping_evidence: mapped.map((item) => ({ field: item.entry.field, from_name_param: item.fromName,
-      from_input: item.fromInput, resolved_role: item.role, fastq: item.fastq })),
+      from_field_name: item.fromField, from_input: item.fromInput, resolved_role: item.role,
+      fastq: item.fastq })),
     applied: matched.selectors.map((entry) => ({ name: entry.name, value: entry.value,
       basis: "live_schema_format_case" })) };
 }
@@ -489,7 +539,7 @@ export function buildImportPayload(schema, matched, { readsId, barcodesId, reads
  */
 export function describeImportCase(schema, matched) {
   const unavailable = (reason) => ({ available: false, reason,
-    tool_id: String(schema?.tool_id ?? null), version: null });
+    tool_id: asNullableString(schema?.tool_id), version: null });
   if (!matched) {
     return unavailable(`The live import schema does not expose the ${LEGACY_FORMAT_HINT} format case, `
       + `nor the ${EMP_TYPE_TARGET} + ${EMP_FORMAT_TARGET} EMP directory case; no value was invented.`);
@@ -525,16 +575,18 @@ export function describeImportCase(schema, matched) {
         help: preview(entry.input.help),
         label: preview(entry.input.label),
         resolved_role: mappedRole ? mappedRole.role : null,
+        field_name_evidence: mappedRole ? mappedRole.fromField : null,
         name_param_evidence: isData(entry.input) && nameParam ? nameParamEvidence(nameParam.entry) : null,
-        fastq_compatible: isData(entry.input) ? fastqEvidence(entry.input).compatible : null
+        fastq_compatible: isData(entry.input) ? fastqEvidence(entry.input).compatible : null,
+        fastq_basis: isData(entry.input) ? fastqEvidence(entry.input).basis : null
       };
     });
     return {
       available: true,
       selected_case: matched.legacy ? "legacy_format_hint" : "emp_single_end_directory",
       selection_basis: matched.selection_basis ?? "live_io_details_schema",
-      tool_id: String(schema?.tool_id ?? matched.tool_id ?? null),
-      tool_version: String(schema?.tool_version ?? matched.tool_version ?? null),
+      tool_id: asNullableString(schema?.tool_id ?? matched.tool_id),
+      tool_version: asNullableString(schema?.tool_version ?? matched.tool_version),
       discovered_format_value: matched.formatValue ?? null,
       type_value: matched.type_value ?? null,
       selector_path: selectors.map((entry) => ({ name: entry.name, value: entry.value })),
