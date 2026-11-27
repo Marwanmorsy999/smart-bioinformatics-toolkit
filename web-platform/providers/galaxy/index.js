@@ -104,6 +104,31 @@ function timeoutFrom(env) {
   return Number.isFinite(raw) && raw > 0 ? Math.min(raw, 120_000) : 20_000;
 }
 
+// Dataset checksums are reported by the provider as metadata, never computed
+// in the Worker. Only hash-function/value pairs survive this boundary, and no
+// value is inferred when the provider exposes none.
+function normalizeChecksums(raw) {
+  const out = {};
+  const container = asObject(raw);
+  const entries = Array.isArray(raw) ? raw
+    : Array.isArray(container.checksums) ? container.checksums : null;
+  if (entries) {
+    for (const entry of entries) {
+      const item = asObject(entry);
+      const fn = safeString(item.hash_function ?? item.function ?? item.name, 40).toLowerCase();
+      const value = safeString(item.checksum ?? item.value ?? item.hash, 200);
+      if (fn && value) out[fn] = value;
+    }
+  } else {
+    for (const [key, value] of Object.entries(asObject(container.checksums ?? container))) {
+      const fn = safeString(key, 40).toLowerCase();
+      const hash = safeString(value, 200);
+      if (fn && hash) out[fn] = hash;
+    }
+  }
+  return out;
+}
+
 function parseQuota(raw) {
   const source = asObject(raw);
   return {
@@ -974,6 +999,13 @@ export function createAdapter(env = {}, deps = {}) {
             type: safeString(item.extension ?? item.file_ext ?? item.type, 100),
             size: finite(item.file_size ?? item.size),
             state: safeString(item.state, 80),
+            // Provider-reported identity only. Missing values stay null; a
+            // caller must never turn an absent checksum into a verified one.
+            checksum: safeString(item.checksum, 200) || null,
+            checksums: normalizeChecksums(item.checksums),
+            semantic_type: safeString(item.semantic_type, 300) || null,
+            datatype: safeString(typeof item.datatype === "string" ? item.datatype : item.datatype?.name, 200) || null,
+            creating_job: safeString(item.creating_job, 200) || null,
             // The provider's own value is authoritative. A caller-supplied
             // history_id must never overwrite it, or a history mismatch could
             // not be detected by the storage layer.
@@ -1024,6 +1056,87 @@ export function createAdapter(env = {}, deps = {}) {
         };
       } catch (error) {
         return { provider: PROVIDER, ok: false, usage: null, error: normalizeProviderError(PROVIDER, error, { at }), at };
+      }
+    },
+
+    // ONE GET /api/datasets/:id. Metadata only: the provider's own state, size,
+    // extension, datatype/semantic type, every hash function it exposes, the
+    // owning history and creating job. No body, key or URL is returned. Used by
+    // the bounded classifier_verify advance operation; a checksum is claimed
+    // ONLY when the provider actually reports one.
+    async getDatasetDetail(request = {}, ctx = {}) {
+      const args = normalizeCallArgs(request, ctx);
+      request = args.request;
+      ctx = args.ctx;
+      const at = makeNow(ctx);
+      const id = safeId(request?.dataset_id ?? request?.artifact_id, { max: 200 });
+      const empty = { provider: PROVIDER, ok: false, dataset_id: id, at };
+      if (!enabled || !configured) return { ...empty, reason: availability() };
+      if (!id) return { ...empty, error: { code: "dataset_id_required", status: 400,
+        message: "Dataset detail requires a dataset_id." } };
+      try {
+        const { body } = await call("GET", `/api/datasets/${encodeURIComponent(id)}`, undefined, ctx);
+        const item = asObject(body);
+        return {
+          provider: PROVIDER, ok: true, dataset_id: id, at,
+          name: safeString(item.name, 300) || null,
+          state: safeString(item.state, 80) || null,
+          size: finite(item.file_size ?? item.size),
+          extension: safeString(item.extension ?? item.file_ext, 100) || null,
+          datatype: safeString(typeof item.datatype === "string" ? item.datatype : item.datatype?.name, 200) || null,
+          semantic_type: safeString(item.semantic_type, 300) || null,
+          checksums: normalizeChecksums(item.checksums),
+          history_id: safeString(item.history_id, 200) || null,
+          creating_job: safeString(item.creating_job, 200) || null,
+          source: "galaxy:/api/datasets/:id"
+        };
+      } catch (error) {
+        return { ...empty, error: normalizeProviderError(PROVIDER, error, { at }) };
+      }
+    },
+
+    // Raw dataset-body proxy for the owner-scoped artifact route. The upstream
+    // Response body is returned as a stream: the Worker NEVER calls
+    // arrayBuffer()/text() here, so a large qza can pass through without being
+    // buffered in Worker memory. Headers are rebuilt by the caller; no upstream
+    // header, API key, signed URL or body is copied into this result.
+    async streamDatasetContent(request = {}, ctx = {}) {
+      const args = normalizeCallArgs(request, ctx);
+      request = args.request;
+      ctx = args.ctx;
+      const id = safeId(request?.dataset_id ?? request?.artifact_id, { max: 200 });
+      if (!enabled || !configured) return { ok: false, response: null, reason: availability() };
+      if (!id) return { ok: false, response: null, reason: "dataset_id_required" };
+      const fetchImpl = fetcher(ctx);
+      const signal = ctx?.signal ?? null;
+      try {
+        let response = await fetchImpl(joinUrl(baseUrl,
+          `/api/datasets/${encodeURIComponent(id)}/content`),
+        { method: "GET", headers: { "X-API-Key": apiKey, Accept: "application/octet-stream" }, signal });
+        let source = "content";
+        // The verified text route is a fallback ONLY for text artifacts and
+        // ONLY when the binary content route has no endpoint (404).
+        if (response.status === 404 && request?.text_fallback === true) {
+          response = await fetchImpl(joinUrl(baseUrl,
+            `/api/datasets/${encodeURIComponent(id)}/get_content_as_text`),
+          { method: "GET", headers: { "X-API-Key": apiKey, Accept: "application/json" }, signal });
+          source = "get_content_as_text";
+        }
+        if (!response?.ok) return { ok: false, response: null, status: response?.status ?? null,
+          reason: `upstream_${response?.status ?? "unavailable"}` };
+        if (source === "get_content_as_text") {
+          const payload = asObject(await response.json());
+          if (payload.truncated === true) return { ok: false, response: null, reason: "content_truncated" };
+          if (typeof payload.item_data !== "string") return { ok: false, response: null, reason: "content_unavailable" };
+          const textResponse = new Response(payload.item_data, {
+            status: 200, headers: { "Content-Type": "text/plain; charset=utf-8" }
+          });
+          return { ok: true, response: textResponse, source, dataset_id: id };
+        }
+        // Do not buffer: hand the live ReadableStream straight to the caller.
+        return { ok: true, response, source, dataset_id: id };
+      } catch (error) {
+        return { ok: false, response: null, reason: safeString(error?.message ?? error, 200) };
       }
     },
 

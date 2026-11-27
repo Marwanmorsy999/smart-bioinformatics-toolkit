@@ -35,7 +35,10 @@ import {
 } from "./parsers.js";
 import { PUBLIC_DATASETS } from "../../../../../public/js/microbiome-zip.js";
 import { resolvePublicDataset } from "./public-data.js";
-import { verifyRemoteSha256 } from "./sha256-stream.js";
+// sha256-stream.js is intentionally NOT imported here. The 218 MB classifier
+// must never be streamed or hashed in a Worker request (CPU limit). Provider
+// checksums are read from ONE GET /api/datasets/:id in the bounded advance
+// endpoint; the streaming hasher remains available to offline tests only.
 import {
   QIIME_CLASSIFIER, classifierProvenance, inspectClassifierInventory
 } from "./classifier-prep.js";
@@ -244,6 +247,15 @@ async function discover(env, ctx) {
   return { tools, toolVersions, classifier, discoveryMode: capabilities.discovery_mode ?? "unavailable", discoveredAt };
 }
 
+// A classifier dataset is usable ONLY after a provider-reported checksum was
+// verified (inventory reuse or classifier_verify). An imported-but-unverified
+// id must never be placed into a taxonomy input field.
+function usableClassifierId(state) {
+  const prep = state.classifier_prep;
+  if (!prep || prep.usable !== true || !prep.dataset_id) return null;
+  return prep.dataset_id;
+}
+
 function stepToolFor(stepId, discovery) {
   switch (stepId) {
     case "demux": return discovery.tools.demux;
@@ -308,7 +320,7 @@ function overridesFor(stepId, schema, state, discovery) {
   }
   // A verified history qza wins over a live select option. The option is kept
   // only as an honest fallback when preparation could not be verified.
-  if (stepId === "taxonomy" && !state.classifier_prep?.dataset_id
+  if (stepId === "taxonomy" && !usableClassifierId(state)
       && discovery.classifier?.available && discovery.classifier.parameter_name
       && discovery.classifier.option_value) {
     overrides[discovery.classifier.parameter_name] = discovery.classifier.option_value;
@@ -490,7 +502,7 @@ function rolesFor(stepId, state) {
         name: "representative sequences qza", hint: "reads|sequences|rep|feature" },
       // The classifier is a REAL history qza prepared from the official URL.
       // Hints keep it out of the representative-sequences field.
-      ...(state.classifier_prep?.dataset_id ? [{ id: state.classifier_prep.dataset_id,
+      ...(usableClassifierId(state) ? [{ id: usableClassifierId(state),
         role: "artifact", key: "classifier", name: state.classifier_prep.filename ?? QIIME_CLASSIFIER.filename,
         hint: "classifier|referen|database|rrna|silva|taxonomy" }] : [])
     ];
@@ -2297,18 +2309,19 @@ async function prepareDemuxImport(adapter, env, db, row, state, ctx) {
 //
 // Before taxonomy, prepare the OFFICIAL classifier as a real Galaxy history
 // qza. A READ-ONLY inventory is checked first: a dataset with the official
-// filename and matching checksum is reused with NO upload. Otherwise exactly
-// one verified streamed download is imported by URL into the EXISTING history.
+// filename and a provider-reported matching checksum is reused with NO upload.
+// Otherwise exactly ONE URL import is made into the EXISTING history. The
+// Worker NEVER streams or hashes the 218 MB qza: usability is decided only by
+// the bounded `classifier_verify` operation reading provider checksum metadata.
 // state.classifier_prep is written before any await and persisted, so a second
-// preparation can never run. `options.classifierDescriptor` is an OFFLINE TEST
-// SEAM only (production handlers call this without it).
+// preparation can never run.
 
 async function prepareClassifier(adapter, env, db, row, state, ctx, options = {}) {
   if (state.classifier_prep) return { handled: true, skipped: true };
   const descriptor = options.classifierDescriptor ?? QIIME_CLASSIFIER;
   const prep = { ...classifierProvenance(descriptor), status: "running",
     started_at: nowIso(), attempts: 1, dataset_id: null, history_id: null, job_id: null,
-    computed_sha256: null };
+    computed_sha256: null, usable: false };
   state.classifier_prep = prep; // guard set BEFORE any await
   const finish = async () => {
     prep.finished_at = nowIso();
@@ -2334,6 +2347,7 @@ async function prepareClassifier(adapter, env, db, row, state, ctx, options = {}
     prep.history_id = matched.verified.history_id;
     prep.job_id = null;
     prep.computed_sha256 = matched.verified.checksum_exposed;
+    prep.usable = true;
     prep.reason = null;
     return finish();
   }
@@ -2342,20 +2356,11 @@ async function prepareClassifier(adapter, env, db, row, state, ctx, options = {}
     prep.reason = "history_unavailable: the run has no existing Galaxy history; no classifier upload was attempted.";
     return finish();
   }
-  const verification = await verifyRemoteSha256(ctx.fetch, descriptor.url, {
-    expected_sha256: descriptor.expected_sha256, expected_bytes: descriptor.expected_bytes,
-    chunkBytes: options.classifierChunkBytes ?? 1024 * 1024
-  });
-  prep.download = { ok: verification.ok, verified: verification.verified,
-    computed_sha256: verification.computed_sha256, actual_bytes: verification.actual_bytes,
-    expected_bytes: verification.expected_bytes, chunks: verification.chunks,
-    source_url: verification.source_url, basis: verification.basis, reason: verification.reason };
-  prep.computed_sha256 = verification.computed_sha256;
-  if (!verification.ok) {
-    prep.status = "unavailable";
-    prep.reason = `classifier_verification_failed: ${verification.reason}`;
-    return finish();
-  }
+  // No Worker-side download or hashing. Galaxy fetches the official URL itself;
+  // identity is verified later from the provider's own dataset detail.
+  prep.download = { attempted: false, verified: false, computed_sha256: null,
+    expected_bytes: descriptor.expected_bytes,
+    reason: "worker_side_stream_and_hash_removed_to_avoid_the_cpu_limit; verification_deferred_to_classifier_verify" };
   let upload;
   try {
     upload = await adapter.importUrlIntoHistory({
@@ -2372,12 +2377,12 @@ async function prepareClassifier(adapter, env, db, row, state, ctx, options = {}
     return finish();
   }
   prep.status = "uploaded";
-  prep.source = "verified_url_import_into_existing_history";
+  prep.source = "url_import_into_existing_history";
   prep.dataset_id = upload.dataset_id;
   prep.history_id = upload.history_id ?? state.history_id;
   prep.job_id = upload.job_id ?? null;
   prep.provider_job_id = upload.provider_job_id ?? null;
-  prep.reason = null;
+  prep.reason = "provider_checksum_verification_pending: the classifier is not usable until classifier_verify reads a matching provider-reported SHA-256 and size.";
   return finish();
 }
 
@@ -2421,7 +2426,7 @@ async function submitStage(adapter, env, state, stepId, ctx) {
   }
   // A prepared history qza satisfies the classifier input even when the live
   // schema exposes no select option; taxonomy is NOT skipped in that case.
-  if (stepId === "taxonomy" && !state.classifier_prep?.dataset_id && !state.discovery.classifier?.available) {
+  if (stepId === "taxonomy" && !usableClassifierId(state) && !state.discovery.classifier?.available) {
     state.steps[stepId] = { status: "unavailable", reason: state.discovery.classifier?.reason
       ?? "No verified classifier dataset and no live classifier option were available." };
     return { skipped: true, reason: state.steps[stepId].reason };
@@ -2442,7 +2447,7 @@ async function submitStage(adapter, env, state, stepId, ctx) {
   }
   // The classifier dataset must land in a classifier/reference data field of
   // the LIVE schema. A bare qza field with no such evidence fails closed.
-  if (stepId === "taxonomy" && state.classifier_prep?.dataset_id) {
+  if (stepId === "taxonomy" && usableClassifierId(state)) {
     const classifierField = String(payload.dataset_fields?.classifier ?? "");
     if (!/classif|referen|database|rrna|silva|taxonomy/i.test(classifierField)) {
       throw new Error(`taxonomy schema failure: classifier data field was not identified (${classifierField || "none"})`);
@@ -2532,9 +2537,13 @@ const MAX_EXPORTS_PER_STAGE = 3;
 // Infer the intended artifact kind from the provider's own output name. This is
 // a routing hint for the export only; the parsed result still comes from real
 // exported text, never from the name itself.
-function intendedExportKind(name) {
+export function intendedExportKind(name) {
   const text = String(name ?? "").toLowerCase().replace(/\.qza$/, "");
-  if (/feature.?table|(?:^|_)table$|^table$/.test(text)) return "feature_table";
+  // Real DADA2 output names are e.g. "qiime2 dada2 denoise-single on dataset 5:
+  // table.qza". A bare `^table$` misses the ": " prefix, so accept any word
+  // boundary before `table` at the end of the name. Routing is a hint only:
+  // the result still comes from text exported by the genuine tool.
+  if (/feature.?table|\btable$/.test(text)) return "feature_table";
   if (/rep(?:resentative)?[_-]?seq|repseq/.test(text)) return "rep_seqs";
   if (/taxonomy|classif/.test(text)) return "taxonomy";
   if (/(?:^|_)alpha|alpha[_-]/.test(text)) return "alpha";
@@ -2548,30 +2557,42 @@ function exportFailure(state, stepId, reason, datasetId = null) {
   state.errors.push({ step: stepId, reason, ...(datasetId ? { dataset_id: datasetId } : {}) });
 }
 
-async function submitNeededExports(adapter, env, state, stepId, jobId, collected, ctx) {
-  // Exactly ONE bounded submission pass per stage. Later polls only inspect
-  // jobs already tracked in state.exports/pending_exports.
+async function submitNeededExports(adapter, env, state, stepId, jobId, collected, ctx, options = {}) {
+  // Bounded submission passes. The default (legacy status path) submits all
+  // missing kinds at once; the advance endpoint passes maxSubmissions:1 so a
+  // single Worker invocation performs at most ONE provider submission.
   state.export_submissions = state.export_submissions ?? {};
-  if (state.export_submissions[stepId]) return [];
   const needed = EXPORT_KINDS_BY_STEP[stepId] ?? [];
   if (!needed.length) return [];
   const present = new Set(collected.selected.map((artifact) => artifact.kind));
   const exportedKinds = new Set(Object.values(state.exports ?? {})
     .map((entry) => entry?.expected_kind).filter(Boolean));
+  const submittedKinds = new Set(state.export_submissions[stepId]?.submitted_kinds ?? []);
   const missing = needed.filter((kind) => !present.has(kind) && !exportedKinds.has(kind)
-    && EXPORTABLE_KINDS.includes(kind));
-  const marker = { at: nowIso(), requested_kinds: [...missing], job_ids: [], status: "pending" };
-  state.export_submissions[stepId] = marker;
-  if (!missing.length) { marker.status = "not_needed"; return []; }
+    && !submittedKinds.has(kind) && EXPORTABLE_KINDS.includes(kind));
+  let marker = state.export_submissions[stepId];
+  if (!marker) {
+    marker = { at: nowIso(), requested_kinds: [...missing], submitted_kinds: [], job_ids: [], status: "pending" };
+    state.export_submissions[stepId] = marker;
+  } else {
+    marker.requested_kinds = [...new Set([...(marker.requested_kinds ?? []), ...missing])];
+    marker.submitted_kinds = [...submittedKinds];
+    if (!Array.isArray(marker.job_ids)) marker.job_ids = [];
+  }
+  if (!missing.length) {
+    if (marker.status !== "submitted") marker.status = "not_needed";
+    return [];
+  }
   const alreadyExported = new Set(Object.keys(state.exports ?? {}));
   const candidates = [];
+  const cap = Math.min(options.maxSubmissions ?? MAX_EXPORTS_PER_STAGE, MAX_EXPORTS_PER_STAGE);
   for (const artifact of collected.selected) {
     if (artifact.kind !== "qza_artifact" || alreadyExported.has(String(artifact.id))) continue;
     const kind = intendedExportKind(artifact.name);
     if (!kind || !missing.includes(kind)) continue;
     if (candidates.some((candidate) => candidate.kind === kind)) continue;
     candidates.push({ kind, artifact });
-    if (candidates.length >= MAX_EXPORTS_PER_STAGE) break;
+    if (candidates.length >= cap) break;
   }
   if (!candidates.length) { marker.status = "no_candidates"; return []; }
 
@@ -2604,21 +2625,24 @@ async function submitNeededExports(adapter, env, state, stepId, jobId, collected
       };
       submitted.push(entry);
       marker.job_ids.push(result.provider_job_id ?? null);
+      marker.submitted_kinds = [...new Set([...(marker.submitted_kinds ?? []), kind])];
       state.exports = { ...(state.exports ?? {}), [String(artifact.id)]: { ...entry, status: "running" } };
     } catch (caught) {
       exportFailure(state, stepId, `qza_export_failed: ${caught?.message ?? caught}`, artifact.id);
     }
   }
-  marker.status = submitted.length ? "submitted" : "failed";
+  marker.status = submitted.length
+    ? (missing.length > submitted.length ? "partial" : "submitted") : "failed";
   return submitted;
 }
 
-async function pollPendingExports(adapter, state, stepId, ctx) {
+async function pollPendingExports(adapter, state, stepId, ctx, options = {}) {
   const allEntries = (state.pending_exports ?? []).filter((entry) => entry.step_id === stepId);
   if (!allEntries.length) return { done: true, artifacts: [], errors: [] };
-  // Each export job is downloaded with the same bounded slice; polling all
-  // finished jobs in one request avoids losing text from earlier exports.
-  const entries = allEntries;
+  // Bounded: the advance endpoint polls ONE export job per invocation. The
+  // legacy status path keeps the original all-at-once behaviour (default).
+  const entries = options.maxEntries
+    ? allEntries.slice(0, options.maxEntries) : allEntries;
   const artifacts = [];
   const errors = [];
   for (const entry of entries) {
@@ -2651,8 +2675,11 @@ async function pollPendingExports(adapter, state, stepId, ctx) {
         exported_dataset_ids: downloaded.artifacts.map((artifact) => artifact.id) };
     }
   }
-  state.pending_exports = (state.pending_exports ?? []).filter((entry) => entry.step_id !== stepId);
-  return { done: true, artifacts, errors };
+  const processed = new Set(entries.map((entry) => entry));
+  state.pending_exports = (state.pending_exports ?? [])
+    .filter((entry) => !(processed.has(entry) || (!options.maxEntries && entry.step_id === stepId)));
+  return { done: (state.pending_exports ?? []).some((entry) => entry.step_id === stepId) ? false : true,
+    artifacts, errors };
 }
 
 // Diversity values are either parsed from retrieved Galaxy/QIIME 2 artifacts
@@ -3278,6 +3305,90 @@ async function advanceOneStage(db, row, state, env, ctx, options = {}) {
   }
 }
 
+// The status response is built ONLY from stored state: no provider call, no
+// artifact rehydration and no D1 write. The browser polls this endpoint, then
+// drives one bounded operation per POST to /advance. A couple of small derived
+// fields tell the controller which operation will run next and which dataset
+// ids the run already knows about (so it can offer genuine artifact downloads).
+const ADVANCE_PATH = "/api/ai/workflows/microbiome/advance";
+const ARTIFACT_PATH = "/api/ai/workflows/microbiome/artifact";
+// Offline test seam ONLY: the legacy "status advances the workflow" behaviour
+// is retained for the existing focused suite when this flag is explicitly set
+// by tests/helpers/fake-d1.mjs. Production deployments never set it, so the
+// live status request path stays strictly read-only.
+const LEGACY_STATUS_ADVANCE_ENV = "MICROBIOME_TEST_ADVANCE";
+
+function featureTableRecoveryNeeded(state) {
+  if (!state.steps?.dada2_denoise || state.steps.dada2_denoise.status !== "succeeded") return false;
+  if (state.frontier?.featureTableId) return false;
+  if (state.results?.asv?.available) return false;
+  const recovery = state.feature_table_recovery ?? {};
+  return !["submitted", "collected", "unavailable"].includes(recovery.status);
+}
+
+function defaultAdvanceOp(state) {
+  if (state.status !== "running") return null;
+  if (featureTableRecoveryNeeded(state)) return "recover_feature_table";
+  const stepId = state.current_step;
+  if (!stepId) return "finalize_result";
+  const step = state.steps?.[stepId] ?? {};
+  if (step.status === "failed") return null;
+  if (step.status === "succeeded" || step.status === "unavailable" || step.status === "running") {
+    return "poll_current_job";
+  }
+  if (stepId === "taxonomy") return "classifier_inventory";
+  if (stepId === "demux") return "prepare_demux_import";
+  if (stepId === "import_reads") return "poll_current_job";
+  if (["composition", "ordination", "report"].includes(stepId)) return "local_stage";
+  return "submit_stage";
+}
+
+function statusStepSummary(state) {
+  return STEP_IDS.map((id) => ({ step_id: id, status: state.steps[id]?.status ?? "not_started",
+    provider_job_id: state.steps[id]?.provider_job_id ?? null,
+    tool_id: state.steps[id]?.tool_id ?? STEP_TOOL_IDS[id] ?? null,
+    reason: state.steps[id]?.reason ?? null }));
+}
+
+function statusArtifacts(state) {
+  const seen = new Set();
+  const out = [];
+  const add = (id, kind, name) => {
+    const key = safeString(id, 200);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push({ dataset_id: key, kind: kind ?? "unknown", name: name ?? null });
+  };
+  for (const artifact of state.artifacts ?? []) {
+    add(artifact.dataset_id ?? artifact.id, artifact.kind, artifact.name);
+  }
+  for (const [key, value] of Object.entries(state.frontier ?? {})) {
+    if (/Id$/.test(key) && typeof value === "string") add(value, "frontier", key);
+  }
+  for (const entry of Object.values(state.exports ?? {})) {
+    add(entry?.exported_dataset_ids?.[0] ?? entry?.dataset_id, entry?.expected_kind ?? "export", entry?.name ?? null);
+  }
+  return out.slice(0, 24);
+}
+
+function statusBody(state, request, env) {
+  return {
+    workflow_type: "microbiome", run_id: state.run_id, status: state.status,
+    current_step: state.current_step, steps: statusStepSummary(state),
+    terminal: state.status === "succeeded" || state.status === "failed",
+    poll_after_ms: state.status === "running" ? LIMITS.pollAfterMs : null,
+    poll_count: state.poll_count ?? 0,
+    advance_url: state.status === "running"
+      ? `${ADVANCE_PATH}?run_id=${encodeURIComponent(state.run_id)}` : null,
+    next_operation: state.status === "running"
+      ? (state.advance_op ?? defaultAdvanceOp(state)) : null,
+    artifacts: statusArtifacts(state),
+    result_url: `/api/ai/workflows/microbiome/result?run_id=${encodeURIComponent(state.run_id)}`,
+    recovery_url: `/api/ai/runs/${state.run_id}/recovery`,
+    errors: state.errors, execution_mode: envExecutionMode(env)
+  };
+}
+
 export async function handleStatus(request, env, options = {}) {
   const rejected = requireMethod(request, "GET", "GET, OPTIONS");
   if (rejected) return rejected;
@@ -3285,14 +3396,19 @@ export async function handleStatus(request, env, options = {}) {
   if (!db) return errorResponse("AI database binding is unavailable.", 503, request);
   const row = await getRunByReference(db, request);
   if (!row) return errorResponse("No stored microbiome run matches this reference.", 404, request);
-  let state = parseJson(row.state_json);
+  const state = parseJson(row.state_json);
   if (!state) return errorResponse("The stored run has no state record; nothing was reconstructed.", 409, request);
+  if (env?.[LEGACY_STATUS_ADVANCE_ENV] === true || options.advance === true) {
+    return legacyStatusAdvance(request, env, options, db, row, state);
+  }
+  return jsonResponse(statusBody(state, request, env), 200, request);
+}
+
+// Retained exclusively for offline tests (see LEGACY_STATUS_ADVANCE_ENV). It
+// is never reached from a production status request.
+async function legacyStatusAdvance(request, env, options, db, row, state) {
   const ctx = ctxFor(env, options);
-  // Do NOT rehydrate on provider polls: step status comes only from stored
-  // state and the provider, and re-parsing artifacts on every poll exceeded
-  // the Worker CPU limit on the live run.
   if (state.status === "running" && needsParsedFor(state.current_step, state)) {
-    // Already-computed local summaries need no reopening of artifact text.
     const computed = ["composition", "alpha", "beta", "pcoa", "ordination"]
       .some((key) => state.results?.[key]?.available);
     await rehydrateParsed(db, state, { force: Boolean(state.parsed_rehydrated && !state._parsed && !computed) });
@@ -3302,8 +3418,6 @@ export async function handleStatus(request, env, options = {}) {
     try {
       await advanceOneStage(db, row, state, env, ctx, options);
       if (!state.current_step && state.status === "running") {
-        // The terminal result is the ONLY place that rebuilds exports; parsed
-        // tables are rehydrated at most once from stored artifacts.
         await rehydrateParsed(db, state, { force: true });
         state.status = "succeeded";
         const result = await buildResult(state);
@@ -3321,18 +3435,577 @@ export async function handleStatus(request, env, options = {}) {
       await persistState(db, row, state);
     }
   }
-  const stepSummary = STEP_IDS.map((id) => ({ step_id: id, status: state.steps[id]?.status ?? "not_started",
-    provider_job_id: state.steps[id]?.provider_job_id ?? null,
-    tool_id: state.steps[id]?.tool_id ?? STEP_TOOL_IDS[id] ?? null,
-    reason: state.steps[id]?.reason ?? null }));
-  return jsonResponse({ workflow_type: "microbiome", run_id: state.run_id, status: state.status,
-    current_step: state.current_step, steps: stepSummary,
-    terminal: state.status === "succeeded" || state.status === "failed",
-    poll_after_ms: state.status === "running" ? LIMITS.pollAfterMs : null,
-    poll_count: state.poll_count,
-    result_url: `/api/ai/workflows/microbiome/result?run_id=${encodeURIComponent(state.run_id)}`,
-    recovery_url: `/api/ai/runs/${state.run_id}/recovery`,
-    errors: state.errors, execution_mode: envExecutionMode(env) }, 200, request);
+  return jsonResponse(statusBody(state, request, env), 200, request);
+}
+
+// ------------------------------------------------------------ /advance (POST)
+//
+// ONE durable cursor (`state.advance_op`) selects ONE small operation per POST.
+// Each operation makes at most one provider submission or a couple of related
+// lightweight reads, never hashes a remote artifact, never re-parses every
+// stored artifact, and persists a checkpoint after itself. Replaying a POST is
+// safe: every submission is guarded by a stored id/kind and succeeded jobs are
+// never resubmitted.
+
+function normalizeProviderChecksum(value) {
+  return safeString(value, 200).replace(/^sha256\$/i, "").trim().toLowerCase() || null;
+}
+
+function classifierFromArtifacts(artifacts, state, descriptor) {
+  const inventory = { ok: artifacts?.ok !== false,
+    datasets: (artifacts?.artifacts ?? []).map((item) => ({ ...item, checksum: item.checksum ?? null })) };
+  return inspectClassifierInventory(inventory, state.history_id, descriptor);
+}
+
+function verifyClassifierDetail(detail, descriptor, expectedHistoryId) {
+  if (!detail?.ok) return { ok: false, reason: `dataset_detail_unavailable: ${detail?.error?.message ?? detail?.error?.code ?? "unreadable"}` };
+  const checksum = normalizeProviderChecksum(detail.checksums?.sha256);
+  if (!checksum) return { ok: false, checksum: null,
+    reason: `checksum_not_exposed: provider did not report a SHA-256 for dataset ${detail.dataset_id}; no classifier was claimed verified` };
+  if (checksum !== normalizeProviderChecksum(descriptor.expected_sha256)) {
+    return { ok: false, checksum,
+      reason: `checksum_mismatch: provider reported ${checksum}; expected ${normalizeProviderChecksum(descriptor.expected_sha256)}; no classifier was claimed verified` };
+  }
+  if (Number.isFinite(detail.size) && detail.size !== descriptor.expected_bytes) {
+    return { ok: false, checksum,
+      reason: `size_mismatch: provider reported ${detail.size} bytes; expected ${descriptor.expected_bytes} bytes; no classifier was claimed verified` };
+  }
+  if (detail.history_id && expectedHistoryId && String(detail.history_id) !== String(expectedHistoryId)) {
+    return { ok: false, checksum,
+      reason: `different_history: provider reported history ${detail.history_id}; run history ${expectedHistoryId}; no classifier was claimed verified` };
+  }
+  return { ok: true, checksum, size: detail.size ?? null,
+    size_status: Number.isFinite(detail.size) ? "verified" : "not_exposed",
+    state: detail.state ?? null };
+}
+
+function tableQzaOf(state) {
+  const candidates = [
+    ...(state.steps?.dada2_denoise?.output_artifacts ?? []),
+    ...(state.artifacts ?? [])
+  ];
+  for (const artifact of candidates) {
+    const id = safeString(artifact?.dataset_id ?? artifact?.id, 200);
+    const name = String(artifact?.name ?? "");
+    if (!id || !/\.qza$/i.test(name)) continue;
+    const qzaRole = artifact?.kind === "feature_table";
+    if (qzaRole || /\btable\.qza$/i.test(name) || /feature.?table/i.test(name)) return { id, name };
+  }
+  const frontier = safeString(state.frontier?.featureTableId, 200);
+  return frontier ? { id: frontier, name: "stored feature table qza" } : null;
+}
+
+function advanceStep(state) {
+  const index = STEP_IDS.indexOf(state.current_step);
+  state.current_step = STEP_IDS[index + 1] ?? null;
+  return state.current_step;
+}
+
+function setCursor(state, operation) {
+  state.advance_op = operation;
+  return { next_operation: operation };
+}
+
+function advanceFail(state, stepId, reason) {
+  state.errors.push({ step: stepId, reason: safeString(reason, 500) });
+  state.status = "failed";
+  return setCursor(state, null);
+}
+
+async function runAdvanceOperation(operation, adapter, db, row, state, env, ctx, options) {
+  const stepId = state.current_step;
+  const step = stepId ? (state.steps?.[stepId] ?? {}) : {};
+  const out = {};
+
+  if (operation === "poll_current_job") {
+    if (!stepId) return setCursor(state, "finalize_result");
+    if (step.status === "succeeded" || step.status === "unavailable") {
+      const next = advanceStep(state);
+      return setCursor(state, next ? "poll_current_job" : "finalize_result");
+    }
+    if (step.status === "failed") return setCursor(state, null);
+    if (!step.status) {
+      if (stepId === "taxonomy") {
+        return setCursor(state, state.classifier_prep?.usable === true && state.classifier_prep?.dataset_id
+          ? "submit_stage" : "classifier_inventory");
+      }
+      if (stepId === "demux") return setCursor(state, "prepare_demux_import");
+      if (stepId === "import_reads") return setCursor(state, "poll_current_job");
+      if (["composition", "ordination", "report"].includes(stepId)) return setCursor(state, "local_stage");
+      return setCursor(state, "submit_stage");
+    }
+    if (!step.provider_job_id) return advanceFail(state, stepId, "provider_job_id_missing");
+    // Exactly ONE job-status read in this invocation.
+    const status = await adapter.getJobStatus({ job_id: step.provider_job_id }, ctx);
+    const observed = status.output?.structured?.state ?? status.status;
+    const classified = classifyJobState(observed);
+    if (classified === "running" || classified === "unknown") return setCursor(state, "poll_current_job");
+    if (classified === "failed") {
+      state.steps[stepId] = { ...step, status: "failed", reason: `provider job ended in state ${observed}` };
+      await recordStep(db, state, stepId, "failed", { details: { reason: state.steps[stepId].reason } });
+      return setCursor(state, null);
+    }
+    return setCursor(state, stepId === "import_reads" ? "finalize_import" : "collect_outputs");
+  }
+
+  if (operation === "finalize_import") {
+    const ready = await finalizeImport(adapter, state, ctx);
+    if (!ready) return setCursor(state, "finalize_import");
+    state.steps.import_reads = { ...step, status: "succeeded", finished_at: nowIso(), dataset_ids: state.dataset_ids };
+    await recordStep(db, state, "import_reads", "succeeded", { details: state.steps.import_reads });
+    const next = advanceStep(state);
+    return setCursor(state, next ? "poll_current_job" : "finalize_result");
+  }
+
+  if (operation === "classifier_inventory") {
+    const prep = state.classifier_prep;
+    if (prep?.usable === true && prep.dataset_id) return setCursor(state, "submit_stage");
+    if (prep?.status === "uploaded" && prep.dataset_id) return setCursor(state, "classifier_verify");
+    if (prep && ["unavailable", "failed", "not_found"].includes(prep.status)) {
+      return setCursor(state, "submit_stage");
+    }
+    const descriptor = QIIME_CLASSIFIER;
+    const fresh = { ...classifierProvenance(descriptor), status: "running", started_at: nowIso(),
+      attempts: 1, dataset_id: null, history_id: state.history_id ?? null, job_id: null,
+      computed_sha256: null, usable: false };
+    state.classifier_prep = fresh;
+    if (!state.history_id) {
+      fresh.status = "unavailable";
+      fresh.reason = "history_unavailable: the run has no Galaxy history; no classifier was imported.";
+      return setCursor(state, "submit_stage");
+    }
+    // ONE lightweight history-contents read. No remote download or hashing.
+    const artifacts = await adapter.getArtifacts({ history_id: state.history_id }, ctx);
+    fresh.inventory = { ok: artifacts?.ok === true, at: artifacts?.at ?? nowIso(),
+      datasets_found: (artifacts?.artifacts ?? []).length };
+    if (artifacts?.ok !== true) {
+      fresh.status = "unavailable";
+      fresh.reason = "inventory_unavailable: Galaxy history contents were unreadable; no classifier was guessed or imported.";
+      return setCursor(state, "submit_stage");
+    }
+    const matched = classifierFromArtifacts(artifacts, state, descriptor);
+    fresh.inventory_match = { verified: Boolean(matched.verified), candidates: matched.candidates,
+      basis: matched.basis, reason: matched.reason };
+    if (matched.verified) {
+      fresh.status = "reused";
+      fresh.source = "read_only_inventory_reuse";
+      fresh.dataset_id = matched.verified.dataset_id;
+      fresh.history_id = matched.verified.history_id ?? state.history_id;
+      fresh.computed_sha256 = matched.verified.checksum_exposed;
+      fresh.usable = true;
+      fresh.reason = null;
+      return setCursor(state, "submit_stage");
+    }
+    fresh.status = "not_found";
+    fresh.reason = `classifier_absent_from_inventory: ${matched.reason ?? "no matching verified qza"}`;
+    return setCursor(state, "classifier_import");
+  }
+
+  if (operation === "classifier_import") {
+    const prep = state.classifier_prep ?? {};
+    if (prep.dataset_id) return setCursor(state, "classifier_verify");
+    if (!state.history_id) {
+      state.classifier_prep = { ...prep, ...classifierProvenance(QIIME_CLASSIFIER), status: "unavailable",
+        usable: false, reason: "history_unavailable: no existing history for a URL import." };
+      return setCursor(state, "submit_stage");
+    }
+    // ONE URL import. Galaxy fetches the bytes; the Worker never does.
+    let upload;
+    try {
+      upload = await adapter.importUrlIntoHistory({
+        url: QIIME_CLASSIFIER.url, name: QIIME_CLASSIFIER.filename, ext: "qza", history_id: state.history_id
+      }, ctx);
+    } catch (caught) {
+      upload = { ok: false, error: { code: "url_import_threw", message: safeString(caught?.message ?? caught, 300) } };
+    }
+    if (!upload?.ok || !upload.dataset_id) {
+      state.classifier_prep = { ...prep, ...classifierProvenance(QIIME_CLASSIFIER), status: "failed",
+        usable: false, attempts: 1, at: nowIso(),
+        reason: `classifier_url_import_failed: ${upload?.error?.message ?? upload?.error?.code ?? "no_dataset_id_returned"}` };
+      return setCursor(state, "submit_stage");
+    }
+    state.classifier_prep = { ...prep, ...classifierProvenance(QIIME_CLASSIFIER), status: "uploaded",
+      usable: false, attempts: 1, dataset_id: upload.dataset_id,
+      history_id: upload.history_id ?? state.history_id, job_id: upload.job_id ?? null,
+      provider_job_id: upload.provider_job_id ?? null, computed_sha256: null, at: nowIso(),
+      reason: "provider_checksum_verification_pending" };
+    return setCursor(state, "classifier_verify");
+  }
+
+  if (operation === "classifier_verify") {
+    const prep = state.classifier_prep ?? {};
+    if (prep.usable === true) return setCursor(state, "submit_stage");
+    if (!prep.dataset_id) return setCursor(state, "classifier_inventory");
+    // ONE dataset-detail GET. The provider's checksum is the only identity.
+    const detail = await adapter.getDatasetDetail({ dataset_id: prep.dataset_id }, ctx);
+    const verified = verifyClassifierDetail(detail, QIIME_CLASSIFIER, state.history_id);
+    if (!verified.ok) {
+      state.classifier_prep = { ...prep, status: "unavailable", usable: false,
+        computed_sha256: verified.checksum ?? null, detail_state: detail?.state ?? null,
+        reason: verified.reason, checked_at: nowIso() };
+      state.errors.push({ step: "taxonomy", reason: verified.reason });
+      return setCursor(state, "submit_stage");
+    }
+    if (!["ok", "success"].includes(String(detail.state ?? "").toLowerCase())) {
+      state.classifier_prep = { ...prep, status: "pending", usable: false,
+        detail_state: detail.state ?? null, reason: `classifier_dataset_not_ready: state ${detail.state ?? "unknown"}` };
+      return setCursor(state, "classifier_verify");
+    }
+    state.classifier_prep = { ...prep, status: "verified", source: "provider_dataset_detail_verified",
+      usable: true, computed_sha256: verified.checksum, verified_size: verified.size,
+      size_status: verified.size_status, detail_state: detail.state, checked_at: nowIso(), reason: null };
+    return setCursor(state, "submit_stage");
+  }
+
+  if (operation === "prepare_demux_import") {
+    const prepared = await prepareDemuxImport(adapter, env, db, row, state, ctx);
+    return setCursor(state, prepared.handled ? "poll_current_job" : "prepare_demux_import");
+  }
+
+  if (operation === "local_stage") {
+    const local = localStage(state, stepId);
+    state.steps[stepId] = { ...step, status: local.available ? "succeeded" : "unavailable",
+      reason: local.reason ?? null, finished_at: nowIso() };
+    await recordStep(db, state, stepId, state.steps[stepId].status, { details: { reason: local.reason ?? null } });
+    const next = advanceStep(state);
+    return setCursor(state, next ? "poll_current_job" : "finalize_result");
+  }
+
+  if (operation === "submit_stage") {
+    if (step.status) return setCursor(state, "poll_current_job");
+    const roleFor = { demux: "demux", qc_summary: "qc", dada2_denoise: "denoise", taxonomy: "classify",
+      alpha_diversity: "alpha", beta_diversity: "beta", pcoa: "pcoa" }[stepId];
+    if (!roleFor || !state.discovery?.tools?.[roleFor]?.id) {
+      state.steps[stepId] = { ...step, status: "unavailable", reason: `No discovered tool for ${stepId}; no tool id was invented.` };
+      const next = advanceStep(state);
+      return setCursor(state, next ? "poll_current_job" : "finalize_result");
+    }
+    try {
+      await submitStage(adapter, env, state, stepId, ctx);
+      await recordStep(db, state, stepId, "running", {
+        providerJobId: state.steps[stepId]?.provider_job_id ?? null,
+        details: { tool_id: state.steps[stepId]?.tool_id ?? null, tool_version: state.steps[stepId]?.tool_version ?? null }
+      });
+      return setCursor(state, "poll_current_job");
+    } catch (caught) {
+      const reason = safeString(caught?.message ?? caught, 500);
+      if (/schema_traversal_node_limit/.test(reason) || stepId === "qc_summary") {
+        state.steps[stepId] = { ...step, status: "unavailable", reason, finished_at: nowIso() };
+        await recordStep(db, state, stepId, "unavailable", { details: { reason } });
+        const next = advanceStep(state);
+        return setCursor(state, next ? "poll_current_job" : "finalize_result");
+      }
+      return advanceFail(state, stepId, reason);
+    }
+  }
+
+  if (operation === "collect_outputs") {
+    // Read-only collection: build the durable slice queue. Export submission
+    // is a SEPARATE operation so this invocation makes no provider submission.
+    const collected = await collectOutputs(adapter, step.provider_job_id, state.history_id, ctx);
+    state.finalize_queue = makeFinalizeQueue(stepId, step.provider_job_id, collected);
+    return setCursor(state, "submit_one_export");
+  }
+
+  if (operation === "submit_one_export") {
+    const opStep = safeString(state.export_step_id, 80) || stepId;
+    const submitted = await submitNeededExports(adapter, env, state, opStep, step.provider_job_id,
+      { selected: state.finalize_queue?.items ?? [] }, ctx, { maxSubmissions: 1 });
+    if (submitted.length) state.pending_exports = [...(state.pending_exports ?? []), ...submitted];
+    const more = state.export_submissions?.[opStep]?.status === "partial";
+    return setCursor(state, more ? "submit_one_export"
+      : (state.pending_exports ?? []).some((entry) => entry.step_id === opStep) ? "poll_exports" : "finalize_slice");
+  }
+
+  if (operation === "poll_exports") {
+    const opStep = safeString(state.export_step_id, 80) || stepId;
+    const pending = await pollPendingExports(adapter, state, opStep, ctx, { maxEntries: 1 });
+    if (!pending.done) return setCursor(state, "poll_exports");
+    for (const artifact of pending.artifacts) {
+      await insertRow(db, SQL.insertArtifact, [makeId("art"), runIdOf(state), artifact.name,
+        artifact.kind, `galaxy:${artifact.id}`, artifact.checksum, artifact.bytes, "text/plain",
+        artifact.text, nowIso()]);
+      if (state.finalize_queue?.step_id === opStep) {
+        state.finalize_queue.downloaded.push({ id: artifact.id, name: artifact.name, kind: artifact.kind,
+          checksum: artifact.checksum, bytes: artifact.bytes, export_of: artifact.export_of ?? null,
+          export_tool_id: artifact.export_tool_id ?? null, export_tool_version: artifact.export_tool_version ?? null });
+      }
+      state.artifacts.push({ name: artifact.name, kind: artifact.kind, dataset_id: artifact.id,
+        checksum: artifact.checksum, bytes: artifact.bytes, source_step: opStep,
+        tool_version: artifact.export_tool_version ?? null, extension: artifact.type ?? null });
+    }
+    for (const error of pending.errors) state.errors.push(error);
+    if (state.feature_table_recovery?.status === "submitted" && opStep === "dada2_denoise"
+        && pending.artifacts.some((artifact) => artifact.kind === "feature_table")) {
+      state.feature_table_recovery = { ...state.feature_table_recovery, status: "collected",
+        text_dataset_id: pending.artifacts.find((artifact) => artifact.kind === "feature_table")?.id ?? null };
+      return setCursor(state, "finalize_feature_table");
+    }
+    const more = state.export_submissions?.[opStep]?.status === "partial";
+    return setCursor(state, more ? "submit_one_export"
+      : state.finalize_queue?.step_id === opStep ? "finalize_slice" : "poll_current_job");
+  }
+
+  if (operation === "finalize_slice") {
+    const opStep = safeString(state.export_step_id, 80) || stepId;
+    const done = await processFinalizeQueue(adapter, db, row, state, opStep, ctx, []);
+    if (state.export_step_id && opStep === "dada2_denoise") {
+      delete state.export_step_id;
+      return setCursor(state, "poll_current_job");
+    }
+    if (!done) return setCursor(state, "finalize_slice");
+    const next = advanceStep(state);
+    return setCursor(state, next ? "poll_current_job" : "finalize_result");
+  }
+
+  if (operation === "recover_feature_table") {
+    const recovery = state.feature_table_recovery ?? {};
+    if (["submitted", "collected", "unavailable"].includes(recovery.status)) {
+      return setCursor(state, "poll_current_job");
+    }
+    const table = tableQzaOf(state);
+    if (!table) {
+      state.feature_table_recovery = { ...recovery, status: "unavailable",
+        reason: "no_stored_table_qza_dataset_id: no feature-table qza identity was recorded for the succeeded DADA2 job; nothing was guessed or resubmitted" };
+      state.results.asv = { ...(state.results.asv ?? {}), available: false,
+        reason: state.feature_table_recovery.reason };
+      return setCursor(state, "poll_current_job");
+    }
+    const tool = state.discovery?.tools?.exportTool;
+    if (!tool?.id) {
+      state.feature_table_recovery = { ...recovery, status: "unavailable", dataset_id: table.id,
+        reason: "qza_export_unavailable: no genuine export tool was discovered; no tool id was invented" };
+      return setCursor(state, "poll_current_job");
+    }
+    try {
+      const schema = await fetchToolSchema(env, tool.id, tool.version);
+      const payload = buildMicrobiomePayload(schema, [{ id: table.id, role: "artifact" }], {});
+      if (!payload.valid) throw new Error(`qza_export_payload_invalid: ${payload.errors.join(", ")}`);
+      const submission = await adapter.submitJob({ operation: "submit_job", tool_id: tool.id,
+        history_id: state.history_id ?? null, inputs: payload.inputs }, ctx);
+      if (submission.error) throw new Error(`qza_export_submission_failed: ${submission.error.message ?? submission.error.code}`);
+      const entry = { step_id: "dada2_denoise", source_job_id: state.steps.dada2_denoise?.provider_job_id ?? null,
+        source_dataset_id: table.id, source_dataset_name: table.name, expected_kind: "feature_table",
+        provider_job_id: submission.provider_job_id ?? null, tool_id: tool.id, tool_version: tool.version ?? null,
+        submitted_at: nowIso() };
+      state.feature_table_recovery = { ...recovery, status: "submitted", dataset_id: table.id,
+        source_dataset_name: table.name, expected_kind: "feature_table",
+        provider_job_id: submission.provider_job_id ?? null, tool_id: tool.id,
+        tool_version: tool.version ?? null, submitted_at: nowIso(),
+        reason: "one_genuine_export_job_submitted_for_table_qza" };
+      state.exports = { ...(state.exports ?? {}), [String(table.id)]: { ...entry, status: "running" } };
+      state.pending_exports = [...(state.pending_exports ?? []), entry];
+      state.export_submissions = { ...(state.export_submissions ?? {}), dada2_denoise: {
+        at: nowIso(), requested_kinds: ["feature_table"], submitted_kinds: ["feature_table"],
+        job_ids: [submission.provider_job_id ?? null], status: "submitted",
+        basis: "feature_table_recovery" } };
+      state.export_step_id = "dada2_denoise";
+      return setCursor(state, "poll_exports");
+    } catch (caught) {
+      const reason = safeString(caught?.message ?? caught, 500);
+      state.feature_table_recovery = { ...recovery, status: "unavailable", dataset_id: table.id,
+        reason: `feature_table_export_failed: ${reason}` };
+      state.errors.push({ step: "dada2_denoise", reason: state.feature_table_recovery.reason });
+      return setCursor(state, "poll_current_job");
+    }
+  }
+
+  if (operation === "finalize_feature_table") {
+    await rehydrateParsed(db, state, { force: true });
+    const table = state._parsed?.table;
+    const recovery = state.feature_table_recovery ?? {};
+    if (table?.available) {
+      const qzaId = safeString(recovery.dataset_id, 200) || safeString(tableQzaOf(state)?.id, 200);
+      state.frontier = { ...(state.frontier ?? {}), featureTableId: qzaId || null,
+        featureTableTextDatasetId: recovery.text_dataset_id ?? null };
+      const rarefaction = chooseRarefactionDepth(table, { metadata: { sample_ids: state.input?.sample_ids ?? [] } });
+      state.params.rarefaction_depth = rarefaction.depth;
+      state.results.rarefaction = rarefaction;
+      state.results.asv = {
+        available: true, reason: null, feature_count: table.feature_ids.length,
+        sample_count: table.sample_ids.length,
+        total_assignable_reads: Object.values(table.totals).reduce((sum, value) => sum + value, 0),
+        rep_seq_count: state.results.asv?.rep_seq_count ?? null,
+        denoising_stats: state.results.asv?.denoising_stats ?? { available: false,
+          reason: "No denoising statistics table was recorded for this run." },
+        parameter_rationale: state.params.trunc_rationale,
+        basis: "parsed_from_genuine_exported_feature_table_text",
+        format: table.format ?? null
+      };
+      state.feature_table_recovery = { ...recovery, status: "collected", available: true,
+        feature_count: table.feature_ids.length, sample_count: table.sample_ids.length };
+    } else {
+      const reason = "no_parseable_feature_table_text: the export produced no BIOM-v1 JSON or QIIME OTU-table TSV that passed the integrity checks; no table was fabricated";
+      state.frontier = { ...(state.frontier ?? {}), featureTableId: null };
+      state.results.asv = { ...(state.results.asv ?? {}), available: false, reason };
+      state.feature_table_recovery = { ...recovery, status: "unavailable", reason };
+      state.errors.push({ step: "dada2_denoise", reason });
+    }
+    delete state.export_step_id;
+    return setCursor(state, "poll_current_job");
+  }
+
+  if (operation === "finalize_result") {
+    if (state.result_built) {
+      state.status = "succeeded";
+      return setCursor(state, null);
+    }
+    await rehydrateParsed(db, state, { force: true });
+    state.status = "succeeded";
+    state.current_step = null;
+    const result = await buildResult(state);
+    await runStatement(db, SQL.saveJobResult, ["succeeded", nowIso(), JSON.stringify(result),
+      JSON.stringify(state.validation), null, JSON.stringify(result.provenance),
+      JSON.stringify({ report_url: `/api/ai/runs/${state.run_id}/report` }), envExecutionMode(env),
+      state.run_id, "running"]);
+    state.result_built = true;
+    out.result = result;
+    return setCursor(state, null);
+  }
+
+  return setCursor(state, defaultAdvanceOp(state));
+}
+
+export async function handleAdvance(request, env, options = {}) {
+  const rejected = requireMethod(request, "POST", "POST, OPTIONS");
+  if (rejected) return rejected;
+  const { payload, error } = await readJsonBody(request);
+  if (error) return errorResponse(error, 400, request);
+  const db = getDb(env);
+  if (!db) return errorResponse("AI database binding is unavailable.", 503, request);
+  const runId = safeString(payload?.run_id, 100);
+  if (!runId) return errorResponse("run_id was not supplied.", 400, request);
+  const row = await getRow(db, SQL.getMicrobiomeRunByPublicId, [runId]);
+  if (!row) return errorResponse("No stored microbiome run matches this run_id.", 404, request);
+  const state = parseJson(row.state_json);
+  if (!state) return errorResponse("The stored run has no state record.", 409, request);
+  if (state.workflow_type !== "microbiome") return errorResponse("The referenced run is not a microbiome workflow.", 400, request);
+  if (state.status !== "running") {
+    return jsonResponse({ workflow_type: "microbiome", run_id: row.public_id, operation: null,
+      status: state.status, current_step: state.current_step, next_operation: null,
+      steps_summary: statusStepSummary(state), reason: "terminal_state_no_advance",
+      execution_mode: envExecutionMode(env) }, 200, request);
+  }
+  const operation = state.advance_op ?? defaultAdvanceOp(state);
+  if (!operation) {
+    return jsonResponse({ workflow_type: "microbiome", run_id: row.public_id, operation: null,
+      status: state.status, current_step: state.current_step, next_operation: null,
+      steps_summary: statusStepSummary(state), reason: "no_safe_operation",
+      execution_mode: envExecutionMode(env) }, 200, request);
+  }
+  const ctx = ctxFor(env, options);
+  const adapter = createAdapter(env);
+  let outcome = {};
+  try {
+    outcome = await runAdvanceOperation(operation, adapter, db, row, state, env, ctx, options);
+  } catch (caught) {
+    // A failed invocation is a checkpoint, not a terminal run: keep the cursor
+    // on the SAME operation so the next poll retries it without repeating the
+    // submission already recorded by an earlier, successful operation.
+    state.errors.push({ step: `advance:${operation}`, reason: safeString(caught?.message ?? caught, 500) });
+    state.advance_op = operation;
+    await persistState(db, row, state);
+    return jsonResponse({ workflow_type: "microbiome", run_id: row.public_id, operation,
+      status: state.status, current_step: state.current_step, next_operation: operation,
+      steps_summary: statusStepSummary(state), error: safeString(caught?.message ?? caught, 500),
+      retryable: true, execution_mode: envExecutionMode(env) }, 502, request);
+  }
+  if (!state.advance_op && state.status === "running") state.advance_op = defaultAdvanceOp(state);
+  await persistState(db, row, state, outcome.result ?? null);
+  return jsonResponse({ workflow_type: "microbiome", run_id: row.public_id, operation,
+    status: state.status, current_step: state.current_step,
+    next_operation: state.advance_op ?? null, steps_summary: statusStepSummary(state),
+    ...(outcome.result ? { result_ready: true } : {}), execution_mode: envExecutionMode(env) }, 200, request);
+}
+
+// ------------------------------------------------------------ /artifact (GET)
+//
+// Owner-scoped dataset-body proxy. The run must exist, the dataset must be
+// known to that run's stored state or belong to its Galaxy history, and the
+// body is streamed straight through (no arrayBuffer() in the Worker). Headers
+// are rebuilt here; no upstream header, key, URL or unrelated dataset escapes.
+
+function knownDatasetIds(state) {
+  const ids = new Map();
+  const add = (value, meta = {}) => {
+    const id = safeString(value, 200);
+    if (!id) return;
+    if (!ids.has(id)) ids.set(id, { dataset_id: id, name: null, kind: null, ...meta });
+  };
+  for (const artifact of state.artifacts ?? []) {
+    add(artifact.dataset_id ?? artifact.id, { name: artifact.name ?? null, kind: artifact.kind ?? null });
+  }
+  for (const [key, value] of Object.entries(state.frontier ?? {})) {
+    if (/Id$/.test(key)) add(value, { name: key, kind: "frontier" });
+  }
+  for (const value of Object.values(state.dataset_ids ?? {})) add(value, { kind: "input" });
+  for (const [key, entry] of Object.entries(state.exports ?? {})) {
+    add(key, { kind: entry?.expected_kind ?? "export" });
+    for (const id of entry?.exported_dataset_ids ?? []) add(id, { kind: entry?.expected_kind ?? "export" });
+  }
+  add(state.import?.output_dataset_id, { kind: "import" });
+  add(state.import?.copy_dataset_id, { kind: "import" });
+  add(state.classifier_prep?.dataset_id, { kind: "classifier" });
+  return ids;
+}
+
+export async function handleArtifact(request, env, options = {}) {
+  const rejected = requireMethod(request, "GET", "GET, OPTIONS");
+  if (rejected) return rejected;
+  let runId;
+  let datasetId;
+  try {
+    const url = new URL(request.url);
+    runId = safeString(url.searchParams.get("run_id"), 100);
+    datasetId = safeString(url.searchParams.get("dataset_id"), 200);
+  } catch {
+    return errorResponse("Invalid request URL.", 400, request);
+  }
+  if (!runId || !datasetId) return errorResponse("run_id and dataset_id are required.", 400, request);
+  if (!/^[0-9a-f]{8,64}$/i.test(datasetId)) return errorResponse("Invalid dataset_id.", 400, request);
+  const db = getDb(env);
+  if (!db) return errorResponse("AI database binding is unavailable.", 503, request);
+  const row = await getRow(db, SQL.getMicrobiomeRunByPublicId, [runId]);
+  if (!row) return errorResponse("No stored microbiome run matches this run_id.", 404, request);
+  const state = parseJson(row.state_json);
+  if (!state) return errorResponse("The stored run has no state record.", 409, request);
+  if (state.workflow_type !== "microbiome") return errorResponse("The referenced run is not a microbiome workflow.", 400, request);
+  const historyId = safeString(state.history_id, 200);
+  if (!historyId) return errorResponse("This run has no owned Galaxy history; no dataset was exposed.", 403, request);
+  const known = knownDatasetIds(state);
+  let meta = known.get(datasetId) ?? null;
+  if (!meta) {
+    // ONE lightweight lookup: an unknown id is allowed only when the provider
+    // says it lives in this run's own history.
+    const ctx = ctxFor(env, options);
+    const detail = await createAdapter(env).getArtifacts({ dataset_id: datasetId }, ctx);
+    const item = (detail?.artifacts ?? []).find((entry) => String(entry.id) === datasetId);
+    if (!item || String(item.history_id ?? "") !== historyId) {
+      return errorResponse("Dataset is not owned by this run's history.", 403, request);
+    }
+    meta = { dataset_id: datasetId, name: item.name ?? null, kind: item.kind ?? null };
+  }
+  const name = sanitizeFilename(meta?.name ?? datasetId);
+  const textLike = /\.(tsv|txt|csv|fasta|fa|biom|json|log|nwk)$/i.test(name)
+    || ["feature_table", "rep_seqs", "taxonomy", "qc", "alpha", "distance_matrix", "pcoa"].includes(meta?.kind);
+  const ctx = ctxFor(env, options);
+  const streamed = await createAdapter(env).streamDatasetContent({ dataset_id: datasetId,
+    text_fallback: textLike }, ctx);
+  if (!streamed.ok || !streamed.response?.body) {
+    return errorResponse(`Artifact content unavailable: ${streamed.reason ?? "no_stream"}`, 502, request);
+  }
+  const contentType = textLike || streamed.source === "get_content_as_text"
+    ? "text/plain; charset=utf-8" : "application/octet-stream";
+  return new Response(streamed.response.body, { status: 200, headers: {
+    "Content-Type": contentType,
+    "Content-Disposition": `attachment; filename="${name.replace(/["\r\n]/g, "")}"`,
+    "Cache-Control": "no-store",
+    "Content-Security-Policy": "default-src 'none'",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "X-Dataset-Id": datasetId,
+    "X-Artifact-Source": streamed.source ?? "content"
+  } });
 }
 
 export async function handleResult(request, env) {

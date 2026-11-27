@@ -276,19 +276,24 @@ test("INVENTORY REUSE / verified qza is reused with no URL fetch and no upload",
   assert.ok(stub.classifierSubmission(), "taxonomy must still be submitted");
 });
 
-test("SINGLE UPLOAD / verified stream posts exactly one URL import into the existing history", async () => {
+test("SINGLE URL IMPORT / no Worker-side stream or hash; one import into the existing history", async () => {
   const stub = makeStub();
   const { env, d1 } = seededEnv(stateAtTaxonomy(), stub);
   const body = await status(env, stub);
-  assert.equal(stub.urlFetchCount(), 1);
+  // CPU-safety contract: the 218 MB classifier is never fetched or hashed in
+  // a Worker request. Galaxy imports it by URL; verification is a later,
+  // bounded dataset-detail read (classifier_verify).
+  assert.equal(stub.urlFetchCount(), 0, "the Worker must never stream the classifier URL");
   assert.equal(stub.uploadCount(), 1);
   const stored = JSON.parse(d1.tables.microbiome_runs[0].state_json);
   assert.equal(stored.classifier_prep.status, "uploaded");
+  assert.equal(stored.classifier_prep.usable, false);
   assert.equal(stored.classifier_prep.dataset_id, CLASSIFIER_DS);
   assert.equal(stored.classifier_prep.job_id, "url-job-0001");
   assert.equal(stored.classifier_prep.history_id, HISTORY);
-  assert.equal(stored.classifier_prep.computed_sha256, DESCRIPTOR.expected_sha256);
+  assert.equal(stored.classifier_prep.computed_sha256, null);
   assert.equal(stored.classifier_prep.expected_bytes, DESCRIPTOR.expected_bytes);
+  assert.match(stored.classifier_prep.reason, /provider_checksum_verification_pending/);
   const form = stub.calls.find((call) => call.url.includes("/api/tools/fetch")).init.body;
   assert.deepEqual(JSON.parse(form.get("targets"))[0].elements[0],
     { src: "url", url: DESCRIPTOR.url, name: DESCRIPTOR.filename, ext: "qza" });
@@ -296,13 +301,13 @@ test("SINGLE UPLOAD / verified stream posts exactly one URL import into the exis
   assert.equal(body.status, "running");
 });
 
-test("NO DUPLICATE PREP / repeated status never repeats download or upload", async () => {
+test("NO DUPLICATE PREP / repeated status never downloads or re-imports the classifier", async () => {
   const stub = makeStub();
   const { env, d1 } = seededEnv(stateAtTaxonomy(), stub);
   await status(env, stub);
   await status(env, stub);
   await status(env, stub);
-  assert.equal(stub.urlFetchCount(), 1, "the official URL must be streamed once");
+  assert.equal(stub.urlFetchCount(), 0, "no Worker-side classifier download, ever");
   assert.equal(stub.uploadCount(), 1, "exactly one URL import");
   const stored = JSON.parse(d1.tables.microbiome_runs[0].state_json);
   assert.equal(stored.classifier_prep.attempts, 1);
@@ -311,7 +316,16 @@ test("NO DUPLICATE PREP / repeated status never repeats download or upload", asy
 
 test("TAXONOMY PAYLOAD / reads and classifier ids come from the live schema with no select option", async () => {
   const stub = makeStub();
-  const { env } = seededEnv(stateAtTaxonomy(), stub);
+  const { env, d1 } = seededEnv(stateAtTaxonomy(), stub);
+  await status(env, stub);
+  // A URL import alone is NOT usable. Simulate the bounded provider checksum
+  // verification before taxonomy is allowed to consume the dataset id.
+  const stored = JSON.parse(d1.tables.microbiome_runs[0].state_json);
+  stored.classifier_prep.usable = true;
+  stored.classifier_prep.status = "verified";
+  stored.steps.taxonomy = {};
+  stored.current_step = "taxonomy";
+  d1.tables.microbiome_runs[0].state_json = JSON.stringify(stored);
   await status(env, stub);
   const submission = stub.classifierSubmission();
   assert.ok(submission, "taxonomy must be submitted without a select option");
@@ -320,18 +334,18 @@ test("TAXONOMY PAYLOAD / reads and classifier ids come from the live schema with
   assert.deepEqual(inputs.classifier, { src: "hda", id: CLASSIFIER_DS });
 });
 
-test("BLOCKED / checksum mismatch records the exact reason and performs no upload", async () => {
+test("NO WORKER HASH / a mismatched descriptor never triggers a remote download", async () => {
   const stub = makeStub();
   const { env, d1 } = seededEnv(stateAtTaxonomy(), stub);
-  // The verification uses the descriptor's expected checksum, so mutate the
-  // stored copy through the test seam to simulate a corrupted live response.
+  // The old path streamed and hashed the classifier before importing it. That
+  // CPU-heavy path is gone: no descriptor can make the Worker download bytes.
   const badDescriptor = { ...DESCRIPTOR, expected_sha256: "0".repeat(64) };
   await statusRequest(env, stub, { classifierDescriptor: badDescriptor });
-  assert.equal(stub.uploadCount(), 0, "a failed checksum must never upload");
+  assert.equal(stub.urlFetchCount(), 0, "no Worker-side stream, regardless of descriptor");
+  assert.equal(stub.uploadCount(), 1, "the single URL import is still made by Galaxy");
   const stored = JSON.parse(d1.tables.microbiome_runs[0].state_json);
-  assert.equal(stored.classifier_prep.status, "unavailable");
-  assert.match(stored.classifier_prep.reason, /^classifier_verification_failed: checksum_mismatch:/);
-  assert.match(stored.classifier_prep.download.reason, /no upload was attempted$/);
+  assert.equal(stored.classifier_prep.usable, false, "never usable before provider verification");
+  assert.match(stored.classifier_prep.download.reason, /worker_side_stream_and_hash_removed/);
 });
 
 test("INVENTORY HELPER / missing or mismatched checksums are never treated as verified", () => {
