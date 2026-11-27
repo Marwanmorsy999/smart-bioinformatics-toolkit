@@ -68,16 +68,6 @@ import { parseJobOutputs } from "./galaxy_ids.js";
 
 const PROVIDER = "galaxy";
 
-// TEMP diagnostics: labels, elapsed ms, counts and HTTP status codes only.
-// Never log ids, URLs, keys, payloads or response bodies.
-const JOB_DIAG = true;
-function jobDiag(label, started, count = null, status = null) {
-  if (!JOB_DIAG) return;
-  const ms = Math.round((Date.now() - started) * 10) / 10;
-  console.log("[job-diag]", label, `${ms}ms`,
-    count === null ? "" : `count=${count}`, status === null ? "" : `status=${status}`);
-}
-
 // Platform upload primitive only. Never added to the discovered capability
 // list; submitJob uses it to select the dataset-upload wire format.
 const UPLOAD_TOOL_ID = "upload1";
@@ -124,6 +114,38 @@ function parseQuota(raw) {
   };
 }
 
+// Request-scoped read memoization. A ctx belongs to one status request; never
+// cache submissions/uploads or reuse these entries across requests. Keys are
+// only the job id / history id — no credentials, URLs or payloads.
+function requestCache(ctx) {
+  if (!ctx || typeof ctx !== "object") return null;
+  try {
+    if (!ctx.__sbioGalaxyCache || typeof ctx.__sbioGalaxyCache !== "object") {
+      ctx.__sbioGalaxyCache = Object.create(null);
+    }
+    return ctx.__sbioGalaxyCache;
+  } catch { return null; }
+}
+
+function invalidateArtifactCache(ctx, historyId) {
+  const cache = requestCache(ctx);
+  if (cache && historyId) delete cache[`artifacts:${historyId}`];
+}
+
+async function cachedRead(cache, key, loader) {
+  if (!cache) return loader();
+  if (Object.hasOwn(cache, key)) return cache[key];
+  const pending = (async () => {
+    const result = await loader();
+    // Failures are never retained: a retry in a later request must re-fetch.
+    if (result && result.ok !== false && !result.error) cache[key] = result;
+    else delete cache[key];
+    return result;
+  })();
+  cache[key] = pending;
+  return pending;
+}
+
 export function createAdapter(env = {}, deps = {}) {
   const enabled = env?.GALAXY_ENABLED === "true";
   const baseUrl = safeString(env?.GALAXY_BASE_URL).trim();
@@ -142,7 +164,6 @@ export function createAdapter(env = {}, deps = {}) {
   }
 
   async function call(method, path, body, ctx = {}, extra = {}) {
-    const callStarted = Date.now();
     const headers = { "X-API-Key": apiKey, Accept: "application/json" };
     let payload;
     if (body !== undefined) {
@@ -160,7 +181,6 @@ export function createAdapter(env = {}, deps = {}) {
       sleep: ctx?.sleep ?? null,
       env: { GALAXY_API_KEY: apiKey }
     });
-    jobDiag(extra.diagLabel ?? "call", callStarted, attempts, response?.status ?? null);
     return { body: parsed, response, attempts };
   }
 
@@ -375,6 +395,7 @@ export function createAdapter(env = {}, deps = {}) {
       const job = asObject(asArray(body?.jobs)[0]);
       const datasetId = safeId(output.id, { max: 200 }) || null;
       const jobId = safeId(job.id, { max: 200 }) || null;
+      invalidateArtifactCache(ctx, historyId);
       return {
         provider: PROVIDER, ok: true, status: "queued", at, submitted_at: at,
         dataset_id: datasetId, history_id: safeString(output.history_id, 200) || historyId,
@@ -413,6 +434,7 @@ export function createAdapter(env = {}, deps = {}) {
         { source: "hda", content: datasetId, type: "dataset", instance_type: "history", history_id: historyId },
         ctx, { attempts: 2 });
       const output = asObject(body);
+      invalidateArtifactCache(ctx, historyId);
       return {
         provider: PROVIDER, ok: true, at, source_dataset_id: datasetId,
         dataset_id: safeId(output.id, { max: 200 }) || null,
@@ -671,6 +693,7 @@ export function createAdapter(env = {}, deps = {}) {
           const upload = await uploadDataset(payload.inputs, historyId, ctx);
           const result = jobResult(upload.job_id ?? makeId(ctx, "galaxy"), "new", upload.history_id ?? historyId, { submitted_at: submittedAt });
           result.output.structured.dataset_id = upload.dataset_id;
+          invalidateArtifactCache(ctx, upload.history_id ?? historyId);
           return result;
         }
         let response;
@@ -703,6 +726,7 @@ export function createAdapter(env = {}, deps = {}) {
         );
         result.provider_job_id = result.provider_job_id || makeId(ctx, "galaxy");
         result.output.structured.outputs = asArray(asObject(response).outputs).map((item) => asObject(item).id).filter(Boolean);
+        invalidateArtifactCache(ctx, historyId);
         return result;
       } catch (error) {
         return {
@@ -713,46 +737,37 @@ export function createAdapter(env = {}, deps = {}) {
     },
 
     async getJobStatus(request = {}, ctx = {}) {
-      const statusStarted = Date.now();
+      const cache = requestCache(ctx);
       const args = normalizeCallArgs(request, ctx);
       request = args.request;
       ctx = args.ctx;
       const jobId = jobIdFrom(request);
       const at = makeNow(ctx);
       if (!jobId) return { ...failure(PROVIDER, Object.assign(new Error("job_id_required"), { code: "validation_error", status: 400, retryable: false }), at), provider_job_id: null, status: JOB_STATUS.UNKNOWN };
+      return cachedRead(cache, `job:${jobId}`, async () => {
       try {
         let body;
         try {
-          body = (await call("GET", `/api/jobs/${encodeURIComponent(jobId)}`, undefined, ctx,
-            { diagLabel: "call /api/jobs" })).body;
+          body = (await call("GET", `/api/jobs/${encodeURIComponent(jobId)}`, undefined, ctx)).body;
         } catch (error) {
           if (Number(error?.status) !== 404) throw error;
-          jobDiag("job 404 fallback /api/invocations", Date.now(), null, 404);
           // Workflow invocations are not visible through /api/jobs.
-          body = (await call("GET", `/api/invocations/${encodeURIComponent(jobId)}`, undefined, ctx,
-            { diagLabel: "call /api/invocations" })).body;
+          body = (await call("GET", `/api/invocations/${encodeURIComponent(jobId)}`, undefined, ctx)).body;
         }
         const raw = asObject(body);
-        const resultStarted = Date.now();
         const result = jobResult(raw.id ?? jobId, raw.state, raw.history_id);
-        jobDiag("jobResult", resultStarted);
         result.output.structured.progress = finite(raw.progress) ?? null;
         // Job details commonly expose the real output HDA in `outputs` even
         // when /api/jobs/{id}/outputs does not. Read-only, keys only for logs.
         const detailHistoryId = safeString(raw.history_id, 200) || null;
-        const associationsStarted = Date.now();
         result.output.structured.output_associations = normalizeJobOutputAssociations(raw.outputs, detailHistoryId);
-        jobDiag("normalizeJobOutputAssociations", associationsStarted,
-          result.output.structured.output_associations.length);
-        const keysStarted = Date.now();
         result.output.structured.raw_output_keys = outputKeys(raw.outputs);
-        jobDiag("outputKeys", keysStarted, result.output.structured.raw_output_keys.length);
         result.at = at;
-        jobDiag("getJobStatus.total", statusStarted);
         return result;
       } catch (error) {
         return { ...failure(PROVIDER, error, at), provider_job_id: jobId, status: JOB_STATUS.UNKNOWN };
       }
+      });
     },
 
     // READ-ONLY diagnostic view of one job. It performs the same GET
@@ -803,6 +818,7 @@ export function createAdapter(env = {}, deps = {}) {
     // GET /api/jobs/{id}/outputs -> output-name keyed objects with
     // {id, dataset_id, uuid, name, state, extension, history_id}.
     async getJobOutputs(request = {}, ctx = {}) {
+      const cache = requestCache(ctx);
       const args = normalizeCallArgs(request, ctx);
       request = args.request;
       ctx = args.ctx;
@@ -823,6 +839,7 @@ export function createAdapter(env = {}, deps = {}) {
         }), at), provider: PROVIDER, provider_job_id: null, ok: false, outputs: [],
         output_keys: [], job_detail_output_keys: null, at };
       }
+      return cachedRead(cache, `jobOutputs:${jobId}`, async () => {
       try {
         const { body } = await call("GET", `/api/jobs/${encodeURIComponent(jobId)}/outputs`, undefined, ctx);
         const root = asObject(body);
@@ -851,6 +868,7 @@ export function createAdapter(env = {}, deps = {}) {
         return { ...failure(PROVIDER, error, at), provider: PROVIDER, provider_job_id: jobId,
           ok: false, outputs: [], output_keys: [], job_detail_output_keys: null, at };
       }
+      });
     },
 
     async cancelJob(request = {}, ctx = {}) {
@@ -917,12 +935,15 @@ export function createAdapter(env = {}, deps = {}) {
     },
 
     async getArtifacts(request = {}, ctx = {}) {
+      const cache = requestCache(ctx);
       const args = normalizeCallArgs(request, ctx);
       request = args.request;
       ctx = args.ctx;
       const at = makeNow(ctx);
       const empty = { provider: PROVIDER, artifacts: [], ok: false, at };
       if (!enabled || !configured) return { ...empty, reason: availability() };
+      const cacheKey = `artifacts:${safeId(request?.history_id, { max: 200 }) || safeId(request?.artifact_id ?? request?.dataset_id, { max: 200 }) || jobIdFrom(request) || "none"}`;
+      return cachedRead(cache, cacheKey, async () => {
       try {
         let historyId = safeId(request?.history_id, { max: 200 });
         const datasetId = safeId(request?.artifact_id ?? request?.dataset_id, { max: 200 });
@@ -964,6 +985,7 @@ export function createAdapter(env = {}, deps = {}) {
       } catch (error) {
         return { ...empty, error: normalizeProviderError(PROVIDER, error, { at }) };
       }
+      });
     },
 
     // Bounded URL import into the caller's EXISTING history. Off the advertised
