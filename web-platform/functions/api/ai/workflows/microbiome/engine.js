@@ -2236,7 +2236,14 @@ async function prepareDemuxImport(adapter, env, db, row, state, ctx) {
       `The live import schema could not be read: ${caught?.message ?? caught}`);
     return { handled: true };
   }
-  const matched = findImportFormatCase(importSchema);
+  let matched;
+  try {
+    matched = findImportFormatCase(importSchema);
+  } catch (caught) {
+    await markUnavailable("qza_import_schema_traversal_limit",
+      `The live import schema exceeded the bounded traversal cap; no format case was guessed: ${safeString(caught?.message ?? caught, 300)}`);
+    return { handled: true };
+  }
   if (!matched) {
     await markUnavailable("qza_import_format_case_missing",
       "The live import schema does not expose the EMPSingleEndSequences + EMP Single End Directory Format EMP case; no value was invented.");
@@ -2542,13 +2549,20 @@ function exportFailure(state, stepId, reason, datasetId = null) {
 }
 
 async function submitNeededExports(adapter, env, state, stepId, jobId, collected, ctx) {
+  // Exactly ONE bounded submission pass per stage. Later polls only inspect
+  // jobs already tracked in state.exports/pending_exports.
+  state.export_submissions = state.export_submissions ?? {};
+  if (state.export_submissions[stepId]) return [];
   const needed = EXPORT_KINDS_BY_STEP[stepId] ?? [];
+  if (!needed.length) return [];
   const present = new Set(collected.selected.map((artifact) => artifact.kind));
   const exportedKinds = new Set(Object.values(state.exports ?? {})
     .map((entry) => entry?.expected_kind).filter(Boolean));
   const missing = needed.filter((kind) => !present.has(kind) && !exportedKinds.has(kind)
     && EXPORTABLE_KINDS.includes(kind));
-  if (!missing.length) return [];
+  const marker = { at: nowIso(), requested_kinds: [...missing], job_ids: [], status: "pending" };
+  state.export_submissions[stepId] = marker;
+  if (!missing.length) { marker.status = "not_needed"; return []; }
   const alreadyExported = new Set(Object.keys(state.exports ?? {}));
   const candidates = [];
   for (const artifact of collected.selected) {
@@ -2559,11 +2573,12 @@ async function submitNeededExports(adapter, env, state, stepId, jobId, collected
     candidates.push({ kind, artifact });
     if (candidates.length >= MAX_EXPORTS_PER_STAGE) break;
   }
-  if (!candidates.length) return [];
+  if (!candidates.length) { marker.status = "no_candidates"; return []; }
 
   const tool = state.discovery?.tools?.exportTool;
   if (!tool?.id) {
     exportFailure(state, stepId, "qza_export_unavailable: no genuine export tool was discovered; no tool id was invented.");
+    marker.status = "unavailable";
     return [];
   }
   const submitted = [];
@@ -2588,11 +2603,13 @@ async function submitNeededExports(adapter, env, state, stepId, jobId, collected
         submitted_at: nowIso()
       };
       submitted.push(entry);
+      marker.job_ids.push(result.provider_job_id ?? null);
       state.exports = { ...(state.exports ?? {}), [String(artifact.id)]: { ...entry, status: "running" } };
     } catch (caught) {
       exportFailure(state, stepId, `qza_export_failed: ${caught?.message ?? caught}`, artifact.id);
     }
   }
+  marker.status = submitted.length ? "submitted" : "failed";
   return submitted;
 }
 
@@ -3230,6 +3247,14 @@ async function advanceOneStage(db, row, state, env, ctx, options = {}) {
         });
       } catch (caught) {
         const reason = safeString(caught?.message ?? caught, 500);
+        // A bounded-schema overflow is non-fatal: no job was submitted and no
+        // payload was guessed. Record the exact reason and keep advancing.
+        if (/schema_traversal_node_limit/.test(reason)) {
+          state.steps[stepId] = { status: "unavailable", reason, finished_at: nowIso() };
+          state.errors.push({ step: stepId, reason: `schema_traversal_limit: ${reason}` });
+          await recordStep(db, state, stepId, "unavailable", { details: { reason } });
+          return;
+        }
         // A qc_summary schema/data mismatch is non-fatal: no provider job was
         // created and no QC value was fabricated. Mark it unavailable and let
         // later stages run from the real retrieved artifacts.

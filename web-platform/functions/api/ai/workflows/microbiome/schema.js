@@ -7,6 +7,13 @@ const RAW_EXT = ["fastq", "fq", "fastq.gz", "fq.gz", "gz", "zip"];
 const TABLE_EXT = ["tsv", "txt", "tabular", "biom"];
 const FASTA_EXT = ["fasta", "fa", "fna", "fas", "dna"];
 const QZA_EXT = ["qza", "qzv"];
+// Live QIIME 2 wrappers can expose thousands of conditional cases. Traversal is
+// bounded so a huge schema fails closed instead of exceeding Worker CPU.
+const MAX_SCHEMA_NODES = 5000;
+function traversalOverflow() {
+  return Object.assign(new Error(`schema_traversal_node_limit_${MAX_SCHEMA_NODES}`),
+    { code: "schema_traversal_node_limit", status: 400, retryable: false });
+}
 
 function valueOf(raw) {
   return raw && typeof raw === "object" && "value" in raw ? raw.value : raw;
@@ -29,9 +36,11 @@ function extensionMatch(parameter, role) {
 // Collect all form-style parameter names with their verified default value.
 export function describeLiveParameters(schema) {
   const out = [];
+  let nodes = 0;
   (function visit(inputs, prefix, depth) {
     if (depth > 8) return;
     for (const raw of inputs ?? []) {
+      if (++nodes > MAX_SCHEMA_NODES) throw traversalOverflow();
       const item = raw && typeof raw === "object" ? raw : {};
       const name = String(item.name ?? "");
       if (!name) continue;
@@ -71,10 +80,13 @@ export function buildMicrobiomePayload(schema, datasets = [], overrides = {}) {
     if (!entry.hint) return false;
     try { return new RegExp(entry.hint, "i").test(text); } catch { return false; }
   };
+  let nodes = 0;
+  let overflow = false;
 
   (function walk(inputsList, prefix, depth) {
-    if (depth > 8) return;
+    if (depth > 8 || overflow) return;
     for (const raw of inputsList ?? []) {
+      if (++nodes > MAX_SCHEMA_NODES) { overflow = true; return; }
       const item = raw && typeof raw === "object" ? raw : {};
       const name = String(item.name ?? "");
       if (!name) continue;
@@ -120,6 +132,10 @@ export function buildMicrobiomePayload(schema, datasets = [], overrides = {}) {
       if (value !== undefined && value !== null && String(value) !== "") inputs[full] = value;
     }
   })(schema.inputs, "", 0);
+  if (overflow) {
+    return { valid: false, errors: ["schema_traversal_node_limit"], inputs: {},
+      dataset_fields: {}, applied_overrides: [] };
+  }
 
   const errors = [];
   for (const entry of pending) if (!entry.placed) errors.push(`no_data_input_for_${entry.role}`);
@@ -264,6 +280,7 @@ function compactEvidence(evidence) {
 function collectImportCases(inputs, prefix, selectors, evidence, depth, out, flags) {
   if (depth > MAX_IMPORT_DEPTH) return;
   for (const raw of asInputs(inputs)) {
+    if (++flags.nodes > MAX_SCHEMA_NODES) { flags.overflow = true; return; }
     const item = asObject(raw);
     const name = String(item.name ?? "");
     if (!name) continue;
@@ -315,9 +332,10 @@ function caseExposesFormat(caseEntry, conditional, needle) {
 // path keeps those labelled tests intact. It is disabled for any schema with a
 // `type` conditional, and it refuses manifest/YAML cases, so the live typed
 // wrapper can only be satisfied by the EMP directory case below.
-function collectLegacyPaths(inputs, prefix, selectors, depth, needle, out) {
+function collectLegacyPaths(inputs, prefix, selectors, depth, needle, out, flags = {}) {
   if (depth > MAX_IMPORT_DEPTH) return;
   for (const raw of asInputs(inputs)) {
+    if ((flags.nodes = (flags.nodes ?? 0) + 1) > MAX_SCHEMA_NODES) { flags.overflow = true; return; }
     const item = asObject(raw);
     const name = String(item.name ?? "");
     if (!name) continue;
@@ -333,21 +351,22 @@ function collectLegacyPaths(inputs, prefix, selectors, depth, needle, out) {
             formatValue: String(caseEntry?.value ?? ""), evidence: { format: null },
             typeValue: null, manifestYamlCase: caseExposesManifestYaml(caseEntry) });
         }
-        collectLegacyPaths(asObject(caseEntry).inputs, casePrefix, nextSelectors, depth + 1, needle, out);
+        collectLegacyPaths(asObject(caseEntry).inputs, casePrefix, nextSelectors, depth + 1, needle, out, flags);
       }
       continue;
     }
     if (String(item.model_class ?? "") === "Section") {
-      collectLegacyPaths(item.inputs, `${full}|`, selectors, depth + 1, needle, out);
+      collectLegacyPaths(item.inputs, `${full}|`, selectors, depth + 1, needle, out, flags);
     }
   }
 }
 
 /** Find the live EMP single-end DIRECTORY case and every selector leading to it. */
 export function findImportFormatCase(schema, formatHint = LEGACY_FORMAT_HINT) {
-  const flags = { typeSeen: false, typeConditional: false };
+  const flags = { typeSeen: false, typeConditional: false, nodes: 0, overflow: false };
   const paths = [];
   collectImportCases(schema?.inputs, "", [], {}, 0, paths, flags);
+  if (flags.overflow) throw traversalOverflow();
   const emp = paths.filter((path) => path.evidence.type && path.evidence.format && !path.manifestYamlCase);
   if (emp.length) {
     const rank = (path) => path.evidence.format.basis === "exact_format_label" ? 3
@@ -361,7 +380,9 @@ export function findImportFormatCase(schema, formatHint = LEGACY_FORMAT_HINT) {
   // manifest/YAML case and no placeholder value may be substituted.
   if (flags.typeConditional || flags.typeSeen) return null;
   const legacy = [];
-  collectLegacyPaths(schema?.inputs, "", [], 0, String(formatHint).toLowerCase(), legacy);
+  const legacyFlags = { nodes: 0, overflow: false };
+  collectLegacyPaths(schema?.inputs, "", [], 0, String(formatHint).toLowerCase(), legacy, legacyFlags);
+  if (legacyFlags.overflow) throw traversalOverflow();
   const safe = legacy.filter((path) => !path.manifestYamlCase);
   if (!safe.length) return null;
   return { ...safe[0], type_value: null, selection_basis: "legacy_format_hint", legacy: true };
