@@ -1078,6 +1078,168 @@ export async function handleImportSchema(request, env, options = {}) {
   }
 }
 
+// ---------------------------------------------------- /import-job (GET)
+
+// Read-only diagnostic for the single pre-demux qza import job recorded in a
+// stored microbiome run. It reads state only: no submission, no cancellation,
+// no state mutation and no new run. Provider access is GET-only through the
+// existing Galaxy adapter. Every returned field is sanitized and length-capped
+// so no credential, header, full raw response, dataset content or secret can
+// escape through this view.
+const IMPORT_DIAG_EXCERPT_CHARS = 4000;
+
+function importDiagnosticField(value, env, cap = IMPORT_DIAG_EXCERPT_CHARS) {
+  if (value === undefined || value === null) return null;
+  let text;
+  if (typeof value === "string") text = value;
+  else {
+    try { text = JSON.stringify(value); } catch { text = String(value); }
+  }
+  return scrubDiagnosticText(text, env).slice(0, cap) || null;
+}
+
+function importSummaryOf(imp, env) {
+  const field = (value, cap = 200) => importDiagnosticField(value, env, cap);
+  const ids = (value) => {
+    const out = {};
+    if (!value || typeof value !== "object" || Array.isArray(value)) return out;
+    for (const [key, id] of Object.entries(value).slice(0, 30)) {
+      const name = field(key, 120);
+      if (name) out[name] = field(id === undefined || id === null ? null : String(id), 200);
+    }
+    return out;
+  };
+  const selectors = Array.isArray(imp?.selectors)
+    ? imp.selectors.slice(0, 30).map((entry) => ({
+      name: field(entry?.name, 200), value: field(entry?.value, 200)
+    }))
+    : [];
+  return {
+    provider_job_id: field(imp?.provider_job_id, 200),
+    tool_id: field(imp?.tool_id, 400),
+    tool_version: field(imp?.tool_version, 200),
+    format_value: field(imp?.format_value, 200),
+    mapped_fields: {
+      mapping: ids(imp?.mapping),
+      dataset_fields: ids(imp?.dataset_fields),
+      selectors
+    },
+    source_dataset_ids: ids(imp?.source_dataset_ids),
+    status: field(imp?.status, 80),
+    output_dataset_id: field(imp?.output_dataset_id, 200)
+  };
+}
+
+function providerJobView(status, env) {
+  const structured = status?.output?.structured ?? {};
+  const field = (value, cap = 200) => importDiagnosticField(value, env, cap);
+  const associations = (Array.isArray(structured.output_associations) ? structured.output_associations : [])
+    .slice(0, 50)
+    .map((item) => ({
+      id: field(item?.id ?? item?.hda_id, 200),
+      uuid: field(item?.uuid, 200),
+      name: field(item?.name, 300),
+      state: field(item?.state, 80),
+      extension: field(item?.extension, 100),
+      history_id: field(item?.history_id, 200),
+      valid: item?.valid === true
+    }));
+  return {
+    provider: field(status?.provider ?? "galaxy", 80),
+    provider_job_id: field(status?.provider_job_id, 200),
+    status: field(status?.status, 80),
+    state: field(structured.state, 80),
+    progress: Number.isFinite(structured.progress) ? structured.progress : null,
+    output_associations: associations,
+    raw_output_keys: (Array.isArray(structured.raw_output_keys) ? structured.raw_output_keys : [])
+      .slice(0, 50).map((key) => field(key, 200)),
+    error: status?.error ? field(status.error.message ?? status.error.code ?? status.error, 300) : null
+  };
+}
+
+function jobDetailView(detail, env) {
+  const field = (value, cap = IMPORT_DIAG_EXCERPT_CHARS) => importDiagnosticField(value, env, cap);
+  return {
+    provider: field(detail?.provider ?? "galaxy", 80),
+    provider_job_id: field(detail?.provider_job_id, 200),
+    ok: detail?.ok === true,
+    state: field(detail?.state, 200),
+    tool_id: field(detail?.tool_id, 400),
+    exit_code: field(detail?.exit_code, 200),
+    stderr: field(detail?.stderr),
+    stdout: field(detail?.stdout),
+    params: field(detail?.params),
+    inputs: field(detail?.inputs),
+    error: detail?.error ? field(detail.error.message ?? detail.error.code ?? detail.error, 300) : null
+  };
+}
+
+export async function handleImportJob(request, env, options = {}) {
+  try {
+    const rejected = requireMethod(request, "GET", "GET, OPTIONS");
+    if (rejected) return rejected;
+    const db = getDb(env);
+    if (!db) return errorResponse("AI database binding is unavailable.", 503, request);
+    let runId;
+    try {
+      runId = safeString(new URL(request.url).searchParams.get("run_id"), 100);
+    } catch {
+      return errorResponse("Invalid request URL.", 400, request);
+    }
+    if (!runId) {
+      return jsonResponse({ workflow_type: "microbiome", run_id: null, available: false,
+        reason: "run_id was not supplied.", execution_mode: envExecutionMode(env) }, 400, request);
+    }
+    const row = await getRow(db, SQL.getMicrobiomeRunByPublicId, [runId]);
+    if (!row) return errorResponse("No stored microbiome run matches this run_id.", 404, request);
+    const state = parseJson(row.state_json);
+    if (!state) return errorResponse("The stored run has no state record; nothing was reconstructed.", 409, request);
+    if (state.workflow_type !== "microbiome") {
+      return errorResponse("The referenced run is not a microbiome workflow.", 400, request);
+    }
+    const imp = state.import;
+    if (!imp || typeof imp !== "object" || Array.isArray(imp)) {
+      return jsonResponse({ workflow_type: "microbiome", run_id: row.public_id, available: false,
+        reason: "No qza import was ever submitted for this run; the stored state.import is empty.",
+        execution_mode: envExecutionMode(env) }, 200, request);
+    }
+    const jobId = safeString(imp.provider_job_id, 200);
+    if (!jobId) {
+      return jsonResponse({ workflow_type: "microbiome", run_id: row.public_id, available: false,
+        status: importDiagnosticField(imp.status, 80),
+        reason: importDiagnosticField(imp.reason ?? imp.detail
+          ?? "The stored import has no provider job id; no import job was submitted.", env, 500),
+        execution_mode: envExecutionMode(env) }, 200, request);
+    }
+    const ctx = ctxFor(env, options);
+    const adapter = createAdapter(env);
+    let status;
+    try {
+      status = await adapter.getJobStatus({ job_id: jobId }, ctx);
+    } catch (caught) {
+      status = { provider: "galaxy", provider_job_id: jobId, ok: false,
+        error: { message: scrubDiagnosticText(caught?.message ?? caught, env).slice(0, 300) } };
+    }
+    let detail;
+    try {
+      detail = await adapter.getJobDetail({ job_id: jobId }, ctx);
+    } catch (caught) {
+      detail = { provider: "galaxy", provider_job_id: jobId, ok: false,
+        error: { message: scrubDiagnosticText(caught?.message ?? caught, env).slice(0, 300) } };
+    }
+    return jsonResponse({
+      workflow_type: "microbiome", run_id: row.public_id, available: true,
+      import: importSummaryOf(imp, env),
+      provider: providerJobView(status, env),
+      job: jobDetailView(detail, env),
+      execution_mode: envExecutionMode(env)
+    }, 200, request);
+  } catch (caught) {
+    return jsonResponse({ workflow_type: "microbiome", available: false,
+      error: "import_job_handler_failed", detail: sanitizedErrorDetail(caught, env) }, 500, request);
+  }
+}
+
 // ------------------------------------------------------- /resume-stages
 
 // A pre-submission failure reason may be retried after genuine discovery is
@@ -1986,6 +2148,8 @@ export function microbiomeHandlers() {
     microbiomeResumeStages: (context) => handleResumeStages(context.request, context.env,
       { fetchImpl: context.env?.FETCH_IMPL }),
     microbiomeImportSchema: (context) => handleImportSchema(context.request, context.env,
+      { fetchImpl: context.env?.FETCH_IMPL }),
+    microbiomeImportJob: (context) => handleImportJob(context.request, context.env,
       { fetchImpl: context.env?.FETCH_IMPL }),
     microbiomeStatus: (context) => handleStatus(context.request, context.env, {}),
     microbiomeResult: (context) => handleResult(context.request, context.env)
