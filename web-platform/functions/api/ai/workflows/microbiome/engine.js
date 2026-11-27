@@ -1096,7 +1096,9 @@ export async function handleImportSchema(request, env, options = {}) {
 // A pre-submission failure reason may be retried after genuine discovery is
 // refreshed. A failure that followed a real provider job may not be replayed
 // through this endpoint: there is no evidence the job would be safe to repeat.
-const PRE_SUBMISSION_REASON = /unavailable|schema|no_data_input|no discovered tool|qza_import_(tool|format|schema|source|input_mapping)|qza_export_(unavailable|payload_invalid)/i;
+// Output-resolution failures are READ-ONLY failures: an existing provider job
+// can still be recovered in its own history, so they may be resumed.
+const PRE_SUBMISSION_REASON = /unavailable|schema|no_data_input|no discovered tool|qza_import_(tool|format|schema|source|input_mapping|output_missing|output_resolution_failed|outputs_unavailable|output_unverified)|qza_export_(unavailable|payload_invalid)/i;
 
 export async function handleResumeStages(request, env, options = {}) {
   const rejected = requireMethod(request, "POST", "POST, OPTIONS");
@@ -1128,10 +1130,15 @@ export async function handleResumeStages(request, env, options = {}) {
   }
 
   const scientific = STEP_IDS.filter((id) => id !== "import_reads");
+  // The qza import is PREPARATION of already-stored inputs, not an analysis
+  // stage. Its provider job id must never make this a "scientific stage
+  // already started" refusal; the recovery path resolves it read-only.
+  const preparationJobId = safeString(state.import?.provider_job_id, 200);
   const started = scientific.filter((id) => {
     const step = state.steps?.[id] ?? {};
-    return Boolean(safeString(step.provider_job_id, 200))
-      || ["running", "succeeded"].includes(String(step.status ?? ""));
+    const jobId = safeString(step.provider_job_id, 200);
+    if (jobId && preparationJobId && jobId === preparationJobId) return false;
+    return Boolean(jobId) || ["running", "succeeded"].includes(String(step.status ?? ""));
   });
   if (started.length) return refuse("scientific_stage_exists",
     `Scientific stages already started: ${started.join(", ")}.`);
@@ -1160,9 +1167,10 @@ export async function handleResumeStages(request, env, options = {}) {
   } catch (caught) {
     return errorResponse(`Live discovery could not be refreshed: ${caught?.message ?? caught}`, 502, request);
   }
-  // Only discovery is refreshed from the provider. A failed (not completed)
-  // import preparation is cleared so it can retry with the freshly discovered
-  // import tool; a succeeded import and the original upload job stay untouched.
+  // Only discovery is refreshed from the provider. A FAILED import preparation
+  // with NO provider job is cleared so it can retry with fresh discovery. An
+  // import that already has a real provider job is PRESERVED (with its job id)
+  // so /status can recover its existing output read-only; it is never replayed.
   state.discovery = { tools: discovery.toolVersions, classifier: discovery.classifier,
     discovery_mode: discovery.discoveryMode, discovered_at: discovery.discoveredAt };
   for (const stage of resetStages) delete state.steps[stage];
@@ -1170,7 +1178,8 @@ export async function handleResumeStages(request, env, options = {}) {
     const text = errorText(entry);
     return !resetStages.some((stage) => text.includes(stage));
   });
-  if (state.import && state.import.status !== "succeeded") {
+  if (state.import && state.import.status !== "succeeded"
+      && !safeString(state.import.provider_job_id, 200)) {
     state.import = null;
     if (state.frontier) delete state.frontier.importedSeqsId;
   }
@@ -1291,6 +1300,88 @@ function demuxRequiresQza(schema) {
       .map((ext) => String(ext).toLowerCase().replace(/^\./, "")).includes("qza"));
 }
 
+// Recover an ALREADY-COMPLETED import job's output without any resubmission.
+// Galaxy can place a tool output in a different history from the run's stored
+// history; collectOutputs() correctly rejects cross-history associations, so
+// resolution here is done against the association's OWN history (read-only).
+// Nothing is guessed: the output id must be found, ready and a qza artifact.
+async function recoverImportedQza(adapter, prior, state, ctx) {
+  const jobId = safeString(prior.provider_job_id, 200);
+  if (!jobId) return { ok: false, reason: "qza_import_job_id_missing" };
+  const outputs = await adapter.getJobOutputs({ job_id: jobId }, ctx);
+  if (!outputs?.ok) {
+    return { ok: false, reason: `qza_import_outputs_unavailable: ${outputs?.error?.message ?? outputs?.error?.code ?? "no output associations"}` };
+  }
+  const candidates = [];
+  for (const association of outputs.outputs ?? []) {
+    const id = safeString(association?.galaxyHdaId ?? association?.id, 200);
+    const uuid = safeString(association?.galaxyDatasetUuid ?? association?.uuid, 200);
+    const ownHistoryId = safeString(association?.history_id, 200) || null;
+    if (!id && !uuid) { candidates.push({ reason: "no_dataset_identity" }); continue; }
+    // The association's OWN history is authoritative. Associations that do
+    // not expose a history id fall back to the run history and then to a
+    // direct dataset lookup; every candidate is still verified by real id/uuid.
+    const lookups = [];
+    const seenLookups = new Set();
+    for (const candidate of [ownHistoryId ? { history_id: ownHistoryId } : null,
+      safeString(state.history_id, 200) ? { history_id: safeString(state.history_id, 200) } : null,
+      { dataset_id: id || uuid }]) {
+      if (!candidate) continue;
+      const key = JSON.stringify(candidate);
+      if (seenLookups.has(key)) continue;
+      seenLookups.add(key);
+      lookups.push(candidate);
+    }
+    for (const lookup of lookups) {
+      let contents;
+      try {
+        contents = await adapter.getArtifacts(lookup, ctx);
+      } catch (caught) {
+        candidates.push({ dataset_id: id || null, uuid: uuid || null, history_id: ownHistoryId, lookup,
+          reason: `output_history_inventory_threw: ${safeString(caught?.message ?? caught, 300)}` });
+        continue;
+      }
+      if (!contents?.ok) {
+        candidates.push({ dataset_id: id || null, uuid: uuid || null, history_id: ownHistoryId, lookup,
+          reason: `output_history_inventory_unavailable: ${contents?.error?.message ?? contents?.error?.code ?? "unreadable"}` });
+        continue;
+      }
+      const match = (contents.artifacts ?? []).find((item) =>
+        (id && String(item.id) === id) || (uuid && String(item.uuid) === uuid)) ?? null;
+      if (!match) {
+        candidates.push({ dataset_id: id || null, uuid: uuid || null, history_id: ownHistoryId, lookup,
+          reason: "output_dataset_not_found_in_its_history_or_not_ready" });
+        continue;
+      }
+      if (!["ok", "success"].includes(String(match.state ?? "").toLowerCase())) {
+        candidates.push({ dataset_id: id || null, uuid: uuid || null, history_id: ownHistoryId, lookup,
+          reason: `output_dataset_not_ready: ${match.state ?? "unknown"}` });
+        continue;
+      }
+      const ext = String(match.type ?? match.extension ?? "").replace(/^\./, "").toLowerCase();
+      const name = String(match.name ?? "");
+      if (ext !== "qza" && !/\.qza$/i.test(name) && !/\bqza\b/i.test(ext)) {
+        candidates.push({ dataset_id: id || null, uuid: uuid || null, history_id: ownHistoryId, lookup,
+          name, extension: ext, reason: "output_not_qza_artifact" });
+        continue;
+      }
+      const outputHistoryId = safeString(match.history_id, 200) || ownHistoryId
+        || safeString(lookup.history_id, 200) || null;
+      return {
+        ok: true, dataset_id: String(match.id), uuid: uuid || String(match.uuid ?? "") || null,
+        name: name || null, extension: ext || null, state: String(match.state),
+        output_history_id: outputHistoryId, run_history_id: safeString(state.history_id, 200) || null,
+        history_mismatch: Boolean(safeString(state.history_id, 200) && outputHistoryId
+          && String(outputHistoryId) !== String(state.history_id)),
+        candidates, basis: "read_only_job_output_resolution_in_output_own_history", at: nowIso()
+      };
+    }
+  }
+  return { ok: false, reason: candidates.length
+    ? `qza_import_output_unverified: ${candidates.map((entry) => entry.reason).join("; ")}`
+    : "qza_import_output_unverified: no output associations were returned", candidates };
+}
+
 async function prepareDemuxImport(adapter, env, db, row, state, ctx) {
   // A qza input that already exists needs no import at all.
   if (state.frontier?.importedSeqsId) return { handled: false };
@@ -1303,44 +1394,63 @@ async function prepareDemuxImport(adapter, env, db, row, state, ctx) {
 
   const prior = state.import;
   if (prior) {
+    if (prior.output_dataset_id) {
+      state.frontier.importedSeqsId = prior.output_dataset_id;
+      prior.status = "succeeded";
+      return { handled: true };
+    }
+    const jobId = safeString(prior.provider_job_id, 200);
+    if (jobId) {
+      // A REAL job already exists: resolve its output read-only, never submit
+      // another import. This also covers a prior `unavailable` status whose
+      // only failure was cross-history output resolution.
+      const status = await adapter.getJobStatus({ job_id: jobId }, ctx);
+      const observed = status.output?.structured?.state ?? status.status;
+      const classified = classifyJobState(observed);
+      if (classified === "running" || classified === "unknown") return { handled: true };
+      if (classified === "failed") {
+        prior.status = "failed";
+        prior.reason = `qza import job ${jobId} ended in state ${observed}`;
+        await markUnavailable(prior.reason);
+        await persistState(db, row, state);
+        return { handled: true };
+      }
+      const recovered = await recoverImportedQza(adapter, prior, state, ctx);
+      if (recovered.ok) {
+        prior.status = "succeeded";
+        prior.reason = null;
+        prior.detail = null;
+        prior.output_dataset_id = recovered.dataset_id;
+        prior.output_history_id = recovered.output_history_id ?? null;
+        prior.history_mismatch = recovered.history_mismatch;
+        prior.recovery = recovered;
+        prior.resolved_at = nowIso();
+        state.frontier.importedSeqsId = recovered.dataset_id;
+        await persistState(db, row, state);
+        return { handled: true };
+      }
+      prior.status = "unavailable";
+      prior.reason = `qza_import_output_resolution_failed: ${recovered.reason}`;
+      prior.recovery = { ...recovered, ok: false };
+      state.errors.push({ step: "demux", reason: prior.reason,
+        ...(recovered.candidates?.length ? { detail: recovered.candidates } : {}) });
+      state.steps.demux = { status: "unavailable", reason: prior.reason };
+      await recordStep(db, state, "demux", "unavailable", { details: { reason: prior.reason } });
+      await persistState(db, row, state);
+      return { handled: true };
+    }
+    // No provider job and no output: a genuine failed preparation. It may be
+    // retried after discovery; no provider job exists to recover here.
     if (prior.status === "unavailable" || prior.status === "failed") {
       state.steps.demux = { status: "unavailable", reason: prior.reason ?? prior.detail ?? "qza_import_unavailable" };
       await recordStep(db, state, "demux", "unavailable", { details: { reason: state.steps.demux.reason } });
       return { handled: true };
     }
     if (prior.status === "succeeded") {
-      if (!prior.output_dataset_id) {
-        await markUnavailable("qza_import_output_missing", "The completed import job stored no qza dataset id.");
-      } else {
-        state.frontier.importedSeqsId = prior.output_dataset_id;
-      }
+      await markUnavailable("qza_import_output_missing", "The completed import job stored no qza dataset id.");
       return { handled: true };
     }
-    if (!prior.provider_job_id) {
-      await markUnavailable("qza_import_job_id_missing", "The import submission carried no provider job id.");
-      return { handled: true };
-    }
-    const status = await adapter.getJobStatus({ job_id: prior.provider_job_id }, ctx);
-    const observed = status.output?.structured?.state ?? status.status;
-    const classified = classifyJobState(observed);
-    if (classified === "running" || classified === "unknown") return { handled: true };
-    if (classified === "failed") {
-      prior.status = "failed";
-      prior.reason = `qza import job ${prior.provider_job_id} ended in state ${observed}`;
-      await markUnavailable(prior.reason);
-      return { handled: true };
-    }
-    const collected = await collectOutputs(adapter, prior.provider_job_id, state.history_id, ctx);
-    const qza = collected.selected.find((artifact) => artifact.kind === "qza_artifact"
-      || /\bqza\b/i.test(String(artifact.extension ?? "")));
-    if (!qza?.id) {
-      prior.status = "failed";
-      await markUnavailable("qza_import_output_missing", "The import job produced no usable qza artifact.");
-      return { handled: true };
-    }
-    prior.status = "succeeded";
-    prior.output_dataset_id = qza.id;
-    state.frontier.importedSeqsId = qza.id;
+    await markUnavailable("qza_import_job_id_missing", "The import submission carried no provider job id.");
     return { handled: true };
   }
 
