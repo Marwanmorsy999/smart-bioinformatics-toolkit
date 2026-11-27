@@ -21,6 +21,7 @@ const EXACT_NAMES = Object.freeze({
   beta: Object.freeze(["qiime2 diversity core-metrics-phylogenetic", "qiime2 diversity beta"]),
   pcoa: Object.freeze(["qiime2 emperor plot"]),
   exportTool: Object.freeze(["qiime2 tools export"]),
+  importTool: Object.freeze(["qiime2 tools import"]),
   tableSummary: Object.freeze(["qiime2 feature-table summarize"])
 });
 
@@ -35,6 +36,7 @@ const CRITERIA = Object.freeze({
   beta: { nameIncludes: ["beta", "distance", "core-metrics"], descriptionIncludes: ["beta", "distance", "diversity"] },
   pcoa: { nameIncludes: ["emperor", "pcoa", "ordination"], descriptionIncludes: ["ordination", "pcoa", "emperor"] },
   exportTool: { nameIncludes: ["export"], descriptionIncludes: ["qiime", "qza", "artifact"] },
+  importTool: { nameIncludes: ["tools import", "import"], descriptionIncludes: ["qiime", "qza", "import"] },
   tableSummary: { nameIncludes: ["feature-table summarize", "tabulate-seqs"], descriptionIncludes: ["feature", "table"] }
 });
 

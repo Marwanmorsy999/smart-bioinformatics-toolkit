@@ -23,7 +23,7 @@ import {
 import { fetchToolSchema } from "../../../../../providers/galaxy/galaxy_schema.js";
 import { classifyJobState } from "../../../../../providers/galaxy/galaxy_ids.js";
 import {
-  buildMicrobiomePayload, describeLiveParameters
+  buildImportPayload, buildMicrobiomePayload, describeLiveParameters, findImportFormatCase
 } from "./schema.js";
 import {
   aggregateByRank, chooseTruncation, computeAlphaFromTable, computeBrayCurtis,
@@ -276,11 +276,17 @@ function overridesFor(stepId, schema, state, discovery) {
 
 function rolesFor(stepId, state) {
   switch (stepId) {
-    case "demux": return [
-      { id: state.dataset_ids.sequences, role: "reads", name: state.filenames.reads },
-      { id: state.dataset_ids.barcodes, role: "barcodes", name: state.filenames.barcodes },
-      { id: state.dataset_ids.metadata, role: "table", name: state.filenames.metadata }
-    ];
+    case "demux": {
+      const imported = state.frontier?.importedSeqsId ?? null;
+      return [
+        { id: imported ?? state.dataset_ids.sequences, role: imported ? "artifact" : "reads",
+          name: imported ? "imported EMP single-end reads (qza)" : state.filenames.reads },
+        // Raw barcodes were consumed by the import preparation step; the live
+        // demux tool takes one qza reads input plus the metadata TSV.
+        ...(imported ? [] : [{ id: state.dataset_ids.barcodes, role: "barcodes", name: state.filenames.barcodes }]),
+        { id: state.dataset_ids.metadata, role: "table", name: state.filenames.metadata }
+      ];
+    }
     case "qc_summary": return [{ id: state.frontier?.demuxReadsId ?? state.dataset_ids.sequences, role: "reads", name: "demultiplexed reads" }];
     case "dada2_denoise": return [{ id: state.frontier?.demuxReadsId ?? state.dataset_ids.sequences, role: "reads", name: "demultiplexed reads" }];
     case "taxonomy": return [{ id: state.frontier?.repSeqsId, role: "fasta", name: "representative sequences" }];
@@ -606,7 +612,9 @@ export async function handleRun(request, env, options = {}) {
     filenames: { reads: resolved.reads_filename, barcodes: resolved.barcodes_filename, metadata: resolved.metadata_filename },
     frontier: {}, steps: {}, results: {}, artifacts: [], errors: [], poll_count: 0,
     // Bounded qza text-export phase: provenance per source dataset and in-flight jobs.
-    exports: {}, pending_exports: []
+    exports: {}, pending_exports: [],
+    // At-most-one pre-demux EMP import preparation (never a scientific analysis).
+    import: null
   };
 
   try {
@@ -1069,6 +1077,151 @@ async function finalizeImport(adapter, state, ctx) {
   }
   state.dataset_ids = { ...state.dataset_ids, ...resolved };
   return Object.keys(resolved).length === 3;
+}
+
+// ------------------------------------------------------ pre-demux qza import
+//
+// The live demux `seqs` input requires a .qza QIIME 2 artifact, while our
+// original inputs are gzip FASTQs. `qiime2 tools import` converts them using a
+// FORMAT case read from its live schema. This is preparation of already-stored
+// inputs, not a new scientific analysis, and it is submitted at most once.
+
+function dataInputsOf(inputs, depth = 0) {
+  if (depth > 8) return [];
+  const out = [];
+  for (const raw of inputs ?? []) {
+    const item = raw ?? {};
+    if (String(item.model_class ?? "").includes("DataToolParameter")) out.push(item);
+    else if (Array.isArray(item.inputs)) out.push(...dataInputsOf(item.inputs, depth + 1));
+  }
+  return out;
+}
+
+function demuxRequiresQza(schema) {
+  return dataInputsOf(schema?.inputs).some((input) =>
+    (Array.isArray(input.extensions) ? input.extensions : [])
+      .map((ext) => String(ext).toLowerCase().replace(/^\./, "")).includes("qza"));
+}
+
+async function prepareDemuxImport(adapter, env, db, row, state, ctx) {
+  // A qza input that already exists needs no import at all.
+  if (state.frontier?.importedSeqsId) return { handled: false };
+  const markUnavailable = async (reason, detail = null) => {
+    state.import = { ...(state.import ?? {}), status: "unavailable", reason, detail };
+    state.errors.push({ step: "demux", reason, ...(detail ? { detail } : {}) });
+    state.steps.demux = { status: "unavailable", reason: detail ?? reason };
+    await recordStep(db, state, "demux", "unavailable", { details: { reason: detail ?? reason } });
+  };
+
+  const prior = state.import;
+  if (prior) {
+    if (prior.status === "unavailable" || prior.status === "failed") {
+      state.steps.demux = { status: "unavailable", reason: prior.reason ?? prior.detail ?? "qza_import_unavailable" };
+      await recordStep(db, state, "demux", "unavailable", { details: { reason: state.steps.demux.reason } });
+      return { handled: true };
+    }
+    if (prior.status === "succeeded") {
+      if (!prior.output_dataset_id) {
+        await markUnavailable("qza_import_output_missing", "The completed import job stored no qza dataset id.");
+      } else {
+        state.frontier.importedSeqsId = prior.output_dataset_id;
+      }
+      return { handled: true };
+    }
+    if (!prior.provider_job_id) {
+      await markUnavailable("qza_import_job_id_missing", "The import submission carried no provider job id.");
+      return { handled: true };
+    }
+    const status = await adapter.getJobStatus({ job_id: prior.provider_job_id }, ctx);
+    const observed = status.output?.structured?.state ?? status.status;
+    const classified = classifyJobState(observed);
+    if (classified === "running" || classified === "unknown") return { handled: true };
+    if (classified === "failed") {
+      prior.status = "failed";
+      prior.reason = `qza import job ${prior.provider_job_id} ended in state ${observed}`;
+      await markUnavailable(prior.reason);
+      return { handled: true };
+    }
+    const collected = await collectOutputs(adapter, prior.provider_job_id, state.history_id, ctx);
+    const qza = collected.selected.find((artifact) => artifact.kind === "qza_artifact"
+      || /\bqza\b/i.test(String(artifact.extension ?? "")));
+    if (!qza?.id) {
+      prior.status = "failed";
+      await markUnavailable("qza_import_output_missing", "The import job produced no usable qza artifact.");
+      return { handled: true };
+    }
+    prior.status = "succeeded";
+    prior.output_dataset_id = qza.id;
+    state.frontier.importedSeqsId = qza.id;
+    return { handled: true };
+  }
+
+  const demuxTool = state.discovery?.tools?.demux;
+  if (!demuxTool?.id) return { handled: false }; // existing unavailable path reports this
+  let demuxSchema;
+  try {
+    demuxSchema = await fetchToolSchema(env, demuxTool.id, demuxTool.version);
+  } catch { return { handled: false }; }
+  if (!demuxRequiresQza(demuxSchema)) return { handled: false };
+
+  const readsId = state.dataset_ids?.sequences;
+  const barcodesId = state.dataset_ids?.barcodes;
+  const readsName = state.filenames?.reads ?? null;
+  const barcodesName = state.filenames?.barcodes ?? null;
+  if (!readsId || !barcodesId) {
+    await markUnavailable("qza_import_source_missing", "No uploaded reads/barcodes datasets are available for EMP import.");
+    return { handled: true };
+  }
+  const importTool = state.discovery?.tools?.importTool;
+  if (!importTool?.id) {
+    await markUnavailable("qza_import_tool_unavailable", "No genuine QIIME 2 import tool was discovered; no tool id was invented.");
+    return { handled: true };
+  }
+  let importSchema;
+  try {
+    importSchema = await fetchToolSchema(env, importTool.id, importTool.version);
+  } catch (caught) {
+    await markUnavailable("qza_import_schema_unavailable",
+      `The live import schema could not be read: ${caught?.message ?? caught}`);
+    return { handled: true };
+  }
+  const matched = findImportFormatCase(importSchema);
+  if (!matched) {
+    await markUnavailable("qza_import_format_case_missing",
+      "The live import schema does not expose the SingleLanePerSampleSingleEndFastqDirFmt format case; no value was invented.");
+    return { handled: true };
+  }
+  const payload = buildImportPayload(importSchema, matched, { readsId, barcodesId, readsName, barcodesName });
+  if (!payload.valid) {
+    await markUnavailable(`qza_import_${payload.errors[0]}`,
+      `The live import case could not be mapped unambiguously: ${payload.errors.join(", ")}.`);
+    return { handled: true };
+  }
+  let submission;
+  try {
+    submission = await adapter.submitJob({ operation: "submit_job", tool_id: importTool.id, inputs: payload.inputs }, ctx);
+  } catch (caught) {
+    await markUnavailable("qza_import_submission_failed", `Import submission failed: ${caught?.message ?? caught}`);
+    return { handled: true };
+  }
+  if (submission.error) {
+    await markUnavailable("qza_import_submission_failed",
+      `Import submission failed: ${submission.error.message ?? submission.error.code}`);
+    return { handled: true };
+  }
+  state.import = {
+    tool_id: importTool.id, tool_version: importTool.version ?? null,
+    provider_job_id: submission.provider_job_id ?? null,
+    source_dataset_ids: { reads: readsId, barcodes: barcodesId },
+    source_filenames: { reads: readsName, barcodes: barcodesName },
+    format_value: matched.formatValue, selector: payload.selector,
+    dataset_fields: payload.dataset_fields, submitted_at: nowIso(), status: "running",
+    basis: "preparation_of_stored_inputs"
+  };
+  state.errors.push({ step: "demux", reason: "qza_import_submitted",
+    detail: { tool_id: importTool.id, format_value: matched.formatValue, source_dataset_ids: state.import.source_dataset_ids } });
+  await persistState(db, row, state);
+  return { handled: true };
 }
 
 async function submitStage(adapter, env, state, stepId, ctx) {
@@ -1544,6 +1697,10 @@ async function advanceOneStage(db, row, state, env, ctx) {
   }
 
   if (!step.status) {
+    if (stepId === "demux") {
+      const prepared = await prepareDemuxImport(adapter, env, db, row, state, ctx);
+      if (prepared.handled) return;
+    }
     if (stepId === "report") {
       state.steps.report = { status: "succeeded", finished_at: nowIso() };
       await recordStep(db, state, stepId, "succeeded", { details: { source: "stored_tool_artifacts" } });
