@@ -61,6 +61,19 @@ export const LIMITS = Object.freeze({
   maxLocalReads: 100_000
 });
 
+// TEMP diagnostics: labels, elapsed ms and counts only. Never log state, ids,
+// credentials, payloads or provider response bodies.
+const STATUS_DIAG = true;
+function diag(label, started, count = null) {
+  if (!STATUS_DIAG) return;
+  const ms = Math.round((Date.now() - started) * 10) / 10;
+  console.log("[status-diag]", label, `${ms}ms`, count === null ? "" : `count=${count}`);
+}
+async function timed(label, fn) {
+  const started = Date.now();
+  try { return await fn(); } finally { diag(label, started); }
+}
+
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 function ctxFor(env, options = {}) {
   return { fetch: options.fetchImpl ?? env?.FETCH_IMPL ?? globalThis.fetch,
@@ -222,7 +235,7 @@ export function validationOf(inspection) {
 // -------------------------------------------------------------- discovery
 
 async function discover(env, ctx) {
-  const capabilities = await createAdapter(env).getCapabilities(ctx);
+  const capabilities = await timed("discover.getCapabilities", async () => createAdapter(env).getCapabilities(ctx));
   const tools = findMicrobiomeTools(capabilities.tools ?? []);
   const discoveredAt = capabilities.at ?? nowIso();
   const toolVersions = {};
@@ -234,7 +247,7 @@ async function discover(env, ctx) {
     tool_id: null, version: null };
   if (tools.classify) {
     try {
-      const schema = await fetchToolSchema(env, tools.classify.id, tools.classify.version);
+      const schema = await timed("discover.fetchToolSchema", async () => fetchToolSchema(env, tools.classify.id, tools.classify.version));
       classifier = discoverClassifierOptions(schema, { toolId: tools.classify.id, version: tools.classify.version });
     } catch (error) {
       classifier = { available: false, tool_id: tools.classify.id, version: tools.classify.version,
@@ -530,7 +543,8 @@ export function classifyMicrobiomeArtifact(artifact = {}) {
 }
 
 async function collectOutputs(adapter, jobId, historyId, ctx) {
-  const status = await adapter.getJobStatus({ job_id: jobId }, ctx);
+  const started = Date.now();
+  const status = await timed("getJobStatus", async () => adapter.getJobStatus({ job_id: jobId }, ctx));
   const outputs = await adapter.getJobOutputs({ job_id: jobId }, ctx);
   const associations = [...(outputs.outputs ?? []), ...(status.output?.structured?.output_associations ?? [])];
   const contents = await adapter.getArtifacts({ history_id: historyId }, ctx);
@@ -550,6 +564,7 @@ async function collectOutputs(adapter, jobId, historyId, ctx) {
     selected.push({ ...match, ...classifyMicrobiomeArtifact(match),
       source_step: null, source_job_id: jobId });
   }
+  diag("collectOutputs", started, selected.length);
   return { selected, associations, historyContents: contents.artifacts ?? [], status, outputs };
 }
 
@@ -558,6 +573,7 @@ const FINALIZE_MAX_BYTES_PER_POLL = 200 * 1024;
 
 async function downloadSelected(adapter, artifacts, stepId, ctx, { toolVersion = null,
   maxArtifacts = Infinity, maxBytes = Infinity } = {}) {
+  const started = Date.now();
   const out = [];
   const errors = [];
   let bytes = 0;
@@ -582,6 +598,7 @@ async function downloadSelected(adapter, artifacts, stepId, ctx, { toolVersion =
     out.push({ ...artifact, source_step: stepId, tool_version: toolVersion, text: downloaded.content,
       checksum, bytes: size });
   }
+  diag("downloadSelected", started, out.length);
   return { artifacts: out, errors, bytes, reachedLimit };
 }
 
@@ -2408,7 +2425,7 @@ function recordSubmissionFailure(state, env, stepId, tool, payload, result, thro
   return entry;
 }
 
-async function submitStage(adapter, env, state, stepId, ctx) {
+async function submitStageInner(adapter, env, state, stepId, ctx) {
   // The cached discovery stores metadata, not the full tool object; no new
   // discovery call is made here.
   const cached = state.discovery.tools;
@@ -2476,6 +2493,10 @@ async function submitStage(adapter, env, state, stepId, ctx) {
       }
     } : {}) };
   return { skipped: false, provider_job_id: submission.provider_job_id };
+}
+
+async function submitStage(adapter, env, state, stepId, ctx) {
+  return timed("submitStage", () => submitStageInner(adapter, env, state, stepId, ctx));
 }
 
 async function collectDenoise(state, collected, downloaded) {
@@ -2548,7 +2569,7 @@ function exportFailure(state, stepId, reason, datasetId = null) {
   state.errors.push({ step: stepId, reason, ...(datasetId ? { dataset_id: datasetId } : {}) });
 }
 
-async function submitNeededExports(adapter, env, state, stepId, jobId, collected, ctx) {
+async function submitNeededExportsInner(adapter, env, state, stepId, jobId, collected, ctx) {
   // Exactly ONE bounded submission pass per stage. Later polls only inspect
   // jobs already tracked in state.exports/pending_exports.
   state.export_submissions = state.export_submissions ?? {};
@@ -2611,6 +2632,10 @@ async function submitNeededExports(adapter, env, state, stepId, jobId, collected
   }
   marker.status = submitted.length ? "submitted" : "failed";
   return submitted;
+}
+
+async function submitNeededExports(adapter, env, state, stepId, jobId, collected, ctx) {
+  return timed("submitNeededExports", () => submitNeededExportsInner(adapter, env, state, stepId, jobId, collected, ctx));
 }
 
 async function pollPendingExports(adapter, state, stepId, ctx) {
@@ -2833,7 +2858,7 @@ async function processFinalizeQueue(adapter, db, row, state, stepId, ctx, extraA
   return false;
 }
 
-async function finalizeStage(adapter, env, db, row, state, stepId, jobId, ctx, options = {}) {
+async function finalizeStageInner(adapter, env, db, row, state, stepId, jobId, ctx, options = {}) {
   const toolMeta = state.steps[stepId]?.tool_id ? { id: state.steps[stepId].tool_id, version: state.steps[stepId].tool_version } : null;
   // Diversity fallbacks compute from the REAL retrieved feature table. Reuse
   // the once-per-state parsed view rather than parsing on every poll.
@@ -2874,6 +2899,10 @@ async function finalizeStage(adapter, env, db, row, state, stepId, jobId, ctx, o
       dataset_id: artifact.id, checksum: artifact.checksum })),
     ...(exportProvenance.length ? { exports: exportProvenance } : {}) };
   await recordStep(db, state, stepId, "succeeded", { details: state.steps[stepId] });
+}
+
+async function finalizeStage(adapter, env, db, row, state, stepId, jobId, ctx, options = {}) {
+  return timed("finalizeStage", () => finalizeStageInner(adapter, env, db, row, state, stepId, jobId, ctx, options));
 }
 
 function runIdOf(state) {
@@ -3108,11 +3137,11 @@ export async function buildResult(state) {
     reopen: { ai_run_id: state.run_id, ai_run_url: `/api/ai/runs/${state.run_id}`,
       recovery_url: `/api/ai/runs/${state.run_id}/recovery`, plan_id: state.plan_id }
   };
-  result.exports = await buildExports(state, result.report);
+  result.exports = await timed("buildExports", async () => buildExports(state, result.report));
   return result;
 }
 
-async function advanceOneStage(db, row, state, env, ctx, options = {}) {
+async function advanceOneStageInner(db, row, state, env, ctx, options = {}) {
   const stepId = state.current_step;
   if (!stepId) return;
   const step = state.steps[stepId] ?? {};
@@ -3122,7 +3151,7 @@ async function advanceOneStage(db, row, state, env, ctx, options = {}) {
     return;
   }
   if (step.status === "failed") return;
-  const adapter = createAdapter(env);
+  const adapter = await timed("createAdapter", async () => createAdapter(env));
   // A succeeded demux from an older finalization may have no frontier id.
   // Repair it before any later stage builds its payload, without replaying the
   // demux job or reading binary qza as text.
@@ -3136,7 +3165,7 @@ async function advanceOneStage(db, row, state, env, ctx, options = {}) {
       state.errors.push({ step: stepId, reason: "import_provider_job_missing" });
       return;
     }
-    const status = await adapter.getJobStatus({ job_id: step.provider_job_id }, ctx);
+    const status = await timed("getJobStatus", async () => adapter.getJobStatus({ job_id: step.provider_job_id }, ctx));
     const classified = classifyJobState(status.output?.structured?.state ?? status.status);
     if (classified === "running" || classified === "unknown") return;
     if (classified === "failed") {
@@ -3153,7 +3182,7 @@ async function advanceOneStage(db, row, state, env, ctx, options = {}) {
   }
 
   if (step.status === "running" && step.provider_job_id) {
-    const status = await adapter.getJobStatus({ job_id: step.provider_job_id }, ctx);
+    const status = await timed("getJobStatus", async () => adapter.getJobStatus({ job_id: step.provider_job_id }, ctx));
     const classified = classifyJobState(status.output?.structured?.state ?? status.status);
     if (classified === "running" || classified === "unknown") return;
     if (classified === "failed") {
@@ -3278,14 +3307,20 @@ async function advanceOneStage(db, row, state, env, ctx, options = {}) {
   }
 }
 
+async function advanceOneStage(db, row, state, env, ctx, options = {}) {
+  return timed("advanceOneStage", () => advanceOneStageInner(db, row, state, env, ctx, options));
+}
+
 export async function handleStatus(request, env, options = {}) {
   const rejected = requireMethod(request, "GET", "GET, OPTIONS");
   if (rejected) return rejected;
   const db = getDb(env);
   if (!db) return errorResponse("AI database binding is unavailable.", 503, request);
-  const row = await getRunByReference(db, request);
+  const row = await timed("getRunByReference", async () => getRunByReference(db, request));
   if (!row) return errorResponse("No stored microbiome run matches this reference.", 404, request);
+  const parseStarted = Date.now();
   let state = parseJson(row.state_json);
+  diag("parseJson(state)", parseStarted);
   if (!state) return errorResponse("The stored run has no state record; nothing was reconstructed.", 409, request);
   const ctx = ctxFor(env, options);
   // Do NOT rehydrate on provider polls: step status comes only from stored
@@ -3295,7 +3330,11 @@ export async function handleStatus(request, env, options = {}) {
     // Already-computed local summaries need no reopening of artifact text.
     const computed = ["composition", "alpha", "beta", "pcoa", "ordination"]
       .some((key) => state.results?.[key]?.available);
+    const rehydrateStarted = Date.now();
     await rehydrateParsed(db, state, { force: Boolean(state.parsed_rehydrated && !state._parsed && !computed) });
+    diag("rehydrateParsed/call", rehydrateStarted);
+  } else {
+    diag("rehydrateParsed/skip", Date.now());
   }
   if (state.status === "running" && state.current_step) {
     state.poll_count = Math.min((state.poll_count ?? 0) + 1, LIMITS.maxProviderPolls);
@@ -3304,21 +3343,23 @@ export async function handleStatus(request, env, options = {}) {
       if (!state.current_step && state.status === "running") {
         // The terminal result is the ONLY place that rebuilds exports; parsed
         // tables are rehydrated at most once from stored artifacts.
+        const terminalRehydrate = Date.now();
         await rehydrateParsed(db, state, { force: true });
+        diag("rehydrateParsed/terminal", terminalRehydrate);
         state.status = "succeeded";
-        const result = await buildResult(state);
+        const result = await timed("buildResult", async () => buildResult(state));
         await runStatement(db, SQL.saveJobResult, ["succeeded", nowIso(), JSON.stringify(result),
           JSON.stringify(state.validation), null, JSON.stringify(result.provenance),
           JSON.stringify({ report_url: `/api/ai/runs/${state.run_id}/report` }), envExecutionMode(env),
           state.run_id, "running"]);
-        await persistState(db, row, state, result);
+        await timed("persistState", async () => persistState(db, row, state, result));
       } else {
-        await persistState(db, row, state);
+        await timed("persistState", async () => persistState(db, row, state));
       }
     } catch (caught) {
       state.status = "failed";
       state.errors.push({ step: state.current_step, reason: caught?.message ?? String(caught) });
-      await persistState(db, row, state);
+      await timed("persistState", async () => persistState(db, row, state));
     }
   }
   const stepSummary = STEP_IDS.map((id) => ({ step_id: id, status: state.steps[id]?.status ?? "not_started",
