@@ -4606,6 +4606,29 @@ async function runAdvanceOperation(operation, adapter, db, row, state, env, ctx,
       return setCursor(state, null);
     }
     await rehydrateParsed(db, state, { force: true });
+    // Genuine taxonomy/table text may have arrived through the bounded export
+    // poll rather than the stage's finalize_slice, so results.taxonomy and
+    // results.composition were never set. Rebuild them ONLY from parsed real
+    // artifacts; never invent assignments.
+    const parsedTaxonomy = state._parsed?.taxonomy;
+    const taxonomyArtifact = (state.artifacts ?? []).find((entry) => entry?.kind === "taxonomy") ?? null;
+    if (parsedTaxonomy?.available && state.results?.taxonomy?.available !== true) {
+      state.results.taxonomy = { ...parsedTaxonomy,
+        basis: "parsed_from_genuine_exported_taxonomy_text",
+        dataset_id: taxonomyArtifact?.dataset_id ?? null,
+        checksum: taxonomyArtifact?.checksum ?? null,
+        bytes: taxonomyArtifact?.bytes ?? null };
+    }
+    if (state._parsed?.table?.available && parsedTaxonomy?.available
+        && state.results?.composition?.available !== true) {
+      const composition = aggregateByRank(state._parsed.table, parsedTaxonomy, { rank: "phylum" });
+      if (composition?.available) {
+        state.results.composition = { ...composition,
+          basis: "computed_from_retrieved_feature_table_and_genuine_exported_taxonomy_text",
+          feature_table_dataset_id: safeString(state.frontier?.featureTableId, 200) || null,
+          taxonomy_dataset_id: taxonomyArtifact?.dataset_id ?? null };
+      }
+    }
     state.status = "succeeded";
     state.current_step = null;
     const result = await buildResult(state);
