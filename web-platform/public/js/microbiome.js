@@ -90,9 +90,14 @@ function renderPlan(body) {
   ui.plan.hidden = false;
   const input = body.input ?? {};
   const validation = body.validation ?? {};
+  const readsLabel = input.reads?.records !== null && input.reads?.records !== undefined
+    ? `${input.reads.records} reads (complete local parse)`
+    : `${input.reads?.sampled_reads ?? 0} reads in bounded sample${input.reads?.sample_size_bytes ? ` of ${input.reads.sample_size_bytes} B` : ""}` +
+      (input.reads?.published_expectation?.reads
+        ? `; published expectation ${input.reads.published_expectation.reads} reads` : "");
   ui.planSummary.textContent = `${input.mode} input · ${input.sample_count ?? 0} sample(s) · ` +
-    `${input.reads?.records ?? 0} reads · ${input.barcode_records ?? 0} barcodes · ` +
-    `correspondence ${input.correspondence?.valid ? "verified" : "FAILED"}`;
+    `${readsLabel} · ${input.barcode_records ?? input.sampled_barcodes ?? 0} barcodes · ` +
+    `correspondence ${input.correspondence?.valid ? "verified" : "FAILED"}${input.correspondence?.basis ? ` (${input.correspondence.basis})` : ""}`;
   renderTable(ui.planTools, [
     { key: "step", label: "Step" }, { key: "tool", label: "Discovered tool" },
     { key: "version", label: "Version" }, { key: "status", label: "Availability" }
@@ -111,7 +116,7 @@ function renderPlan(body) {
   } else renderNotes(ui.planValidation, validation.errors);
   ui.planParams.textContent = `trim-left ${body.params?.trim_left ?? "not reported"}; ` +
     `trunc-len ${body.params?.trunc_len ?? "not reported"}. ${body.params?.trunc_rationale ?? ""} ` +
-    `${body.params?.rarefaction_reason ?? ""}`;
+    `${body.params?.rarefaction_reason ?? ""}${body.qc?.note ? ` ${body.qc.note}` : ""}`;
   // Replace the static dataset description with the rationale actually derived
   // from the observed quality values returned by the plan endpoint.
   if (ui.publicNote && body.params?.trunc_rationale) {

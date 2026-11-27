@@ -1,12 +1,15 @@
 // Server-side resolution of the documented public Moving Pictures dataset.
 //
-// The three published files are fetched DIRECTLY (metadata TSV, reads FASTQ.gz,
-// barcodes FASTQ.gz) and ALL three SHA-256 checksums are verified before any
-// byte is decoded. Raw-deflate ZIP extraction is not available in the Workers
-// runtime, so no ZIP is fetched here. Gzip decompression IS supported.
-// The caller supplies the descriptor so offline tests can use labelled stubs.
+// The three published files are fetched DIRECTLY and ALL three SHA-256
+// checksums are verified before any byte is decoded. The Worker then keeps the
+// original .fastq.gz bytes for upload to Galaxy; it only decompresses a small
+// prefix for an explicitly labelled plan-time observation. Full QC, counts and
+// diversity always come from genuine Galaxy/QIIME 2 artifacts.
+//
+// Raw-deflate ZIP extraction is NOT available in the Workers runtime, so no
+// ZIP is fetched here. Gzip decompression of a bounded prefix IS supported.
 
-import { maybeGunzip, sha256Bytes } from "../../../../../public/js/microbiome-zip.js";
+import { sha256Bytes } from "../../../../../public/js/microbiome-zip.js";
 
 async function fetchBytes(url, fetchImpl, label) {
   let response;
@@ -38,16 +41,46 @@ function verifyChecksum(bytes, expected, label) {
   });
 }
 
-async function decodeFastaGzip(bytes, label) {
-  try {
-    return new TextDecoder().decode(await maybeGunzip(bytes));
-  } catch (error) {
-    throw Object.assign(new Error(`public ${label} could not be decompressed: ${error?.message ?? error}`),
+/**
+ * Decode at most `maxBytes` of a gzip stream, then cancel. The returned text is
+ * a labelled sample, NEVER a full read set. Plain (non-gzip) inputs are simply
+ * sliced to the same bound.
+ */
+export async function sampleGzipPrefix(bytes, maxBytes = 200 * 1024) {
+  const input = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  if (!(input[0] === 0x1f && input[1] === 0x8b)) {
+    const size = Math.min(input.length, maxBytes);
+    return { text: new TextDecoder().decode(input.subarray(0, size)), bytes: size,
+      truncated: input.length > size, basis: "plain_prefix_sample" };
+  }
+  if (typeof DecompressionStream === "undefined") {
+    throw Object.assign(new Error("Bounded gzip sampling requires DecompressionStream('gzip')."),
       { code: "public_entry_unavailable", status: 502 });
   }
+  const stream = new Blob([input]).stream().pipeThrough(new DecompressionStream("gzip"));
+  const reader = stream.getReader();
+  const parts = [];
+  let total = 0;
+  try {
+    while (total < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = value instanceof Uint8Array ? value : new Uint8Array(value ?? []);
+      const remaining = maxBytes - total;
+      parts.push(chunk.length <= remaining ? chunk : chunk.subarray(0, remaining));
+      total += Math.min(chunk.length, remaining);
+    }
+  } finally {
+    try { await reader.cancel(); } catch { /* stream already closed */ }
+  }
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const part of parts) { merged.set(part, offset); offset += part.length; }
+  return { text: new TextDecoder().decode(merged), bytes: total,
+    truncated: total >= maxBytes, basis: "bounded_gzip_prefix_sample" };
 }
 
-export async function resolvePublicDataset(dataset, fetchImpl) {
+export async function resolvePublicDataset(dataset, fetchImpl, { sampleBytes = 0 } = {}) {
   if (!dataset?.reads_url || !dataset?.barcodes_url) {
     throw Object.assign(new Error("unknown public_dataset descriptor: direct reads/barcodes sources are not declared"),
       { code: "unknown_public_dataset", status: 400 });
@@ -61,12 +94,23 @@ export async function resolvePublicDataset(dataset, fetchImpl) {
   const metadataSha = await verifyChecksum(metadataBytes, dataset.expected_metadata_sha256, "metadata");
   const readsSha = await verifyChecksum(readsBytes, dataset.expected_reads_sha256, "reads FASTQ");
   const barcodesSha = await verifyChecksum(barcodesBytes, dataset.expected_barcodes_sha256, "barcode FASTQ");
-  const readsText = await decodeFastaGzip(readsBytes, "reads FASTQ");
-  const barcodesText = await decodeFastaGzip(barcodesBytes, "barcode FASTQ");
-  if (!readsText.includes("@") || !barcodesText.includes("@")) {
-    throw Object.assign(new Error("the public FASTQ sources did not contain readable FASTQ records"),
-      { code: "public_entry_unavailable", status: 502 });
+
+  let observedSample = null;
+  if (sampleBytes > 0) {
+    try {
+      observedSample = {
+        reads: await sampleGzipPrefix(readsBytes, sampleBytes),
+        barcodes: await sampleGzipPrefix(barcodesBytes, sampleBytes),
+        sample_size_bytes: sampleBytes,
+        basis: "bounded_first_bytes_sample",
+        note: "A bounded prefix used only for the plan-time quality rationale; it is NOT a read count or a QC result."
+      };
+    } catch (error) {
+      throw Object.assign(new Error(`public FASTQ prefix could not be sampled: ${error?.message ?? error}`),
+        { code: "public_entry_unavailable", status: 502 });
+    }
   }
+
   return {
     mode: "public", public_dataset: dataset.key ?? null,
     source: {
@@ -76,12 +120,15 @@ export async function resolvePublicDataset(dataset, fetchImpl) {
         zip_sha256_reference: dataset.zip_provenance?.sha256 ?? dataset.expected_zip_sha256 ?? null },
       provenance_note: "ZIP URL/checksum are provenance references only; the Worker fetches the three direct sources above.",
       expected: { samples: dataset.expected_samples, reads: dataset.expected_reads },
+      expectation_basis: "published_descriptor_expectation (not measured in this request)",
       rationale: dataset.rationale ?? null
     },
-    reads_text: readsText,
-    barcodes_text: barcodesText,
+    // Original gzip bytes are handed straight to the Galaxy upload adapter.
+    reads_bytes: readsBytes, barcodes_bytes: barcodesBytes,
+    reads_text: null, barcodes_text: null,
     metadata_text: new TextDecoder().decode(metadataBytes),
-    reads_filename: "sequences.fastq", barcodes_filename: "barcodes.fastq",
-    metadata_filename: "sample-metadata.tsv"
+    reads_filename: "sequences.fastq.gz", barcodes_filename: "barcodes.fastq.gz",
+    metadata_filename: "sample-metadata.tsv",
+    observed_sample: observedSample
   };
 }

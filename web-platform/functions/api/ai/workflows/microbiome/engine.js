@@ -47,7 +47,14 @@ const STEP_TOOL_IDS = Object.freeze({
   ordination: "microbiome.ordination", report: "microbiome.report"
 });
 
-const LIMITS = Object.freeze({ maxUploadChecks: 12, uploadCheckMs: 700, pollAfterMs: 1600, maxProviderPolls: 120 });
+export const LIMITS = Object.freeze({
+  maxUploadChecks: 12, uploadCheckMs: 700, pollAfterMs: 1600, maxProviderPolls: 120,
+  // Bounded plan-time observation. This is NOT a read count or a QC result.
+  publicSampleBytes: 200 * 1024,
+  // Full local FASTQ parsing is only safe for small user uploads; larger ones
+  // defer all QC/count claims to genuine Galaxy artifacts.
+  maxLocalReads: 100_000
+});
 
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 function ctxFor(env, options = {}) {
@@ -56,12 +63,14 @@ function ctxFor(env, options = {}) {
 
 // -------------------------------------------------------------- input bytes
 
-async function resolveInputs(payload, ctx) {
+async function resolveInputs(payload, ctx, { sampleBytes = 0 } = {}) {
   const key = safeString(payload?.public_dataset, 80);
   if (key) {
     const dataset = PUBLIC_DATASETS[key];
     if (!dataset) throw Object.assign(new Error(`unknown public_dataset: ${key}`), { code: "unknown_public_dataset", status: 400 });
-    return resolvePublicDataset({ ...dataset, key }, ctx.fetch);
+    // Verify all three checksums; keep the original gzip bytes for upload;
+    // optionally decode only a bounded prefix for the plan rationale.
+    return resolvePublicDataset({ ...dataset, key }, ctx.fetch, { sampleBytes });
   }
   const readsText = String(payload?.reads_text ?? "");
   const barcodesText = String(payload?.barcodes_text ?? "");
@@ -79,35 +88,118 @@ async function resolveInputs(payload, ctx) {
   };
 }
 
-function inspectInputs(resolved) {
-  const reads = parseFastq(resolved.reads_text, { label: "sequences.fastq" });
-  const barcodes = parseFastq(resolved.barcodes_text, { label: "barcodes.fastq" });
-  const metadata = parseMetadataTsv(resolved.metadata_text);
-  const correspondence = validateSampleCorrespondence(metadata, reads, barcodes);
-  const truncation = chooseTruncation(reads.quality_by_position, { maxLength: reads.max_length });
-  const rawQc = rawQcSummary(reads, barcodes);
-  return { reads, barcodes, metadata, correspondence, truncation, rawQc };
+// Keep local parsing bounded. A prefix is cut at a complete 4-line FASTQ record
+// so a cap never manufactures a malformed record.
+function capLocalFastq(text, label) {
+  if (typeof text !== "string" || !text) return { text: "", capped: false, label };
+  const maxChars = LIMITS.maxLocalReads * 400;
+  if (text.length <= maxChars) return { text, capped: false, label };
+  const prefix = text.slice(0, maxChars);
+  const lastNewline = prefix.lastIndexOf("\n");
+  const lines = prefix.slice(0, lastNewline > 0 ? lastNewline : prefix.length).split("\n");
+  const complete = lines.length - (lines.length % 4);
+  return { text: lines.slice(0, complete).join("\n"), capped: true, label,
+    reason: `${label} exceeds the ${LIMITS.maxLocalReads}-read local parse cap; QC and counts are deferred to Galaxy artifacts.` };
 }
 
-function validationOf(inspection) {
+// A sampled correspondence check never claims full sample coverage. It only
+// verifies that observed barcodes belong to the metadata, leaving the complete
+// sample-to-reads mapping to the Galaxy demultiplexing artifacts.
+function sampledCorrespondence(metadata, reads, barcodes, sample) {
+  const metadataBarcodes = new Set(metadata.samples
+    .map((item) => item.barcode_sequence).filter(Boolean));
+  const unknown = [...new Set(barcodes.records
+    .map((record) => record.sequence).filter((value) => value && !metadataBarcodes.has(value)))];
+  return {
+    valid: metadata.valid && reads.valid && barcodes.valid && unknown.length === 0,
+    basis: "bounded_sample_barcodes_subset",
+    sampled_reads: reads.record_count, sampled_barcodes: barcodes.record_count,
+    sample_size_bytes: sample?.sample_size_bytes ?? null,
+    unknown_sampled_barcodes: unknown, missing_samples: [],
+    note: "Full sample-to-reads correspondence and read counts are verified only from Galaxy demux/QC artifacts."
+  };
+}
+
+// A bounded byte prefix can cut a FASTQ record in half; only parse complete
+// four-line records so the sample never manufactures a validation error.
+function completeFastqPrefix(text) {
+  const lines = String(text ?? "").split("\n");
+  const complete = lines.length - (lines.length % 4);
+  return complete > 0 ? lines.slice(0, complete).join("\n") : "";
+}
+
+function inspectSampledInputs(resolved) {
+  const sample = resolved.observed_sample;
+  if (!sample) throw Object.assign(new Error("No bounded FASTQ sample was available for plan review."),
+    { code: "sample_unavailable", status: 502 });
+  const reads = parseFastq(completeFastqPrefix(sample.reads.text), { label: "sequences.fastq (bounded sample)" });
+  const barcodes = parseFastq(completeFastqPrefix(sample.barcodes.text), { label: "barcodes.fastq (bounded sample)" });
+  const metadata = parseMetadataTsv(resolved.metadata_text);
+  const correspondence = sampledCorrespondence(metadata, reads, barcodes, sample);
+  const truncation = chooseTruncation(reads.quality_by_position, { maxLength: reads.max_length });
+  return {
+    sampled: true, reads, barcodes, metadata, correspondence, truncation, rawQc: null,
+    sample: { reads: reads.record_count, barcodes: barcodes.record_count,
+      bytes_reads: sample.reads.bytes, bytes_barcodes: sample.barcodes.bytes,
+      sample_size_bytes: sample.sample_size_bytes, truncated: sample.reads.truncated,
+      basis: sample.basis, note: sample.note }
+  };
+}
+
+export function inspectInputs(resolved) {
+  if (resolved.mode === "public") return inspectSampledInputs(resolved);
+  const cappedReads = capLocalFastq(resolved.reads_text, "Reads FASTQ");
+  const cappedBarcodes = capLocalFastq(resolved.barcodes_text, "Barcode FASTQ");
+  const reads = parseFastq(cappedReads.text, { label: "sequences.fastq" });
+  const barcodes = parseFastq(cappedBarcodes.text, { label: "barcodes.fastq" });
+  const metadata = parseMetadataTsv(resolved.metadata_text);
+  const sampled = cappedReads.capped || cappedBarcodes.capped;
+  const correspondence = sampled
+    ? sampledCorrespondence(metadata, reads, barcodes,
+      { sample_size_bytes: Math.max(cappedReads.text.length, cappedBarcodes.text.length) })
+    : validateSampleCorrespondence(metadata, reads, barcodes);
+  const truncation = chooseTruncation(reads.quality_by_position, { maxLength: reads.max_length });
+  return {
+    sampled, reads, barcodes, metadata, correspondence, truncation,
+    rawQc: sampled ? null : rawQcSummary(reads, barcodes),
+    sample: sampled ? { reads: reads.record_count, barcodes: barcodes.record_count,
+      basis: "bounded_local_upload_prefix", note: "Full QC and counts are deferred to Galaxy artifacts." } : null
+  };
+}
+
+export function validationOf(inspection) {
+  const sampled = Boolean(inspection.sample);
+  const correspondenceErrors = sampled
+    ? (inspection.correspondence.unknown_sampled_barcodes ?? []).length
+      ? [`sampled barcode(s) absent from metadata: ${inspection.correspondence.unknown_sampled_barcodes.slice(0, 10).join(", ")}`]
+      : []
+    : (inspection.correspondence.valid ? [] : [inspection.correspondence.reason ?? "sample correspondence failed"]);
   const errors = [
     ...(!inspection.reads.valid ? inspection.reads.errors : []),
     ...(!inspection.barcodes.valid ? inspection.barcodes.errors : []),
     ...(inspection.metadata.errors ?? []),
-    ...(inspection.correspondence.valid ? [] : [inspection.correspondence.reason ?? "sample correspondence failed"])
+    ...correspondenceErrors
   ].filter(Boolean);
+  const warnings = [];
+  if (sampled) warnings.push("Plan-time values come from a bounded sample; full read counts, QC and diversity are reported only from retrieved Galaxy artifacts.");
+  else if (inspection.correspondence.barcode_count_matches_reads === false) {
+    warnings.push("Barcode and sequence FASTQ record counts differ; demultiplexing may fail.");
+  }
   return {
     status: errors.length ? "fail" : "pass",
-    checked_rules: ["fastq_record_structure", "sequence_quality_length", "unique_sample_ids",
-      "barcode_column_present", "metadata_to_reads_correspondence", "barcode_read_count"],
-    reads: inspection.reads.record_count, barcodes: inspection.barcodes.record_count,
+    checked_rules: sampled
+      ? ["metadata_unique_samples", "barcode_column_present", "sampled_fastq_structure", "sampled_barcodes_subset_of_metadata"]
+      : ["fastq_record_structure", "sequence_quality_length", "unique_sample_ids",
+        "barcode_column_present", "metadata_to_reads_correspondence", "barcode_read_count"],
+    reads: sampled ? null : inspection.reads.record_count,
+    barcodes: sampled ? null : inspection.barcodes.record_count,
+    sampled_reads: sampled ? inspection.reads.record_count : null,
+    sample_size_bytes: sampled ? inspection.sample.sample_size_bytes ?? null : null,
     samples: inspection.metadata.samples.length,
     missing_samples: inspection.correspondence.missing_samples,
     duplicate_samples: inspection.correspondence.duplicate_metadata_samples,
     invalid_metadata_rows: inspection.correspondence.invalid_metadata_rows,
-    errors,
-    warnings: inspection.correspondence.barcode_count_matches_reads === false
-      ? ["Barcode and sequence FASTQ record counts differ; demultiplexing may fail."] : []
+    errors, warnings
   };
 }
 
@@ -278,17 +370,23 @@ function bestParsed(artifacts, kind, options) {
   };
 }
 
-// When no tool QC artifact was retrieved, still surface the genuine per-read
-// statistics observed from the uploaded FASTQ (never presented as tool output).
-function observedQc(state) {
+// When no tool QC artifact was retrieved, a SMALL user upload may still expose
+// genuine per-read statistics computed locally. A public dataset (or a large
+// upload) never does: its plan-time prefix is not a QC result and all counts
+// must come from Galaxy/QIIME 2 artifacts.
+export function observedQc(state) {
+  if (state.input?.mode === "public" || state.qc?.basis === "bounded_first_bytes_sample") {
+    return { available: false, samples: [],
+      reason: "No tool QC artifact was retrieved. Bounded plan-time sample values are not QC results; counts and quality come only from Galaxy artifacts." };
+  }
   const raw = state.qc?.raw;
   if (!raw?.reads) {
     return { available: false, samples: [],
-      reason: "No tool QC artifact and no valid uploaded FASTQ were available; no QC is claimed." };
+      reason: "No tool QC artifact and no complete local FASTQ parse were available; no QC is claimed." };
   }
   return {
     ...raw, available: true, samples: [], basis: "worker_computed_from_uploaded_fastq",
-    reason: "No tool QC artifact was retrieved; only raw uploaded-read QC is reported."
+    reason: "No tool QC artifact was retrieved; only raw uploaded-read QC from a small upload is reported."
   };
 }
 
@@ -352,7 +450,7 @@ export async function handlePlan(request, env, options = {}) {
   let resolved;
   let inspection;
   try {
-    resolved = await resolveInputs(payload, ctx);
+    resolved = await resolveInputs(payload, ctx, { sampleBytes: LIMITS.publicSampleBytes });
     inspection = inspectInputs(resolved);
   } catch (caught) {
     return errorBody(caught, request);
@@ -381,18 +479,30 @@ export async function handlePlan(request, env, options = {}) {
       submission_policy: "One dependent workflow per input pair; every stage is keyed by a stored provider job id and is never resubmitted on refresh." },
     input: { mode: resolved.mode, source: resolved.source, reads_filename: resolved.reads_filename,
       barcodes_filename: resolved.barcodes_filename, metadata_filename: resolved.metadata_filename,
-      reads: { records: inspection.reads.record_count, total_bases: inspection.reads.total_bases,
-        min_length: inspection.reads.min_length, max_length: inspection.reads.max_length },
-      barcode_records: inspection.barcodes.record_count,
+      reads: inspection.sampled
+        ? { records: null, sampled_reads: inspection.reads.record_count,
+          sample_size_bytes: inspection.sample.sample_size_bytes,
+          max_length: inspection.reads.max_length, basis: "bounded_first_bytes_sample",
+          published_expectation: resolved.source?.expected ?? null,
+          expectation_basis: resolved.source?.expectation_basis ?? null }
+        : { records: inspection.reads.record_count, total_bases: inspection.reads.total_bases,
+          min_length: inspection.reads.min_length, max_length: inspection.reads.max_length },
+      barcode_records: inspection.sampled ? null : inspection.barcodes.record_count,
+      sampled_barcodes: inspection.sampled ? inspection.barcodes.record_count : null,
       samples: inspection.metadata.sample_ids, sample_count: inspection.metadata.samples.length,
       correspondence: inspection.correspondence },
-    qc: { raw: inspection.rawQc, quality_by_position: inspection.truncation.observed },
+    qc: inspection.sampled
+      ? { sample: inspection.sample, quality_by_position: inspection.truncation.observed,
+        basis: "bounded_first_bytes_sample",
+        note: "Full read counts, lengths, quality distributions and per-sample QC come only from retrieved Galaxy artifacts." }
+      : { raw: inspection.rawQc, quality_by_position: inspection.truncation.observed },
     params: { trim_left: inspection.truncation.trim_left, trunc_len: inspection.truncation.trunc_len,
       trunc_rationale: inspection.truncation.reason, rarefaction_depth: null,
       rarefaction_reason: "No rarefaction depth is asserted before a real feature table is available; it will be derived from the retrieved counts or left null." },
     classifier: discovery.classifier,
     validation,
     limitations: [
+      "Plan-time quality values come from a bounded prefix and are labelled as a sample; no full read count is claimed before Galaxy reports it.",
       "Absolute read counts and relative abundances come only from retrieved tool artifacts or real feature-table counts; no synthetic values are generated.",
       "Faith's PD is withheld unless a valid rooted tree artifact is retrieved.",
       "A qza artifact is binary: it must be exported by a genuinely discovered tool before its text can be parsed; otherwise the stage reports an honest reason.",
@@ -415,7 +525,9 @@ export async function handleRun(request, env, options = {}) {
   let resolved;
   let inspection;
   try {
-    resolved = await resolveInputs(payload, ctx);
+    // Only a bounded prefix is decoded; the original gzip bytes are kept for
+    // Galaxy upload and no full local FASTQ parse runs in the request path.
+    resolved = await resolveInputs(payload, ctx, { sampleBytes: LIMITS.publicSampleBytes });
     inspection = inspectInputs(resolved);
   } catch (caught) {
     return errorBody(caught, request);
@@ -425,8 +537,14 @@ export async function handleRun(request, env, options = {}) {
     return jsonResponse({ error: "Input validation failed; no workflow was submitted.", validation,
       workflow_type: "microbiome", execution_mode: envExecutionMode(env) }, 400, request);
   }
-  const inputSha = await hashInput(resolved.reads_text + "\n" + resolved.barcodes_text);
-  const metadataSha = await hashInput(resolved.metadata_text);
+  // For public sources the verified checksums ARE the input identity; no full
+  // FASTQ text exists locally to hash. Small uploads keep the previous hashing.
+  const inputSha = resolved.mode === "public"
+    ? await hashInput(`${resolved.source.checksums.reads_sha256}:${resolved.source.checksums.barcodes_sha256}`)
+    : await hashInput(resolved.reads_text + "\n" + resolved.barcodes_text);
+  const metadataSha = resolved.mode === "public"
+    ? resolved.source.checksums.metadata_sha256
+    : await hashInput(resolved.metadata_text);
   const existing = (await listRows(db, SQL.getMicrobiomeRunsByInput, [inputSha, metadataSha])).at(-1) ?? null;
   if (existing) {
     const storedState = parseJson(existing.state_json) ?? {};
@@ -461,20 +579,29 @@ export async function handleRun(request, env, options = {}) {
       filenames: { reads: resolved.reads_filename, barcodes: resolved.barcodes_filename, metadata: resolved.metadata_filename },
       metadata_text: resolved.metadata_text, sample_ids: inspection.metadata.sample_ids,
       sample_count: inspection.metadata.samples.length,
-      barcode_column: inspection.metadata.columns.includes("barcode-sequence") },
+      barcode_column: inspection.metadata.columns.includes("barcode-sequence"),
+      observed_sample: inspection.sample, published_expectation: resolved.source?.expected ?? null,
+      expectation_basis: resolved.source?.expectation_basis ?? null },
     params: { trim_left: inspection.truncation.trim_left, trunc_len: inspection.truncation.trunc_len,
       trunc_rationale: inspection.truncation.reason, rarefaction_depth: null },
     discovery: { tools: discovery.toolVersions, classifier: discovery.classifier,
       discovery_mode: discovery.discoveryMode, discovered_at: discovery.discoveredAt },
-    validation, qc: { raw: inspection.rawQc, observed_quality: inspection.truncation.observed },
+    validation,
+    qc: inspection.sampled
+      ? { raw: null, observed_quality: inspection.truncation.observed, sample: inspection.sample,
+        basis: "bounded_first_bytes_sample" }
+      : { raw: inspection.rawQc, observed_quality: inspection.truncation.observed },
     dataset_ids: { sequences: null, barcodes: null, metadata: null },
     filenames: { reads: resolved.reads_filename, barcodes: resolved.barcodes_filename, metadata: resolved.metadata_filename },
     frontier: {}, steps: {}, results: {}, artifacts: [], errors: [], poll_count: 0
   };
 
   try {
+    const readsBytesSize = resolved.mode === "public"
+      ? resolved.reads_bytes.length
+      : new TextEncoder().encode(resolved.reads_text).length;
     await insertRow(db, SQL.insertDataset, [datasetId, null, resolved.reads_filename, inputSha,
-      new TextEncoder().encode(resolved.reads_text).length, "text/plain", "pending", null, createdAt]);
+      readsBytesSize, "text/plain", "pending", null, createdAt]);
     await insertRow(db, SQL.insertPlan, [planId, `req:${runId}`, 1, JSON.stringify({
       goal: state.input.objective || "16S amplicon microbiome workflow", workflow_type: "microbiome",
       input: state.input, params: state.params, steps: STEP_IDS.map((id, index) => ({
@@ -496,11 +623,19 @@ export async function handleRun(request, env, options = {}) {
   // id so a refresh cannot create a second upload.
   const adapter = createAdapter(env);
   try {
+    const readsUpload = resolved.mode === "public"
+      ? { filename: resolved.reads_filename, extension: "fastq.gz",
+        content: new Blob([resolved.reads_bytes], { type: "application/gzip" }) }
+      : { filename: resolved.reads_filename, extension: "fastq", content: resolved.reads_text };
+    const barcodesUpload = resolved.mode === "public"
+      ? { filename: resolved.barcodes_filename, extension: "fastq.gz",
+        content: new Blob([resolved.barcodes_bytes], { type: "application/gzip" }) }
+      : { filename: resolved.barcodes_filename, extension: "fastq", content: resolved.barcodes_text };
     const upload = await adapter.submitJob({
       operation: "submit_job", tool_id: "upload1",
       inputs: {
-        [resolved.reads_filename]: { filename: resolved.reads_filename, extension: "fastq", content: resolved.reads_text },
-        [resolved.barcodes_filename]: { filename: resolved.barcodes_filename, extension: "fastq", content: resolved.barcodes_text },
+        [resolved.reads_filename]: readsUpload,
+        [resolved.barcodes_filename]: barcodesUpload,
         [resolved.metadata_filename]: { filename: resolved.metadata_filename, extension: "tsv", content: resolved.metadata_text }
       }
     }, ctx);
@@ -541,8 +676,12 @@ async function finalizeImport(adapter, state, ctx) {
     ["sequences", state.filenames.reads], ["barcodes", state.filenames.barcodes], ["metadata", state.filenames.metadata]
   ];
   const resolved = {};
+  const stripGz = (value) => String(value ?? "").replace(/\.gz$/i, "");
   for (const [key, filename] of wanted) {
-    const artifact = (contents.artifacts ?? []).find((item) => String(item.name ?? "") === String(filename));
+    const artifact = (contents.artifacts ?? []).find((item) => {
+      const name = String(item.name ?? "");
+      return name === String(filename) || stripGz(name) === stripGz(filename);
+    });
     if (artifact?.id) resolved[key] = artifact.id;
   }
   state.dataset_ids = { ...state.dataset_ids, ...resolved };
