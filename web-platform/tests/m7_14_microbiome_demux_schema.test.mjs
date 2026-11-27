@@ -50,7 +50,10 @@ function liveDemuxSchema() {
   };
 }
 
-const METADATA = "sample-id\tbarcode-sequence\tsite\nsampleA\tACCGCACTT\tgut\nsampleB\tGGACGGACG\tgut\n";
+// Exact live header from the captured Galaxy error evidence (9 columns).
+const METADATA = "sample-id\tbarcode-sequence\tbody-site\tyear\tmonth\tday\tsubject\t"
+  + "reported-antibiotic-usage\tdays-since-experiment-start\n"
+  + "sampleA\tACCGCACTT\ttongue\t2026\t10\t1\tsubject-01\tno\t0\n";
 
 function stateAtDemux(overrides = {}) {
   return {
@@ -132,7 +135,7 @@ async function status(db, stub) {
 }
 function storedState(d1) { return JSON.parse(d1.tables.microbiome_runs[0].state_json); }
 
-test("LIVE SCHEMA / barcode column comes from the real metadata header; defaults kept, nothing invented", async () => {
+test("LIVE SCHEMA / 1-based column position comes from the real metadata header; defaults kept", async () => {
   const stub = makeStub();
   const { db, state: d1 } = seededDb(stateAtDemux());
   await withStub(stub, async () => {
@@ -145,7 +148,7 @@ test("LIVE SCHEMA / barcode column comes from the real metadata header; defaults
     assert.deepEqual(inputs.seqs, { src: "hda", id: QZA });
     assert.deepEqual(inputs["barcodes|source"], { src: "hda", id: META });
     assert.equal(inputs["barcodes|type"], "tsv", "the live default is preserved");
-    assert.equal(inputs["barcodes|column"], "barcode-sequence", "the real header supplies the column");
+    assert.equal(inputs["barcodes|column"], "2", "ColumnListParameter gets the 1-based position of barcode-sequence");
     assert.equal(inputs["extra_opts|golay_error_correction"], "True", "Golay default from schema");
     assert.equal(inputs["extra_opts|phred_quality_threshold"], "False", "other schema defaults unchanged");
     assert.equal("column" in inputs, false, "no guessed top-level column parameter");
@@ -153,17 +156,50 @@ test("LIVE SCHEMA / barcode column comes from the real metadata header; defaults
       "extra_opts|golay_error_correction", "extra_opts|phred_quality_threshold"]);
     assert.ok(Object.keys(inputs).every((name) => liveNames.has(name)),
       `unexpected parameter names: ${Object.keys(inputs).join(", ")}`);
+    const provenance = storedState(d1).steps.demux.barcode_column;
+    assert.equal(provenance.header, "barcode-sequence");
+    assert.equal(provenance.position, 2);
+    assert.equal(provenance.value_sent, "2");
+    assert.equal(provenance.parameter_type, "ColumnListParameter");
+    assert.equal(provenance.value_rule, "numeric_1_based_column_position");
+    assert.match(provenance.evidence, /invalid option|numeric options/);
+    assert.equal(provenance.columns.length, 9);
+    assert.equal(provenance.reason, null);
   });
 });
 
-test("LIVE SCHEMA / a different verified barcode header is used, never hardcoded", async () => {
-  const alternate = "sample-id\tBarcodeSequence\tsite\nsampleA\tACCGCACTT\tgut\n";
+test("LIVE SCHEMA / alternate header position is derived, never hardcoded", async () => {
+  const alternate = "sample-id\tbody-site\tBarcodeSequence\tyear\nsampleA\tgut\tACCGCACTT\t2026\n";
   const stub = makeStub();
-  const { db } = seededDb(stateAtDemux({ input: { ...stateAtDemux().input, metadata_text: alternate } }));
+  const { db, state: d1 } = seededDb(stateAtDemux({
+    input: { ...stateAtDemux().input, metadata_text: alternate } }));
   await withStub(stub, async () => {
     await status(db, stub);
     await status(db, stub);
-    assert.equal(stub.submissions[0].inputs["barcodes|column"], "BarcodeSequence");
+    assert.equal(stub.submissions[0].inputs["barcodes|column"], "3");
+    const provenance = storedState(d1).steps.demux.barcode_column;
+    assert.equal(provenance.header, "BarcodeSequence");
+    assert.equal(provenance.position, 3);
+    assert.equal(provenance.value_sent, "3");
+  });
+});
+
+test("LIVE SCHEMA / missing barcode header fails closed with an honest reason", async () => {
+  const noBarcode = "sample-id\tbody-site\tyear\nsampleA\tgut\t2026\n";
+  const stub = makeStub();
+  const { db, state: d1 } = seededDb(stateAtDemux({
+    input: { ...stateAtDemux().input, metadata_text: noBarcode } }));
+  await withStub(stub, async () => {
+    await status(db, stub);
+    await status(db, stub);
+    const inputs = stub.submissions[0]?.inputs;
+    assert.ok(inputs, "demux is still submitted from the verified schema");
+    assert.equal("barcodes|column" in inputs, false, "no invented column index was sent");
+    const provenance = storedState(d1).steps.demux.barcode_column;
+    assert.equal(provenance.header, null);
+    assert.equal(provenance.position, null);
+    assert.equal(provenance.value_sent, null);
+    assert.match(provenance.reason, /No barcode-named column exists/);
   });
 });
 
@@ -196,9 +232,9 @@ test("FAILED SUBMISSION / bounded sanitized field-name summary is persisted", as
   });
 });
 
-test("RESUME / eighth pre-job resume succeeds; ninth cap and provider-job failure are refused", async () => {
+test("RESUME / ninth pre-job resume succeeds; tenth cap and provider-job failure are refused", async () => {
   const failedState = () => stateAtDemux({
-    status: "failed", retry_count: 1, stage_resume_count: 7, current_step: "demux",
+    status: "failed", retry_count: 1, stage_resume_count: 8, current_step: "demux",
     steps: { import_reads: { status: "succeeded", provider_job_id: "uploadjob00000001" },
       demux: { status: "failed", reason: "demux submission failed: HTTP 400", provider_job_id: null } },
     errors: [{ step: "demux", reason: "demux submission failed: HTTP 400" }],
@@ -209,9 +245,9 @@ test("RESUME / eighth pre-job resume succeeds; ninth cap and provider-job failur
   await withStub(stub, async () => {
     const resume = () => handleResumeStages(makePostRequest({ run_id: RUN_ID },
       "/api/ai/workflows/microbiome/resume-stages"), envFor(db, stub), { fetchImpl: stub.fetchImpl });
-    const eighth = await resume();
-    assert.equal(eighth.status, 202, JSON.stringify(await eighth.clone().json()));
-    assert.equal((await eighth.json()).stage_resume_count, 8);
+    const ninth = await resume();
+    assert.equal(ninth.status, 202, JSON.stringify(await ninth.clone().json()));
+    assert.equal((await ninth.json()).stage_resume_count, 9);
     assert.equal(storedState(d1).import.provider_job_id, IMPORT_JOB, "import preparation survived");
     assert.equal(storedState(d1).steps.demux, undefined);
 
@@ -224,7 +260,7 @@ test("RESUME / eighth pre-job resume succeeds; ninth cap and provider-job failur
       row.state_json = JSON.stringify(state);
       row.state = "failed";
     };
-    refail(8, { status: "failed", reason: "demux submission failed: HTTP 400", provider_job_id: null });
+    refail(9, { status: "failed", reason: "demux submission failed: HTTP 400", provider_job_id: null });
     const capped = await resume();
     assert.equal(capped.status, 409);
     assert.equal((await capped.json()).reason, "stage_resume_limit_reached");
