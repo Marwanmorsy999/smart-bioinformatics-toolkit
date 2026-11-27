@@ -1382,8 +1382,8 @@ export async function handleResumeStages(request, env, options = {}) {
   if (state.status !== "failed") return refuse("status_not_failed", `The stored run status is ${state.status}, not failed.`);
   if (Number(state.retry_count ?? -1) !== 1) return refuse("retry_count_not_one",
     "Only a run resumed by exactly one bounded upload retry may resume stages.");
-  if (Number(state.stage_resume_count ?? 0) >= 4) return refuse("stage_resume_limit_reached",
-    "This run has reached the cap of four bounded stage resumes.");
+  if (Number(state.stage_resume_count ?? 0) >= 5) return refuse("stage_resume_limit_reached",
+    "This run has reached the cap of five bounded stage resumes.");
   if ((state.steps?.import_reads?.status ?? null) !== "succeeded") {
     return refuse("import_reads_not_succeeded", "The original upload import is not recorded as succeeded.");
   }
@@ -1663,6 +1663,78 @@ async function recoverImportedQza(adapter, prior, state, ctx) {
     : "qza_import_output_unverified: no output associations were returned", candidates };
 }
 
+// A dataset in another history cannot be referenced by a tool job in the run's
+// history. Verify a candidate HDA is ready and a qza artifact in a given history.
+async function verifyQzaInHistory(adapter, datasetId, historyId, ctx, label) {
+  if (!datasetId || !historyId) return { ok: false, reason: `${label}_reference_missing` };
+  let contents;
+  try {
+    contents = await adapter.getArtifacts({ history_id: historyId }, ctx);
+  } catch (caught) {
+    return { ok: false, reason: `${label}_inventory_threw: ${safeString(caught?.message ?? caught, 300)}` };
+  }
+  if (!contents?.ok) {
+    return { ok: false, reason: `${label}_inventory_unavailable: ${contents?.error?.message ?? contents?.error?.code ?? "unreadable"}` };
+  }
+  const match = (contents.artifacts ?? []).find((item) => String(item.id) === String(datasetId)) ?? null;
+  if (!match) return { ok: false, reason: `${label}_not_found_in_history` };
+  if (!["ok", "success"].includes(String(match.state ?? "").toLowerCase())) {
+    return { ok: false, reason: `${label}_not_ready: ${match.state ?? "unknown"}` };
+  }
+  const ext = String(match.type ?? match.extension ?? "").replace(/^\./, "").toLowerCase();
+  if (ext !== "qza" && !/\.qza$/i.test(String(match.name ?? ""))) {
+    return { ok: false, reason: `${label}_not_qza_artifact` };
+  }
+  return { ok: true, name: match.name ?? null, extension: ext || null, state: String(match.state) };
+}
+
+// Copy a verified cross-history qza into the run history AT MOST ONCE. The
+// `state.import.copy_dataset_id` guard means every later poll re-verifies the
+// existing copy instead of issuing another copy request. If a copy returned an
+// id but is not ready yet, that id is still recorded so it is never repeated.
+async function ensureQzaInRunHistory(adapter, state, ctx, prior, recovered) {
+  const runHistory = safeString(state.history_id, 200);
+  const originalId = safeString(recovered?.dataset_id ?? prior?.output_dataset_id, 200);
+  const originalHistory = safeString(recovered?.output_history_id ?? prior?.output_history_id, 200);
+  const mismatch = Boolean(originalHistory && runHistory && originalHistory !== runHistory);
+  if (!mismatch) return { ok: true, dataset_id: originalId, copied: false };
+  if (!runHistory) return { ok: false, reason: "copy_target_history_missing" };
+  const existing = safeString(prior?.copy_dataset_id, 200);
+  if (existing) {
+    const verified = await verifyQzaInHistory(adapter, existing, runHistory, ctx, "copied_dataset");
+    return verified.ok
+      ? { ok: true, dataset_id: existing, copied: true, reused: true, verified }
+      : { ok: false, reason: verified.reason, copy_dataset_id: existing };
+  }
+  if (prior?.copy_attempted) {
+    return { ok: false, reason: "qza_history_copy_already_attempted_without_dataset_id" };
+  }
+  let result;
+  try {
+    result = await adapter.copyDatasetToHistory({ dataset_id: originalId, history_id: runHistory }, ctx);
+  } catch (caught) {
+    return { ok: false, reason: `qza_history_copy_threw: ${safeString(caught?.message ?? caught, 300)}`,
+      copy_attempted: true };
+  }
+  const copiedId = safeString(result?.dataset_id, 200);
+  const provenance = {
+    copied_from_history: originalHistory || null,
+    original_dataset_id: originalId,
+    copied_dataset_id: copiedId || null,
+    target_history_id: safeString(result?.history_id, 200) || runHistory,
+    copy_basis: "authenticated_hda_copy_into_run_history",
+    at: nowIso()
+  };
+  if (!result?.ok || !copiedId) {
+    return { ok: false, reason: `qza_history_copy_failed: ${result?.error?.message ?? result?.error?.code ?? "no_dataset_id_returned"}`,
+      copy_attempted: true, copy_provenance: provenance };
+  }
+  const verified = await verifyQzaInHistory(adapter, copiedId, runHistory, ctx, "copied_dataset");
+  return verified.ok
+    ? { ok: true, dataset_id: copiedId, copied: true, verified, copy_dataset_id: copiedId, copy_provenance: provenance }
+    : { ok: false, reason: verified.reason, copy_dataset_id: copiedId, copy_provenance: provenance };
+}
+
 async function prepareDemuxImport(adapter, env, db, row, state, ctx) {
   // A qza input that already exists needs no import at all.
   if (state.frontier?.importedSeqsId) return { handled: false };
@@ -1674,11 +1746,43 @@ async function prepareDemuxImport(adapter, env, db, row, state, ctx) {
   };
 
   const prior = state.import;
+  // Finish a recovered import: record provenance, copy into the run history if
+  // the qza lives elsewhere, and only then expose an id demux may reference.
+  const finishRecovered = async (recovered) => {
+    prior.status = "succeeded";
+    prior.reason = null;
+    prior.detail = null;
+    prior.output_dataset_id = recovered.dataset_id;
+    prior.output_history_id = recovered.output_history_id ?? null;
+    prior.history_mismatch = recovered.history_mismatch;
+    prior.recovery = recovered;
+    prior.resolved_at = nowIso();
+    const ensured = await ensureQzaInRunHistory(adapter, state, ctx, prior, recovered);
+    if (ensured.copy_attempted) prior.copy_attempted = true;
+    if (ensured.copy_dataset_id) prior.copy_dataset_id = ensured.copy_dataset_id;
+    if (ensured.copy_provenance) {
+      prior.copy = { ...ensured.copy_provenance, verified: Boolean(ensured.verified),
+        reused: Boolean(ensured.reused) };
+    } else if (prior.copy && ensured.verified) {
+      prior.copy = { ...prior.copy, verified: true, reused: true };
+    }
+    if (ensured.ok) {
+      state.frontier.importedSeqsId = ensured.dataset_id;
+    } else {
+      prior.status = "unavailable";
+      prior.reason = `qza_history_copy_failed_or_unverified: ${ensured.reason}`;
+      state.errors.push({ step: "demux", reason: prior.reason });
+      state.steps.demux = { status: "unavailable", reason: prior.reason };
+      await recordStep(db, state, "demux", "unavailable", { details: { reason: prior.reason } });
+    }
+    await persistState(db, row, state);
+    return { handled: true };
+  };
   if (prior) {
     if (prior.output_dataset_id) {
-      state.frontier.importedSeqsId = prior.output_dataset_id;
-      prior.status = "succeeded";
-      return { handled: true };
+      return finishRecovered({ dataset_id: prior.output_dataset_id,
+        output_history_id: prior.output_history_id ?? null,
+        history_mismatch: Boolean(prior.history_mismatch) });
     }
     const jobId = safeString(prior.provider_job_id, 200);
     if (jobId) {
@@ -1697,19 +1801,7 @@ async function prepareDemuxImport(adapter, env, db, row, state, ctx) {
         return { handled: true };
       }
       const recovered = await recoverImportedQza(adapter, prior, state, ctx);
-      if (recovered.ok) {
-        prior.status = "succeeded";
-        prior.reason = null;
-        prior.detail = null;
-        prior.output_dataset_id = recovered.dataset_id;
-        prior.output_history_id = recovered.output_history_id ?? null;
-        prior.history_mismatch = recovered.history_mismatch;
-        prior.recovery = recovered;
-        prior.resolved_at = nowIso();
-        state.frontier.importedSeqsId = recovered.dataset_id;
-        await persistState(db, row, state);
-        return { handled: true };
-      }
+      if (recovered.ok) return finishRecovered(recovered);
       prior.status = "unavailable";
       prior.reason = `qza_import_output_resolution_failed: ${recovered.reason}`;
       prior.recovery = { ...recovered, ok: false };
