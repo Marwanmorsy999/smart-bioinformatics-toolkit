@@ -4664,6 +4664,77 @@ export async function handleAdvance(request, env, options = {}) {
     ...(outcome.result ? { result_ready: true } : {}), execution_mode: envExecutionMode(env) }, 200, request);
 }
 
+// ------------------------------------------------------ /dataset-detail (GET)
+//
+// Read-only diagnostic: expose ONLY the provider's own dataset metadata and
+// checksum map for a dataset already known to this run. No body, URL, key or
+// unrelated dataset is ever returned.
+const DATASET_DETAIL_MAX_CHARS = 8 * 1024;
+
+export async function handleDatasetDetail(request, env, options = {}) {
+  const rejected = requireMethod(request, "GET", "GET, OPTIONS");
+  if (rejected) return rejected;
+  let runId;
+  let datasetId;
+  try {
+    const params = new URL(request.url).searchParams;
+    runId = safeString(params.get("run_id"), 100);
+    datasetId = safeString(params.get("dataset_id"), 200);
+  } catch {
+    return errorResponse("Invalid request URL.", 400, request);
+  }
+  if (!runId || !datasetId) return errorResponse("run_id and dataset_id are required.", 400, request);
+  if (!/^[0-9a-f]{8,64}$/i.test(datasetId)) return errorResponse("Invalid dataset_id.", 400, request);
+  const db = getDb(env);
+  if (!db) return errorResponse("AI database binding is unavailable.", 503, request);
+  const row = await getRow(db, SQL.getMicrobiomeRunByPublicId, [runId]);
+  if (!row) return errorResponse("No stored microbiome run matches this run_id.", 404, request);
+  const state = parseJson(row.state_json);
+  if (!state) return errorResponse("The stored run has no state record.", 409, request);
+  if (state.workflow_type !== "microbiome") return errorResponse("The referenced run is not a microbiome workflow.", 400, request);
+  const historyId = safeString(state.history_id, 200);
+  if (!historyId) return errorResponse("This run has no owned Galaxy history; no dataset was exposed.", 403, request);
+  const ctx = ctxFor(env, options);
+  const adapter = createAdapter(env);
+  if (!knownDatasetIds(state).has(datasetId)) {
+    // One lightweight history lookup; an id from another history is refused.
+    const inventory = await adapter.getArtifacts({ history_id: historyId }, ctx);
+    if (!(inventory?.artifacts ?? []).some((entry) => String(entry?.id) === datasetId)) {
+      return errorResponse("Dataset is not owned by this run's history.", 403, request);
+    }
+  }
+  const detail = await adapter.getDatasetDetail({ dataset_id: datasetId }, ctx);
+  if (!detail?.ok) {
+    return errorResponse(`Dataset detail unavailable: ${safeString(detail?.error?.message ?? detail?.reason ?? "unreadable", 200)}`, 502, request);
+  }
+  if (detail.history_id && String(detail.history_id) !== historyId) {
+    return errorResponse("Dataset belongs to a different history.", 403, request);
+  }
+  const checksums = {};
+  for (const [hashFunction, value] of Object.entries(detail.checksums ?? {}).slice(0, 20)) {
+    const key = safeString(hashFunction, 40).toLowerCase();
+    const hash = safeString(value, 200);
+    if (key && hash) checksums[key] = hash;
+  }
+  const body = {
+    id: safeString(detail.dataset_id, 200) || datasetId,
+    name: safeString(detail.name, 300) || null,
+    state: safeString(detail.state, 80) || null,
+    size: Number.isFinite(detail.size) ? detail.size : null,
+    extension: safeString(detail.extension, 100) || null,
+    datatype: safeString(detail.datatype, 200) || null,
+    semantic_type: safeString(detail.semantic_type, 300) || null,
+    history_id: safeString(detail.history_id, 200) || null,
+    creating_job: safeString(detail.creating_job, 200) || null,
+    checksums,
+    note: "Provider-reported metadata only; no raw response body, URL, credential or dataset content is exposed. A missing checksum is reported as absent, never inferred."
+  };
+  if (JSON.stringify(body).length > DATASET_DETAIL_MAX_CHARS) {
+    return jsonResponse({ available: false, reason: "dataset_detail_exceeds_8kb_bound" }, 200, request);
+  }
+  return jsonResponse(body, 200, request);
+}
+
 // ------------------------------------------------------------ /artifact (GET)
 //
 // Owner-scoped dataset-body proxy. The run must exist, the dataset must be
