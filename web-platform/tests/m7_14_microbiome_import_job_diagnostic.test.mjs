@@ -18,6 +18,10 @@ const IMPORT_TOOL = "toolshed.g2.bx.psu.edu/repos/q2d2/qiime2_core__tools__impor
 const READS = "22222222222222222222222222222222";
 const BARCODES = "33333333333333333333333333333333";
 const QZA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+// Numeric dataset ids as Galaxy job outputs expose them; the same datasets
+// appear with 16-hex hda ids in history contents.
+const NUMERIC_READS = "311309378";
+const NUMERIC_BARCODES = "311309379";
 const SECRET = "stub-secret-key-xyz";
 const READS_FIELD = "import_root|__q2galaxy__GUI__cond__format__|import_sequences";
 const BARCODES_FIELD = "import_root|__q2galaxy__GUI__cond__format__|import_barcodes";
@@ -96,6 +100,28 @@ function jobDetailBody() {
   };
 }
 
+function jobOutputsBody() {
+  // GET /api/jobs/:id/outputs — NUMERIC ids, unlike history contents below.
+  return {
+    output_sequences: { id: NUMERIC_READS, dataset_id: NUMERIC_READS, uuid: "uuid-reads",
+      name: `${SECRET} sequences.fastq.gz`, state: "ok", extension: "fastq.gz", history_id: HISTORY },
+    output_barcodes: { id: NUMERIC_BARCODES, dataset_id: NUMERIC_BARCODES, uuid: "uuid-barcodes",
+      name: "barcodes.fastq.gz", state: "ok", extension: "fastq.gz", history_id: HISTORY,
+      tools_url: `https://galaxy.example.test/api/datasets/${NUMERIC_BARCODES}?key=${SECRET}` }
+  };
+}
+
+function historyContentsBody() {
+  // GET /api/histories/:id/contents — 16-HEX hda ids with the SAME numeric
+  // dataset_id values as the job outputs above.
+  return [
+    { id: READS, dataset_id: NUMERIC_READS, uuid: "uuid-reads", name: "sequences.fastq.gz",
+      state: "ok", extension: "fastq.gz", history_id: HISTORY, checksum: SECRET, content: `${SECRET} fastq content` },
+    { id: BARCODES, dataset_id: NUMERIC_BARCODES, uuid: "uuid-barcodes", name: `${SECRET} barcodes.fastq.gz`,
+      state: "ok", extension: "fastq.gz", history_id: HISTORY, file_size: 9876 }
+  ];
+}
+
 function detailStub() {
   const calls = [];
   const fetchImpl = async (input, init = {}) => {
@@ -103,6 +129,8 @@ function detailStub() {
     const method = String(init.method ?? "GET").toUpperCase();
     calls.push({ method, url });
     if (method !== "GET") return json({ error: "unexpected_non_get" }, 405);
+    if (url.endsWith(`/api/jobs/${IMPORT_JOB_ID}/outputs`)) return json(jobOutputsBody());
+    if (url.includes(`/api/histories/${HISTORY}/contents`)) return json(historyContentsBody());
     if (url.includes(`/api/jobs/${IMPORT_JOB_ID}`)) return json(jobDetailBody());
     return json({ error: "unexpected_stub_route", url }, 404);
   };
@@ -227,11 +255,82 @@ test("LABELLED STUB / no POST, no provider submission and no state mutation", as
   const { d1, before, body } = await callDiagnostic(importState(), stub);
   assert.equal(stub.calls.some((call) => call.method === "POST"), false, "zero POSTs");
   assert.equal(stub.calls.filter((call) =>
-    call.url.includes(`/api/jobs/${IMPORT_JOB_ID}`)).length, 2,
+    call.url.endsWith(`/api/jobs/${IMPORT_JOB_ID}`)).length, 2,
   "exactly two read-only GETs: getJobStatus + GET /api/jobs/:id");
+  assert.equal(stub.calls.filter((call) =>
+    call.url.endsWith(`/api/jobs/${IMPORT_JOB_ID}/outputs`)).length, 1,
+  "one read-only GET /api/jobs/:id/outputs");
+  assert.equal(stub.calls.filter((call) =>
+    call.url.includes(`/api/histories/${HISTORY}/contents`)).length, 1,
+  "one read-only GET history contents");
   assert.equal(d1.tables.microbiome_runs.length, 1, "no run was created");
   assert.equal(d1.tables.microbiome_runs[0].state_json, before, "stored state was not mutated");
   assert.equal(body.available, true);
+});
+
+// ------------------------------------------- numeric-to-hex output evidence
+
+test("LABELLED STUB / numeric job-output ids and hex history ids are both visible", async () => {
+  const stub = detailStub();
+  const { body } = await callDiagnostic(importState(), stub);
+  assert.equal(body.job_outputs.ok, true);
+  assert.equal(body.job_outputs.outputs.length, 2);
+  const readsOutput = body.job_outputs.outputs.find((item) => item.uuid === "uuid-reads");
+  const barcodesOutput = body.job_outputs.outputs.find((item) => item.uuid === "uuid-barcodes");
+  assert.ok(readsOutput, "numeric reads output is present");
+  assert.equal(readsOutput.galaxyHdaId, NUMERIC_READS);
+  assert.equal(readsOutput.id, NUMERIC_READS);
+  assert.equal(readsOutput.galaxyDatasetUuid, "uuid-reads");
+  assert.equal(readsOutput.state, "ok");
+  assert.equal(barcodesOutput.id, NUMERIC_BARCODES);
+
+  assert.equal(body.artifacts.ok, true);
+  assert.equal(body.artifacts.artifacts.length, 2);
+  const readsArtifact = body.artifacts.artifacts.find((item) => item.uuid === "uuid-reads");
+  assert.ok(readsArtifact, "hex history dataset is present");
+  assert.equal(readsArtifact.id, READS, "16-hex hda id from history contents");
+  assert.equal(readsArtifact.dataset_id, NUMERIC_READS, "numeric dataset id is exposed too");
+  assert.equal(readsArtifact.extension, "fastq.gz");
+  assert.equal(readsArtifact.state, "ok");
+
+  // The mismatch is now observable: one numeric id in job outputs, one hex id
+  // in history contents, with the numeric dataset id correlating them.
+  assert.equal(readsOutput.id, readsArtifact.dataset_id);
+  assert.notEqual(readsOutput.id, readsArtifact.id);
+});
+
+test("LABELLED STUB / output and artifact views allowlist fields and redact secrets", async () => {
+  const stub = detailStub();
+  const { body } = await callDiagnostic(importState(), stub);
+  const raw = JSON.stringify({ job_outputs: body.job_outputs, artifacts: body.artifacts });
+  assert.equal(raw.includes(SECRET), false, "configured secret never appears");
+  assert.equal(raw.includes("https://"), false, "URLs never appear");
+  assert.equal(raw.includes("fastq content"), false, "no dataset content is returned");
+  assert.equal(raw.includes("checksum"), false, "no checksum is returned");
+  assert.equal(raw.includes("file_size"), false, "no size is returned");
+  assert.match(body.job_outputs.outputs[0].name, /\[redacted\]/);
+  assert.match(body.artifacts.artifacts[1].name, /\[redacted\]/);
+  assert.deepEqual(Object.keys(body.job_outputs.outputs[0]).sort(), [
+    "galaxyDatasetUuid", "galaxyHdaId", "history_id", "id", "name", "state", "uuid"
+  ]);
+  assert.deepEqual(Object.keys(body.artifacts.artifacts[0]).sort(), [
+    "dataset_id", "extension", "history_id", "id", "name", "state", "type", "uuid"
+  ]);
+  assert.equal(stub.calls.some((call) => call.method === "POST"), false, "zero POSTs");
+});
+
+test("LABELLED STUB / a stored import without a history id reports honest artifact unavailability", async () => {
+  const stub = detailStub();
+  const state = importState();
+  delete state.history_id;
+  const { body } = await callDiagnostic(state, stub);
+  assert.equal(body.available, true);
+  assert.equal(body.artifacts.ok, false);
+  assert.equal(body.artifacts.reason, "no_history_id_stored");
+  assert.deepEqual(body.artifacts.artifacts, []);
+  assert.equal(stub.calls.some((call) => call.url.includes("/contents")), false,
+    "no history id means no artifact GET");
+  assert.equal(stub.calls.some((call) => call.method === "POST"), false, "zero POSTs");
 });
 
 // ------------------------------------------------------------ routing

@@ -1174,6 +1174,61 @@ function jobDetailView(detail, env) {
   };
 }
 
+// Numeric job-output ids and hexadecimal history-dataset ids are both kept
+// verbatim (after redaction) so an association mismatch can be diagnosed
+// without guessing which representation is authoritative. Only the seven
+// allowlisted association fields leave this boundary; no raw provider body,
+// content, header or credential is included.
+function jobOutputsView(result, env) {
+  const field = (value, cap = 200) => importDiagnosticField(value, env, cap);
+  const outputs = (Array.isArray(result?.outputs) ? result.outputs : [])
+    .filter((item) => item && (item.galaxyHdaId || item.galaxyDatasetId || item.galaxyDatasetUuid || item.id || item.uuid))
+    .slice(0, 50)
+    .map((item) => ({
+      galaxyHdaId: field(item.galaxyHdaId ?? item.hda_id, 200),
+      id: field(item.galaxyDatasetId ?? item.dataset_id ?? item.id, 200),
+      galaxyDatasetUuid: field(item.galaxyDatasetUuid ?? item.uuid, 200),
+      uuid: field(item.uuid ?? item.galaxyDatasetUuid, 200),
+      name: field(item.name, 300),
+      history_id: field(item.history_id, 200),
+      state: field(item.state, 80)
+    }));
+  return {
+    provider: field(result?.provider ?? "galaxy", 80),
+    provider_job_id: field(result?.provider_job_id, 200),
+    ok: result?.ok === true,
+    outputs,
+    reason: field(result?.reason, 200),
+    error: result?.error ? field(result.error.message ?? result.error.code ?? result.error, 300) : null
+  };
+}
+
+// Same allowlist discipline for history contents: identities and state only.
+// `dataset_id` is kept because Galaxy exposes the underlying numeric dataset
+// id here while job outputs may carry a different (numeric) representation.
+function artifactsView(result, env) {
+  const field = (value, cap = 200) => importDiagnosticField(value, env, cap);
+  const artifacts = (Array.isArray(result?.artifacts) ? result.artifacts : [])
+    .slice(0, 200)
+    .map((item) => ({
+      id: field(item?.id, 200),
+      dataset_id: field(item?.dataset_id, 200),
+      name: field(item?.name, 300),
+      uuid: field(item?.uuid, 200),
+      state: field(item?.state, 80),
+      extension: field(item?.type ?? item?.extension, 100),
+      type: field(item?.type, 100),
+      history_id: field(item?.history_id, 200)
+    }));
+  return {
+    provider: field(result?.provider ?? "galaxy", 80),
+    ok: result?.ok === true,
+    artifacts,
+    reason: field(result?.reason, 200),
+    error: result?.error ? field(result.error.message ?? result.error.code ?? result.error, 300) : null
+  };
+}
+
 export async function handleImportJob(request, env, options = {}) {
   try {
     const rejected = requireMethod(request, "GET", "GET, OPTIONS");
@@ -1227,11 +1282,33 @@ export async function handleImportJob(request, env, options = {}) {
       detail = { provider: "galaxy", provider_job_id: jobId, ok: false,
         error: { message: scrubDiagnosticText(caught?.message ?? caught, env).slice(0, 300) } };
     }
+    let outputs;
+    try {
+      outputs = await adapter.getJobOutputs({ job_id: jobId }, ctx);
+    } catch (caught) {
+      outputs = { provider: "galaxy", provider_job_id: jobId, ok: false,
+        error: { message: scrubDiagnosticText(caught?.message ?? caught, env).slice(0, 300) } };
+    }
+    const historyId = safeString(state.history_id, 200);
+    let collected;
+    if (historyId) {
+      try {
+        collected = await adapter.getArtifacts({ history_id: historyId }, ctx);
+      } catch (caught) {
+        collected = { provider: "galaxy", ok: false, artifacts: [],
+          error: { message: scrubDiagnosticText(caught?.message ?? caught, env).slice(0, 300) } };
+      }
+    } else {
+      collected = { provider: "galaxy", ok: false, artifacts: [],
+        reason: "no_history_id_stored" };
+    }
     return jsonResponse({
       workflow_type: "microbiome", run_id: row.public_id, available: true,
       import: importSummaryOf(imp, env),
       provider: providerJobView(status, env),
       job: jobDetailView(detail, env),
+      job_outputs: jobOutputsView(outputs, env),
+      artifacts: artifactsView(collected, env),
       execution_mode: envExecutionMode(env)
     }, 200, request);
   } catch (caught) {
