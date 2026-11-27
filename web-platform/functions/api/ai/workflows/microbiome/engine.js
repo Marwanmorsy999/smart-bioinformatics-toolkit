@@ -995,6 +995,62 @@ export async function handleRetry(request, env, options = {}) {
   return finish("upload_retry", "upload_retry: the single bounded re-upload succeeded; no analysis stage has run yet.");
 }
 
+// ------------------------------------------------------- /refresh-discovery
+
+// Re-run genuine discovery for a resumed, upload-only run. This performs GETs
+// only (capabilities + live tool schemas); it never uploads, submits a job or
+// creates a run. It updates state.discovery and nothing else.
+export async function handleRefreshDiscovery(request, env, options = {}) {
+  const rejected = requireMethod(request, "POST", "POST, OPTIONS");
+  if (rejected) return rejected;
+  const { payload, error } = await readJsonBody(request);
+  if (error) return errorResponse(error, 400, request);
+  const db = getDb(env);
+  if (!db) return errorResponse("AI database binding is unavailable.", 503, request);
+
+  const runId = safeString(payload?.run_id, 100);
+  const refuse = (reason, detail) => jsonResponse({
+    workflow_type: "microbiome", run_id: runId || null, refreshed: false,
+    reason, error: `refresh_discovery_refused: ${reason}`, detail,
+    execution_mode: envExecutionMode(env)
+  }, 409, request);
+  if (!runId) return refuse("run_missing", "run_id was not supplied.");
+  const row = await getRow(db, SQL.getMicrobiomeRunByPublicId, [runId]);
+  if (!row) return refuse("run_missing", "No stored run matches this run_id.");
+  const state = parseJson(row.state_json);
+  if (!state) return refuse("state_missing", "The stored run has no state record.");
+  if (state.workflow_type !== "microbiome") return refuse("not_microbiome_run", "The referenced run is not a microbiome workflow.");
+  if (state.status !== "running") return refuse("status_not_running", `The stored run status is ${state.status}, not running.`);
+  const scientificSteps = STEP_IDS.filter((id) => id !== "import_reads")
+    .filter((id) => {
+      const step = state.steps?.[id] ?? {};
+      return Boolean(safeString(step.provider_job_id, 200))
+        || ["running", "succeeded", "unavailable", "failed"].includes(String(step.status ?? ""));
+    });
+  if (scientificSteps.length) return refuse("scientific_stage_exists",
+    `Scientific stages already exist for: ${scientificSteps.join(", ")}.`);
+  if ((state.artifacts ?? []).length) return refuse("artifacts_present", "The run already has retrieved artifacts.");
+  if (Number(state.retry_count ?? -1) !== 1) return refuse("retry_count_not_one",
+    "Only a run resumed by exactly one bounded upload retry may refresh discovery.");
+
+  const ctx = ctxFor(env, options);
+  let discovery;
+  try {
+    discovery = await discover(env, ctx);
+  } catch (caught) {
+    return errorResponse(`Live discovery could not be refreshed: ${caught?.message ?? caught}`, 502, request);
+  }
+  state.discovery = { tools: discovery.toolVersions, classifier: discovery.classifier,
+    discovery_mode: discovery.discoveryMode, discovered_at: discovery.discoveredAt };
+  await persistState(db, row, state);
+  return jsonResponse({
+    workflow_type: "microbiome", run_id: row.public_id, refreshed: true,
+    discovery_mode: state.discovery.discovery_mode, discovered_at: state.discovery.discovered_at,
+    tool_versions: state.discovery.tools, classifier: state.discovery.classifier,
+    execution_mode: envExecutionMode(env)
+  }, 200, request);
+}
+
 // ----------------------------------------------------------------- /status
 
 async function finalizeImport(adapter, state, ctx) {
@@ -1585,6 +1641,8 @@ export function microbiomeHandlers() {
     microbiomePlan: (context) => handlePlan(context.request, context.env, {}),
     microbiomeRun: (context) => handleRun(context.request, context.env, {}),
     microbiomeRetry: (context) => handleRetry(context.request, context.env, { fetchImpl: context.env?.FETCH_IMPL }),
+    microbiomeRefreshDiscovery: (context) => handleRefreshDiscovery(context.request, context.env,
+      { fetchImpl: context.env?.FETCH_IMPL }),
     microbiomeStatus: (context) => handleStatus(context.request, context.env, {}),
     microbiomeResult: (context) => handleResult(context.request, context.env)
   };
