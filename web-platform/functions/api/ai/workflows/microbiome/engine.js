@@ -1520,6 +1520,68 @@ export async function handleResumeStages(request, env, options = {}) {
   }, 202, request);
 }
 
+// ------------------------------------------------------- /continue-stages
+
+// Single-use continuation for a run that failed at a PRE-JOB stage after real
+// scientific stages succeeded. It only resets stored step bookkeeping: no run,
+// upload, provider job or live request is created here.
+export async function handleContinueStages(request, env, options = {}) {
+  const rejected = requireMethod(request, "POST", "POST, OPTIONS");
+  if (rejected) return rejected;
+  const { payload, error } = await readJsonBody(request);
+  if (error) return errorResponse(error, 400, request);
+  const db = getDb(env);
+  if (!db) return errorResponse("AI database binding is unavailable.", 503, request);
+  const runId = safeString(payload?.run_id, 100);
+  const refuse = (reason, detail) => jsonResponse({
+    workflow_type: "microbiome", run_id: runId || null, continued: false,
+    reason, error: `stage_continue_refused: ${reason}`, detail,
+    execution_mode: envExecutionMode(env)
+  }, 409, request);
+  if (!runId) return refuse("run_missing", "run_id was not supplied.");
+  const row = await getRow(db, SQL.getMicrobiomeRunByPublicId, [runId]);
+  if (!row) return refuse("run_missing", "No stored run matches this run_id.");
+  const state = parseJson(row.state_json);
+  if (!state) return refuse("state_missing", "The stored run has no state record.");
+  if (state.workflow_type !== "microbiome") return refuse("not_microbiome_run", "The referenced run is not a microbiome workflow.");
+  // Single-use is checked first: even a resumed (running) run must report the
+  // exhausted continuation rather than a merely unexpected status.
+  if (Number(state.continue_count ?? 0) >= 1) return refuse("continue_limit_reached", "This run has already used its single stage continuation.");
+  if (state.status !== "failed") return refuse("status_not_failed", `The stored run status is ${state.status}, not failed.`);
+  if ((state.steps?.import_reads?.status ?? null) !== "succeeded") {
+    return refuse("import_reads_not_succeeded", "The original upload import is not recorded as succeeded.");
+  }
+  const scientific = STEP_IDS.filter((id) => id !== "import_reads");
+  const succeeded = scientific.filter((id) => (state.steps?.[id]?.status ?? null) === "succeeded");
+  if (!succeeded.length) return refuse("no_succeeded_scientific_stage",
+    "No scientific stage succeeded; there is no completed work to preserve.");
+  const failedStages = scientific.filter((id) => (state.steps?.[id]?.status ?? null) === "failed");
+  if (!failedStages.length) return refuse("no_failed_stage", "No scientific stage is recorded as failed.");
+  const postJob = failedStages.find((id) => Boolean(safeString(state.steps[id]?.provider_job_id, 200)));
+  if (postJob) return refuse("provider_job_failure_not_continuable",
+    `${postJob} holds a real provider job id; replaying it is not safe.`);
+  const firstIndex = scientific.findIndex((id) => (state.steps?.[id]?.status ?? null) !== "succeeded");
+  if (firstIndex < 0) return refuse("no_stage_to_continue", "Every scientific stage is already succeeded.");
+  const resetStages = scientific.slice(firstIndex);
+  for (const stage of resetStages) delete state.steps[stage];
+  state.errors = (state.errors ?? []).filter((entry) =>
+    !resetStages.some((stage) => errorText(entry).includes(stage)));
+  state.status = "running";
+  state.current_step = scientific[firstIndex];
+  state.continue_count = 1;
+  await persistState(db, row, state);
+  return jsonResponse({
+    workflow_type: "microbiome", run_id: row.public_id, continued: true,
+    continue_count: state.continue_count, current_step: state.current_step,
+    preserved_succeeded_stages: succeeded,
+    reset_stages: resetStages,
+    status_url: `/api/ai/workflows/microbiome/status?run_id=${encodeURIComponent(row.public_id)}`,
+    result_url: `/api/ai/workflows/microbiome/result?run_id=${encodeURIComponent(row.public_id)}`,
+    recovery_url: `/api/ai/runs/${encodeURIComponent(row.public_id)}/recovery`,
+    execution_mode: envExecutionMode(env)
+  }, 202, request);
+}
+
 // ------------------------------------------------------- /refresh-discovery
 
 // Re-run genuine discovery for a resumed, upload-only run. This performs GETs
@@ -2383,7 +2445,12 @@ async function finalizeStage(adapter, env, db, row, state, stepId, jobId, ctx, o
     downloaded = { artifacts: options.prefetched, errors: options.prefetchedErrors ?? [] };
   } else if (jobId) {
     collected = options.collected ?? await collectOutputs(adapter, jobId, state.history_id, ctx);
-    downloaded = await downloadSelected(adapter, collected.selected, stepId, ctx, { toolVersion: toolMeta?.version ?? null });
+    // QIIME 2 .qza outputs are binary: text export is only attempted when a
+    // discovered export tool was explicitly submitted for them. Downloading
+    // them here only produces `content_unavailable` noise.
+    const textEligible = collected.selected.filter((artifact) =>
+      !(artifact.kind === "qza_artifact" || /\bqza\b/i.test(String(artifact.extension ?? ""))));
+    downloaded = await downloadSelected(adapter, textEligible, stepId, ctx, { toolVersion: toolMeta?.version ?? null });
   }
   for (const artifact of downloaded.artifacts) {
     await insertRow(db, SQL.insertArtifact, [makeId("art"), runIdOf(state), artifact.name, artifact.kind,
@@ -2396,8 +2463,28 @@ async function finalizeStage(adapter, env, db, row, state, stepId, jobId, ctx, o
   })));
   state.errors.push(...downloaded.errors.map((error) => ({ step: stepId, ...error })));
   if (stepId === "demux") {
+    // The real demux job emits qza artifacts. Identify them by their ACTUAL
+    // output names/extensions; the per-sample qza is a valid dada2 input.
+    const qzaOutputs = (collected.selected ?? []).filter((artifact) =>
+      artifact.kind === "qza_artifact" || /\.qza$/i.test(String(artifact.name ?? ""))
+        || /\bqza\b/i.test(String(artifact.extension ?? "")));
+    const perSample = qzaOutputs.find((artifact) => /per_sample_sequences/i.test(String(artifact.name ?? "")))
+      ?? qzaOutputs.find((artifact) => /\bsequences?\b/i.test(String(artifact.name ?? "")))
+      ?? qzaOutputs[0] ?? null;
+    const errorDetails = qzaOutputs.find((artifact) => /error_correction_details/i.test(String(artifact.name ?? "")))
+      ?? null;
     const fastq = downloaded.artifacts.find((artifact) => ["reads", "rep_seqs", "feature_table"].includes(artifact.kind));
-    state.frontier.demuxReadsId = fastq?.id ?? null;
+    state.frontier.demuxReadsId = perSample?.id ?? fastq?.id ?? state.frontier.demuxReadsId ?? null;
+    state.frontier.demuxErrorCorrectionDetailsId = errorDetails?.id ?? null;
+    state.steps[stepId] = { ...(state.steps[stepId] ?? {}),
+      demux_output_provenance: {
+        per_sample_sequences_dataset_id: perSample?.id ?? null,
+        per_sample_sequences_name: perSample?.name ?? null,
+        error_correction_details_dataset_id: errorDetails?.id ?? null,
+        error_correction_details_name: errorDetails?.name ?? null,
+        basis: "real_demux_job_output_qza",
+        note: "The qza is consumed by QIIME 2 dada2 denoise-single; it is binary and is not parsed as text."
+      } };
     const stats = bestParsed(downloaded.artifacts, "qc");
     state.results.qc = stats.parsed.available ? stats.parsed : observedQc(state);
   } else if (stepId === "qc_summary") {
@@ -2742,6 +2829,17 @@ async function advanceOneStage(db, row, state, env, ctx, options = {}) {
           details: { tool_id: state.steps[stepId]?.tool_id ?? null, tool_version: state.steps[stepId]?.tool_version ?? null }
         });
       } catch (caught) {
+        const reason = safeString(caught?.message ?? caught, 500);
+        // A qc_summary schema/data mismatch is non-fatal: no provider job was
+        // created and no QC value was fabricated. Mark it unavailable and let
+        // later stages run from the real retrieved artifacts.
+        if (stepId === "qc_summary"
+            && /schema failure|no_data_input|invalid option|submission failed: galaxy returned HTTP 400/i.test(reason)) {
+          state.steps[stepId] = { status: "unavailable", reason, finished_at: nowIso() };
+          state.errors.push({ step: stepId, reason: `qc_summary_unavailable: ${reason}` });
+          await recordStep(db, state, stepId, "unavailable", { details: { reason } });
+          return;
+        }
         state.status = "failed";
         state.errors.push({ step: stepId, reason: caught?.message ?? String(caught) });
         await recordStep(db, state, stepId, "failed", { details: { reason: state.errors.at(-1).reason } });
@@ -2898,6 +2996,7 @@ export function microbiomeHandlers() {
       { fetchImpl: context.env?.FETCH_IMPL }),
     microbiomeResumeStages: (context) => handleResumeStages(context.request, context.env,
       { fetchImpl: context.env?.FETCH_IMPL }),
+    microbiomeContinueStages: (context) => handleContinueStages(context.request, context.env, {}),
     microbiomeImportSchema: (context) => handleImportSchema(context.request, context.env,
       { fetchImpl: context.env?.FETCH_IMPL }),
     microbiomeImportJob: (context) => handleImportJob(context.request, context.env,
