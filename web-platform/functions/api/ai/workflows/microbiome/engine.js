@@ -770,15 +770,20 @@ export async function handleRetry(request, env, options = {}) {
   if (safeString(state.history_id, 200)) return refuse("history_id_present", "The failed run already has a Galaxy history id; its state is not upload-only.");
   if ((state.artifacts ?? []).length) return refuse("artifacts_present", "The failed run already has retrieved artifacts.");
 
-  // The only resumable input is the original verified public dataset. Every
-  // part of its identity is checked; no guard here may be relaxed.
+  // The only resumable input is the original verified public dataset. Identity
+  // is proven by the exact three URLs, three SHA-256 checksums, three filenames
+  // and the stored hashes. `input.public_dataset` is OPTIONAL context: handleRun
+  // never stores it, so its absence must not block a genuine run, while a key
+  // that IS present must name the same original dataset.
   const descriptor = PUBLIC_DATASETS[RETRY_SOURCE_KEY];
   const input = state.input ?? {};
   const source = input.source ?? {};
   const checksums = source.checksums ?? {};
   const urls = source.urls ?? {};
   const filenames = state.filenames ?? input.filenames ?? {};
-  const sourceMatches = Boolean(descriptor) && input.mode === "public" && input.public_dataset === RETRY_SOURCE_KEY
+  const declaredKey = safeString(input.public_dataset, 80);
+  const sourceMatches = Boolean(descriptor) && input.mode === "public"
+    && (!declaredKey || declaredKey === RETRY_SOURCE_KEY)
     && urls.metadata === descriptor.metadata_url && urls.reads === descriptor.reads_url
     && urls.barcodes === descriptor.barcodes_url
     && checksums.metadata_sha256 === descriptor.expected_metadata_sha256

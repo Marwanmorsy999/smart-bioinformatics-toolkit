@@ -110,8 +110,9 @@ function failedState(overrides = {}) {
     workflow_type: "microbiome", run_id: RUN_ID, plan_id: "plan_a8817e35d7534d98",
     status: "failed", created_at: "2026-11-27T00:00:00.000Z", current_step: "import_reads",
     input_sha256: INPUT_SHA, metadata_sha256: DESCRIPTOR.expected_metadata_sha256,
+    // Realistic stored state: handleRun never writes input.public_dataset.
     input: {
-      mode: "public", public_dataset: "moving-pictures-2026.10",
+      mode: "public",
       source: {
         urls: { metadata: DESCRIPTOR.metadata_url, reads: DESCRIPTOR.reads_url,
           barcodes: DESCRIPTOR.barcodes_url, sequences_zip: DESCRIPTOR.zip_provenance.url },
@@ -324,14 +325,46 @@ test("LABELLED STUB / partial upload state: no duplicate upload, honest refusal"
   });
 });
 
+test("LABELLED STUB / stored state WITHOUT public_dataset: exact URLs/checksums/filenames/hashes are sufficient", async () => {
+  const state = failedState();
+  assert.equal("public_dataset" in state.input, false,
+    "handleRun never stores input.public_dataset; the fixture must mirror the real stored run");
+  const stub = makeStub({ histories: [] });
+  const { db, state: d1 } = seededDb(state);
+  await withStub(stub, async () => {
+    const response = await handleRetry(retryRequest(), envFor(db, stub), retryOptions(stub));
+    assert.equal(response.status, 202, JSON.stringify(await response.clone().json()));
+    const body = await response.json();
+    assert.equal(body.retry_count, 1);
+    assert.equal(body.recovery_path, "upload_retry");
+    assert.equal(stub.submitCount(), 1, "the single retry proceeds");
+    assert.equal(stub.inventoryCount(), 1);
+    const stored = parseJson(d1.tables.microbiome_runs[0].state_json);
+    assert.equal(stored.status, "running");
+    assert.equal(stored.upload_retry.outcome, "upload_succeeded");
+  });
+});
+
 test("LABELLED STUB / guard matrix: every non-upload-only state is refused with a precise reason", async () => {
+  const base = failedState();
   const cases = [
     [{ status: "running" }, "status_not_failed"],
     [{ errors: ["provider job ended in state error"] }, "not_upload_failure"],
     [{ history_id: HISTORY }, "history_id_present"],
     [{ artifacts: [{ name: "feature-table.tsv", checksum: "a".repeat(64) }] }, "artifacts_present"],
-    [{ input: { ...failedState().input, mode: "upload" } }, "not_original_public_source"],
+    [{ input: { ...base.input, mode: "upload" } }, "not_original_public_source"],
+    // Optional public_dataset context, when present, must name the same source.
+    [{ input: { ...base.input, public_dataset: "some-other-dataset" } }, "not_original_public_source"],
+    // The three URLs, three checksums and three filenames stay strictly verified.
+    [{ input: { ...base.input, source: { ...base.input.source,
+      urls: { ...base.input.source.urls, reads: "https://other.example.test/sequences.fastq.gz" } } } },
+    "not_original_public_source"],
+    [{ input: { ...base.input, source: { ...base.input.source,
+      checksums: { ...base.input.source.checksums, reads_sha256: "f".repeat(64) } } } },
+    "not_original_public_source"],
+    [{ filenames: { ...base.filenames, reads: "other.fastq.gz" } }, "not_original_public_source"],
     [{ input_sha256: "f".repeat(64) }, "input_hash_mismatch"],
+    [{ metadata_sha256: "f".repeat(64) }, "input_hash_mismatch"],
     [{ retry_count: 1 }, "retry_limit_reached"]
   ];
   for (const [overrides, reason] of cases) {
