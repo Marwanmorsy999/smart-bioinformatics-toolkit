@@ -257,11 +257,31 @@ function stepToolFor(stepId, discovery) {
   }
 }
 
+// The live demux `barcodes|column` is a ColumnListParameter with no default.
+// Its value must come from the ACTUAL stored metadata header: use the verified
+// `barcode-sequence` column, or another real barcode-named header if that is
+// what the metadata declares. Nothing is hardcoded as a fallback value.
+function barcodeColumnFromMetadata(metadataText) {
+  const columns = parseMetadataTsv(metadataText).columns ?? [];
+  const exact = columns.find((name) => String(name).trim().toLowerCase() === "barcode-sequence");
+  if (exact) return exact;
+  return columns.find((name) => /barcode/i.test(String(name))) ?? null;
+}
+
 function overridesFor(stepId, schema, state, discovery) {
   const overrides = {};
   if (!schema) return overrides;
   const names = describeLiveParameters(schema).map((entry) => entry.name);
   const find = (pattern) => names.find((name) => pattern.test(name)) ?? null;
+  if (stepId === "demux") {
+    // Only set a field the LIVE schema actually exposes, preferring the
+    // barcode conditional's own `column` parameter. `type` and Golay defaults
+    // are left to the schema-driven payload builder.
+    const columnField = names.find((name) => /(?:^|\|)column$/i.test(name) && /barcode/i.test(name))
+      ?? find(/(?:^|\|)column$/i);
+    const column = barcodeColumnFromMetadata(state.input?.metadata_text);
+    if (columnField && column) overrides[columnField] = column;
+  }
   if (stepId === "dada2_denoise") {
     const trim = find(/(?:^|\|)trim[_-]?left$/i);
     const trunc = find(/(?:^|\|)trunc[_-]?len(?:gth)?$/i);
@@ -1098,7 +1118,7 @@ export async function handleImportSchema(request, env, options = {}) {
 // through this endpoint: there is no evidence the job would be safe to repeat.
 // Output-resolution failures are READ-ONLY failures: an existing provider job
 // can still be recovered in its own history, so they may be resumed.
-const PRE_SUBMISSION_REASON = /unavailable|schema|no_data_input|no discovered tool|qza_import_(tool|format|schema|source|input_mapping|output_missing|output_resolution_failed|outputs_unavailable|output_unverified)|qza_export_(unavailable|payload_invalid)/i;
+const PRE_SUBMISSION_REASON = /submission|unavailable|schema|no_data_input|no discovered tool|qza_import_(tool|format|schema|source|input_mapping|output_missing|output_resolution_failed|outputs_unavailable|output_unverified)|qza_export_(unavailable|payload_invalid)/i;
 
 export async function handleResumeStages(request, env, options = {}) {
   const rejected = requireMethod(request, "POST", "POST, OPTIONS");
@@ -1123,8 +1143,8 @@ export async function handleResumeStages(request, env, options = {}) {
   if (state.status !== "failed") return refuse("status_not_failed", `The stored run status is ${state.status}, not failed.`);
   if (Number(state.retry_count ?? -1) !== 1) return refuse("retry_count_not_one",
     "Only a run resumed by exactly one bounded upload retry may resume stages.");
-  if (Number(state.stage_resume_count ?? 0) >= 3) return refuse("stage_resume_limit_reached",
-    "This run has reached the cap of three bounded stage resumes.");
+  if (Number(state.stage_resume_count ?? 0) >= 4) return refuse("stage_resume_limit_reached",
+    "This run has reached the cap of four bounded stage resumes.");
   if ((state.steps?.import_reads?.status ?? null) !== "succeeded") {
     return refuse("import_reads_not_succeeded", "The original upload import is not recorded as succeeded.");
   }
@@ -1155,6 +1175,28 @@ export async function handleResumeStages(request, env, options = {}) {
   });
   if (badReason) return refuse("provider_failure_not_resumable",
     `${badReason} failed after a provider job or for an unknown reason; no stage was replayed.`);
+  // A fourth resume is only safe when the run stopped BEFORE any provider job
+  // existed for the failed scientific stage. An empty provider_job_id and a
+  // submission/schema/unavailable reason prove this; a real job id may never
+  // be replayed. No completed stage and no scientific job may exist either.
+  const failedStages = scientific.filter((id) => (state.steps?.[id]?.status ?? null) === "failed");
+  if (!failedStages.length) return refuse("no_pre_job_failure",
+    "No failed scientific stage with a pre-job submission failure was recorded; no stage was replayed.");
+  const postJobStage = failedStages.find((id) => {
+    const step = state.steps[id] ?? {};
+    const jobId = safeString(step.provider_job_id, 200);
+    if (jobId && jobId !== preparationJobId) return true;
+    return !PRE_SUBMISSION_REASON.test(errorText(step.reason ?? step));
+  });
+  if (postJobStage) return refuse("provider_failure_not_resumable",
+    `${postJobStage} failed after a provider job or for an unknown reason; no stage was replayed.`);
+  const completedOrStarted = scientific.filter((id) => {
+    const step = state.steps?.[id] ?? {};
+    const jobId = safeString(step.provider_job_id, 200);
+    return step.status === "succeeded" || (jobId && jobId !== preparationJobId);
+  });
+  if (completedOrStarted.length) return refuse("scientific_stage_exists",
+    `A scientific stage already succeeded or holds a provider job: ${completedOrStarted.join(", ")}.`);
 
   const firstIndex = scientific.findIndex((id) => (state.steps?.[id]?.status ?? "not_started") !== "succeeded");
   if (firstIndex < 0) return refuse("no_stage_to_resume", "Every scientific stage is already succeeded.");
@@ -1500,10 +1542,12 @@ async function prepareDemuxImport(adapter, env, db, row, state, ctx) {
     submission = await adapter.submitJob({ operation: "submit_job", tool_id: importTool.id,
       history_id: state.history_id ?? null, inputs: payload.inputs }, ctx);
   } catch (caught) {
+    recordSubmissionFailure(state, env, "demux", importTool, payload, null, caught);
     await markUnavailable("qza_import_submission_failed", `Import submission failed: ${caught?.message ?? caught}`);
     return { handled: true };
   }
   if (submission.error) {
+    recordSubmissionFailure(state, env, "demux", importTool, payload, submission);
     await markUnavailable("qza_import_submission_failed",
       `Import submission failed: ${submission.error.message ?? submission.error.code}`);
     return { handled: true };
@@ -1619,6 +1663,29 @@ async function prepareClassifier(adapter, env, db, row, state, ctx, options = {}
   return finish();
 }
 
+// Bounded, sanitized diagnostic for a failed provider submission. It records
+// tool identity and FIELD NAMES ONLY: no payload values, no raw provider body,
+// no URL with credentials, and each string is capped. Kept in state for the
+// status/result diagnostics; never logged to the console.
+const MAX_SUBMISSION_FAILURES = 12;
+function recordSubmissionFailure(state, env, stepId, tool, payload, result, thrown = null) {
+  const error = result?.error ?? (thrown
+    ? { code: "submission_threw", message: safeString(thrown?.message ?? thrown, 300) } : {});
+  const entry = {
+    step_id: safeString(stepId, 80) || null,
+    at: nowIso(),
+    tool_id: safeString(tool?.id, 300) || null,
+    tool_version: safeString(tool?.version, 100) || null,
+    field_names: Object.keys(payload?.inputs ?? {}).slice(0, 50).map((name) => safeString(name, 200)),
+    http_status: Number(error?.status) || null,
+    error_code: safeString(error?.code, 80) || null,
+    error_message: scrubDiagnosticText(error?.message ?? "", env).slice(0, 300),
+    basis: "sanitized_failed_submission_request_summary"
+  };
+  state.submission_failures = [...(state.submission_failures ?? []), entry].slice(-MAX_SUBMISSION_FAILURES);
+  return entry;
+}
+
 async function submitStage(adapter, env, state, stepId, ctx) {
   // The cached discovery stores metadata, not the full tool object; no new
   // discovery call is made here.
@@ -1639,7 +1706,11 @@ async function submitStage(adapter, env, state, stepId, ctx) {
   }
   const schema = await fetchToolSchema(env, toolMeta.id, toolMeta.version);
   const payload = buildMicrobiomePayload(schema, rolesFor(stepId, state), overridesFor(stepId, schema, state, { classifier: state.discovery.classifier }));
-  if (!payload.valid) throw new Error(`${stepId} schema failure: ${payload.errors.join(", ")}`);
+  if (!payload.valid) {
+    recordSubmissionFailure(state, env, stepId, toolMeta, payload,
+      { error: { code: "schema_failure", status: null, message: payload.errors.join(", ") } });
+    throw new Error(`${stepId} schema failure: ${payload.errors.join(", ")}`);
+  }
   // The classifier dataset must land in a classifier/reference data field of
   // the LIVE schema. A bare qza field with no such evidence fails closed.
   if (stepId === "taxonomy" && state.classifier_prep?.dataset_id) {
@@ -1650,7 +1721,10 @@ async function submitStage(adapter, env, state, stepId, ctx) {
   }
   const submission = await adapter.submitJob({ operation: "submit_job", tool_id: toolMeta.id,
     history_id: state.history_id ?? null, inputs: payload.inputs }, ctx);
-  if (submission.error) throw new Error(`${stepId} submission failed: ${submission.error.message ?? submission.error.code}`);
+  if (submission.error) {
+    recordSubmissionFailure(state, env, stepId, toolMeta, payload, submission);
+    throw new Error(`${stepId} submission failed: ${submission.error.message ?? submission.error.code}`);
+  }
   state.steps[stepId] = { status: "running", provider_job_id: submission.provider_job_id ?? null,
     tool_id: toolMeta.id, tool_version: toolMeta.version ?? null,
     applied_overrides: payload.applied_overrides, dataset_fields: payload.dataset_fields,
@@ -1767,6 +1841,7 @@ async function submitNeededExports(adapter, env, state, stepId, jobId, collected
       const result = await adapter.submitJob({ operation: "submit_job", tool_id: tool.id,
         history_id: state.history_id ?? null, inputs: payload.inputs }, ctx);
       if (result.error) {
+        recordSubmissionFailure(state, env, stepId, tool, payload, result);
         exportFailure(state, stepId, `qza_export_submission_failed: ${result.error.message ?? result.error.code}`, artifact.id);
         continue;
       }
