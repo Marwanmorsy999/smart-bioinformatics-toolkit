@@ -112,12 +112,29 @@ export async function maybeGunzip(bytes) {
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
+// The Worker fetches the three published files DIRECTLY. Raw-deflate ZIP
+// extraction is not available in the Cloudflare Workers runtime, so the ZIP is
+// kept only as labelled provenance/reference for the same bytes. The reads and
+// barcodes URLs are the tutorial's own published sources (Python API example).
 export const PUBLIC_DATASETS = Object.freeze({
   "moving-pictures-2026.10": Object.freeze({
     label: "Official Moving Pictures tutorial data (2026.10)",
     metadata_url: "https://moving-pictures-tutorial.readthedocs.io/en/2026.10/data/moving-pictures/sample-metadata.tsv",
-    sequences_zip_url: "https://moving-pictures-tutorial.readthedocs.io/en/2026.10/data/moving-pictures/emp-single-end-sequences.zip",
+    reads_url: "https://data.qiime2.org/2025.4/tutorials/moving-pictures/emp-single-end-sequences/sequences.fastq.gz",
+    barcodes_url: "https://data.qiime2.org/2025.4/tutorials/moving-pictures/emp-single-end-sequences/barcodes.fastq.gz",
     expected_metadata_sha256: "245f8e389ddf3dd05a95d870d214de918a06d03c5ce17750860446e09f9a7cc6",
+    expected_reads_sha256: "7d9b2cea2aebfb46015796c073be6ba514018028cc1452d063aa0d716c059768",
+    expected_barcodes_sha256: "73c235c8185be1deef3038fd2b6497b7cc02acf3d7a37fda39e65a4a293e0d86",
+    // Provenance only: the ZIP contains the same two gzip files; it is NOT
+    // fetched or extracted on the server path.
+    zip_provenance: Object.freeze({
+      url: "https://moving-pictures-tutorial.readthedocs.io/en/2026.10/data/moving-pictures/emp-single-end-sequences.zip",
+      sha256: "992740724f9a8000e5d81bc23a6c2bb74e4aed4cc3542768a220a36bae22d373",
+      sequence_entry: "emp-single-end-sequences/sequences.fastq.gz",
+      barcode_entry: "emp-single-end-sequences/barcodes.fastq.gz"
+    }),
+    // Backwards-compatible aliases retained for labelled browser ZIP uploads.
+    sequences_zip_url: "https://moving-pictures-tutorial.readthedocs.io/en/2026.10/data/moving-pictures/emp-single-end-sequences.zip",
     expected_zip_sha256: "992740724f9a8000e5d81bc23a6c2bb74e4aed4cc3542768a220a36bae22d373",
     sequence_entry: "emp-single-end-sequences/sequences.fastq.gz",
     barcode_entry: "emp-single-end-sequences/barcodes.fastq.gz",
