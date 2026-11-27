@@ -10,6 +10,16 @@ import { sanitizeUpstreamExcerpt } from "./contract.js";
 
 const RETRYABLE = new Set([408, 429]);
 
+// TEMP diagnostics: labels, elapsed ms, counts and status codes only. Never log
+// URLs, ids, keys, payloads or response bodies.
+const JOB_DIAG = true;
+function jobDiag(label, started, count = null, status = null) {
+  if (!JOB_DIAG) return;
+  const ms = Math.round((Date.now() - started) * 10) / 10;
+  console.log("[job-diag]", label, `${ms}ms`,
+    count === null ? "" : `count=${count}`, status === null ? "" : `status=${status}`);
+}
+
 export class ProviderHttpError extends Error {
   constructor({ status = 0, code = "network_error", message = "provider request failed",
     retryable = false, retryAfterMs = 0, upstream_excerpt = "", name = "ProviderHttpError" } = {}) {
@@ -102,10 +112,15 @@ function retryAfterMs(response) {
 // bodies are never surfaced; normalizeProviderError() is the only outward seam.
 async function errorDetailsFrom(response, env = {}) {
   let body = null;
+  const jsonStarted = Date.now();
   try { body = await response.clone().json(); }
   catch {
+    jobDiag("errorDetailsFrom.json", jsonStarted);
+    const textStarted = Date.now();
     try { body = await response.clone().text(); } catch { /* unavailable */ }
+    jobDiag("errorDetailsFrom.text", textStarted);
   }
+  if (body !== null) jobDiag("errorDetailsFrom.json", jsonStarted);
   let code = null;
   if (body && typeof body === "object") {
     const candidate = body.error ?? body.code ?? body.error_code ?? body.detail?.code;
@@ -137,17 +152,24 @@ export async function requestResponse(provider, fetchImpl, url, options = {}, op
   const timer = withTimeout(parentSignal, timeoutMs);
   let handedOff = false;
   let lastError = null;
+  const loopStarted = Date.now();
+  let attemptCount = 0;
   try {
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      attemptCount = attempt;
       let error = null;
       try {
+        const fetchStarted = Date.now();
         const response = await fetcher(url, { ...options, signal: timer.signal });
+        jobDiag("fetch", fetchStarted, null, response?.status ?? null);
         if (response?.ok) {
           handedOff = true;
           return { response, cleanup: () => timer.cleanup(), attempts: attempt };
         }
         const status = Number(response?.status) || 0;
+        const detailsStarted = Date.now();
         const details = await errorDetailsFrom(response, opts.env);
+        jobDiag("errorDetailsFrom", detailsStarted);
         error = new ProviderHttpError({
           status,
           code: details.code || `http_${status || 0}`,
@@ -173,6 +195,7 @@ export async function requestResponse(provider, fetchImpl, url, options = {}, op
     }
     throw lastError || new ProviderHttpError({ message: `${provider} request failed` });
   } finally {
+    jobDiag("retry-loop", loopStarted, attemptCount);
     // On success the caller owns cleanup (it may still be reading a stream).
     // On any thrown error there is nothing left to consume: release here.
     if (!handedOff) timer.cleanup();
@@ -185,8 +208,14 @@ export async function requestJson(provider, fetchImpl, url, options = {}, opts =
   // request deadline active until the caller finishes reading.
   if (opts.parse === "stream") return { body: null, response, attempts, cleanup };
   try {
-    if (opts.parse === "text") return { body: await response.text(), response, attempts };
+    if (opts.parse === "text") {
+      const textStarted = Date.now();
+      const body = await response.text();
+      jobDiag("response.text", textStarted);
+      return { body, response, attempts };
+    }
     let body;
+    const jsonStarted = Date.now();
     try { body = await response.json(); }
     catch {
       throw new ProviderHttpError({
@@ -195,6 +224,8 @@ export async function requestJson(provider, fetchImpl, url, options = {}, opts =
         message: `${provider} returned an invalid JSON body`,
         retryable: false
       });
+    } finally {
+      jobDiag("response.json", jsonStarted);
     }
     return { body, response, attempts };
   } finally {
