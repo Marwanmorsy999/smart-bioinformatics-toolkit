@@ -1147,6 +1147,13 @@ function importSummaryOf(imp, env) {
       name: field(entry?.name, 200), value: field(entry?.value, 200)
     }))
     : [];
+  // The writer persists cross-history copy evidence under `state.import.copy`
+  // (copied_from_history / target_history_id / copy_basis). Older top-level
+  // values stay primary when present; the nested object is only a fallback.
+  const copy = imp?.copy && typeof imp.copy === "object" && !Array.isArray(imp.copy)
+    ? imp.copy : {};
+  const copyField = (topLevel, nestedName, cap = 200) =>
+    field(topLevel !== undefined && topLevel !== null ? topLevel : copy[nestedName], cap);
   return {
     provider_job_id: field(imp?.provider_job_id, 200),
     tool_id: field(imp?.tool_id, 400),
@@ -1166,11 +1173,11 @@ function importSummaryOf(imp, env) {
     // are inherently safe and stay honest (null when the state never set them).
     output_history_id: field(imp?.output_history_id, 200),
     history_mismatch: typeof imp?.history_mismatch === "boolean" ? imp.history_mismatch : null,
-    copied_from_history: field(imp?.copied_from_history, 200),
+    copied_from_history: copyField(imp?.copied_from_history, "copied_from_history"),
     copy_dataset_id: field(imp?.copy_dataset_id, 200),
-    copy_history_id: field(imp?.copy_history_id, 200),
+    copy_history_id: copyField(imp?.copy_history_id, "target_history_id"),
     copy_attempted: typeof imp?.copy_attempted === "boolean" ? imp.copy_attempted : null,
-    copy_basis: field(imp?.copy_basis, 200),
+    copy_basis: copyField(imp?.copy_basis, "copy_basis"),
     // An error is included only when the stored state actually carries one.
     ...(imp?.copy_error !== undefined && imp?.copy_error !== null
       ? { copy_error: field(imp.copy_error, 300) } : {})

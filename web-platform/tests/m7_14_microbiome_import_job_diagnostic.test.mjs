@@ -241,6 +241,50 @@ test("LABELLED STUB / cross-history copy fields appear in the import summary whe
   assert.equal(stub.calls.some((call) => call.method === "POST"), false, "zero POSTs");
 });
 
+test("LABELLED STUB / nested state.import.copy evidence is read as a sanitized fallback", async () => {
+  const stub = detailStub();
+  const nestedSource = "sourcehistory00000000000000000099";
+  const state = importState();
+  // The writer stores copy evidence here; no top-level copy fields are set.
+  state.import.copy = {
+    copied_from_history: nestedSource,
+    target_history_id: HISTORY,
+    copy_basis: `https://galaxy.example.test/api/histories?key=${SECRET} verified cross-history copy`
+  };
+  const { response, body } = await callDiagnostic(state, stub);
+  assert.equal(response.status, 200);
+  const imp = body.import;
+  assert.equal(imp.copied_from_history, nestedSource, "copied_from_history comes from state.import.copy");
+  assert.equal(imp.copy_history_id, HISTORY, "copy_history_id comes from copy.target_history_id");
+  assert.match(imp.copy_basis, /\[url\]/, "copy_basis is scrubbed and capped");
+  assert.ok(imp.copy_basis.length <= 200, "copy_basis stays bounded");
+  const raw = JSON.stringify(imp);
+  assert.equal(raw.includes(SECRET), false, "configured secret never appears");
+  assert.equal(raw.includes("https://"), false, "no signed URL appears");
+  assert.equal(stub.calls.some((call) => call.method === "POST"), false, "zero POSTs");
+});
+
+test("LABELLED STUB / top-level copy evidence wins over the nested fallback", async () => {
+  const stub = detailStub();
+  const state = importState();
+  Object.assign(state.import, {
+    copied_from_history: "toplevelsource00000000000000000001",
+    copy_history_id: "topleveltarget00000000000000000001",
+    copy_basis: "top_level_basis"
+  });
+  state.import.copy = {
+    copied_from_history: "nested_source_should_not_win",
+    target_history_id: "nested_target_should_not_win",
+    copy_basis: "nested_basis_should_not_win"
+  };
+  const { body } = await callDiagnostic(state, stub);
+  const imp = body.import;
+  assert.equal(imp.copied_from_history, "toplevelsource00000000000000000001");
+  assert.equal(imp.copy_history_id, "topleveltarget00000000000000000001");
+  assert.equal(imp.copy_basis, "top_level_basis");
+  assert.equal(stub.calls.some((call) => call.method === "POST"), false, "zero POSTs");
+});
+
 test("LABELLED STUB / cross-history copy fields are null (copy_error absent) when never recorded", async () => {
   const stub = detailStub();
   const { response, body } = await callDiagnostic(importState(), stub);
