@@ -720,6 +720,54 @@ export function createAdapter(env = {}, deps = {}) {
       }
     },
 
+    // READ-ONLY inventory across recent histories. Used only to prove whether a
+    // previous upload already produced the expected input datasets, so a bounded
+    // retry never creates duplicates. It issues GET requests only, through this
+    // adapter's configured key; the key and raw responses are never logged.
+    // Deliberately off the advertised operation list (no job/upload is made).
+    async inventoryDatasets(request = {}, ctx = {}) {
+      const args = normalizeCallArgs(request, ctx);
+      ctx = args.ctx;
+      const at = makeNow(ctx);
+      const empty = { provider: PROVIDER, datasets: [], histories: [], ok: false, at };
+      if (!enabled || !configured) return { ...empty, reason: availability() };
+      try {
+        const body = (await call("GET", "/api/histories?limit=100", undefined, ctx)).body;
+        const listed = asArray(Array.isArray(body) ? body : asObject(body).histories ?? asObject(body).results);
+        const histories = listed
+          .map((item) => asObject(item))
+          .filter((item) => item.deleted !== true && safeString(item.id, 200))
+          .sort((left, right) => String(right.update_time ?? right.create_time ?? "")
+            .localeCompare(String(left.update_time ?? left.create_time ?? "")))
+          .slice(0, 10)
+          .map((item) => safeString(item.id, 200));
+        const datasets = [];
+        for (const historyId of histories) {
+          const contents = asArray((await call("GET",
+            `/api/histories/${encodeURIComponent(historyId)}/contents?limit=1000`, undefined, ctx)).body);
+          for (const entry of contents) {
+            const item = asObject(entry);
+            if (item.deleted === true || !safeString(item.id, 200)) continue;
+            datasets.push({
+              id: safeString(item.id, 200),
+              // The provider's own value wins; never overwrite it with a guess.
+              history_id: safeString(item.history_id, 200) || historyId,
+              name: safeString(item.name, 300),
+              state: safeString(item.state, 80) || null,
+              extension: safeString(item.extension ?? item.file_ext ?? item.type, 100) || null,
+              checksum: safeString(item.checksum, 200) || null,
+              file_size: finite(item.file_size ?? item.size),
+              create_time: safeString(item.create_time, 80) || null,
+              update_time: safeString(item.update_time, 80) || null
+            });
+          }
+        }
+        return { provider: PROVIDER, datasets, histories, ok: true, at };
+      } catch (error) {
+        return { ...empty, error: normalizeProviderError(PROVIDER, error, { at }) };
+      }
+    },
+
     async getArtifacts(request = {}, ctx = {}) {
       const args = normalizeCallArgs(request, ctx);
       request = args.request;
