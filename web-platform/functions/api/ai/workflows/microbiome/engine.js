@@ -1159,7 +1159,21 @@ function importSummaryOf(imp, env) {
     },
     source_dataset_ids: ids(imp?.source_dataset_ids),
     status: field(imp?.status, 80),
-    output_dataset_id: field(imp?.output_dataset_id, 200)
+    output_dataset_id: field(imp?.output_dataset_id, 200),
+    // Cross-history qza copy evidence. These are metadata/identity fields only:
+    // every string still passes through importDiagnosticField so no credential,
+    // signed URL, payload or raw provider body can escape the summary. Booleans
+    // are inherently safe and stay honest (null when the state never set them).
+    output_history_id: field(imp?.output_history_id, 200),
+    history_mismatch: typeof imp?.history_mismatch === "boolean" ? imp.history_mismatch : null,
+    copied_from_history: field(imp?.copied_from_history, 200),
+    copy_dataset_id: field(imp?.copy_dataset_id, 200),
+    copy_history_id: field(imp?.copy_history_id, 200),
+    copy_attempted: typeof imp?.copy_attempted === "boolean" ? imp.copy_attempted : null,
+    copy_basis: field(imp?.copy_basis, 200),
+    // An error is included only when the stored state actually carries one.
+    ...(imp?.copy_error !== undefined && imp?.copy_error !== null
+      ? { copy_error: field(imp.copy_error, 300) } : {})
   };
 }
 

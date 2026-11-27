@@ -206,6 +206,59 @@ test("LABELLED STUB / existing import state returns the real job id, state and b
   assert.equal(body.job.inputs.includes(READS), true, "inputs carry the genuine source dataset id");
 });
 
+// ------------------------------------------- cross-history copy evidence
+
+test("LABELLED STUB / cross-history copy fields appear in the import summary when stored", async () => {
+  const stub = detailStub();
+  const state = importState();
+  Object.assign(state.import, {
+    output_history_id: HISTORY,
+    history_mismatch: true,
+    copied_from_history: "sourcehistory00000000000000000001",
+    copy_dataset_id: QZA,
+    copy_history_id: HISTORY,
+    copy_attempted: true,
+    copy_basis: "verified_cross_history_qza_copy",
+    copy_error: `${SECRET} at https://galaxy.example.test/api/datasets/${QZA}?key=${SECRET} ` + "copy failed ".repeat(40)
+  });
+  const { response, body } = await callDiagnostic(state, stub);
+  assert.equal(response.status, 200);
+  const imp = body.import;
+  assert.equal(imp.status, "running", "status stays in the summary");
+  assert.equal(imp.output_history_id, HISTORY);
+  assert.equal(imp.history_mismatch, true);
+  assert.equal(imp.copied_from_history, "sourcehistory00000000000000000001");
+  assert.equal(imp.copy_dataset_id, QZA);
+  assert.equal(imp.copy_history_id, HISTORY);
+  assert.equal(imp.copy_attempted, true);
+  assert.equal(imp.copy_basis, "verified_cross_history_qza_copy");
+  assert.match(imp.copy_error, /\[redacted\]/, "secrets are redacted in copy_error");
+  assert.match(imp.copy_error, /\[url\]/, "URLs are redacted in copy_error");
+  assert.ok(imp.copy_error.length <= 300, "copy_error stays bounded");
+  const raw = JSON.stringify(imp);
+  assert.equal(raw.includes(SECRET), false, "configured secret never appears");
+  assert.equal(raw.includes("https://"), false, "no signed URL appears");
+  assert.equal(stub.calls.some((call) => call.method === "POST"), false, "zero POSTs");
+});
+
+test("LABELLED STUB / cross-history copy fields are null (copy_error absent) when never recorded", async () => {
+  const stub = detailStub();
+  const { response, body } = await callDiagnostic(importState(), stub);
+  assert.equal(response.status, 200);
+  const imp = body.import;
+  assert.equal(imp.status, "running");
+  assert.equal(imp.output_dataset_id, null);
+  assert.equal(imp.output_history_id, null);
+  assert.equal(imp.history_mismatch, null);
+  assert.equal(imp.copied_from_history, null);
+  assert.equal(imp.copy_dataset_id, null);
+  assert.equal(imp.copy_history_id, null);
+  assert.equal(imp.copy_attempted, null);
+  assert.equal(imp.copy_basis, null);
+  assert.equal("copy_error" in imp, false, "copy_error is omitted when the state has none");
+  assert.equal(stub.calls.some((call) => call.method === "POST"), false, "zero POSTs");
+});
+
 test("LABELLED STUB / no import was ever submitted returns an honest 200 unavailable", async () => {
   const stub = detailStub();
   const { response, body } = await callDiagnostic(importState(false), stub);
