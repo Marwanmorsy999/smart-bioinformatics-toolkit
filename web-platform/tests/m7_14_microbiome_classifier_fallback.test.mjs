@@ -71,7 +71,8 @@ function verifyStub(options = {}) {
     if (/\/api\/datasets\/[^/]+$/.test(url)) {
       return json({ id: CLASSIFIER_DS, name: QIIME_CLASSIFIER.filename, state: "ok",
         file_size: options.size ?? QIIME_CLASSIFIER.expected_bytes,
-        history_id: options.history ?? HISTORY, checksums: options.checksums ?? [] });
+        history_id: options.history ?? HISTORY, checksums: options.checksums ?? [],
+        creating_job: options.creatingJob ?? "4838ba20a6d867652d7ab2f9383c4d26" });
     }
     return json({ error: "unexpected_stub_route", url }, 404);
   };
@@ -124,7 +125,9 @@ test("CLASSIFIER FALLBACK / local SHA-256 + provider MD5 + size marks the classi
 
 test("CLASSIFIER FALLBACK / missing or mismatched provider MD5 fails closed", async () => {
   for (const checksums of [[], [{ hash_function: "md5", checksum: "0".repeat(32) }]]) {
-    const stub = verifyStub({ checksums });
+    // The provenance path is deliberately disabled here (wrong creating job),
+    // so this test isolates the MD5 fallback's fail-closed behaviour.
+    const stub = verifyStub({ checksums, creatingJob: "some-other-import-job" });
     const { body, stored } = await advance(state(), stub);
     assert.equal(body.next_operation, "submit_stage");
     const prep = stored.classifier_prep;
@@ -142,6 +145,45 @@ test("CLASSIFIER FALLBACK / provider SHA-256 path stays strict and unchanged", a
   assert.equal(stored.classifier_prep.verification_basis, "provider_sha256_and_size");
   assert.equal(stored.classifier_prep.provider_sha256_exposed, true);
   assert.equal(stored.classifier_prep.provider_md5, null);
+});
+
+test("CLASSIFIER PROVENANCE / zero provider checksums still verify from local SHA-256 + size + URL-import job", async () => {
+  const stub = verifyStub({ checksums: {} });
+  const { body, stored } = await advance(state(), stub);
+  assert.equal(body.next_operation, "submit_stage");
+  const prep = stored.classifier_prep;
+  assert.equal(prep.usable, true);
+  assert.equal(prep.status, "verified");
+  assert.equal(prep.computed_sha256, QIIME_CLASSIFIER.expected_sha256);
+  assert.equal(prep.verification_basis, "local_sha256_and_size_with_verified_url_import_provenance");
+  assert.equal(prep.provider_checksum_exposed, false);
+  assert.equal(prep.provider_sha256_exposed, false);
+  assert.equal(prep.provider_md5, null);
+  assert.equal(prep.verified_creating_job, "4838ba20a6d867652d7ab2f9383c4d26");
+  assert.equal(prep.source_url, QIIME_CLASSIFIER.url);
+  assert.equal(prep.name ?? prep.filename, QIIME_CLASSIFIER.filename);
+  assert.equal(stub.calls.some((call) => call.url === QIIME_CLASSIFIER.url), false);
+});
+
+test("CLASSIFIER PROVENANCE / wrong job, size, history or unverified local hash all fail closed", async () => {
+  const cases = [
+    ["wrong creating_job", verifyStub({ checksums: {}, creatingJob: "some-other-job" }), state()],
+    ["wrong size", verifyStub({ checksums: {}, size: QIIME_CLASSIFIER.expected_bytes - 1 }), state()],
+    ["wrong history", verifyStub({ checksums: {}, history: "ffffffffffffffffffffffffffffffff" }), state()],
+    ["local not verified", verifyStub({ checksums: {} }), state({ local_classifier_verification: {
+      sha256: QIIME_CLASSIFIER.expected_sha256, bytes: QIIME_CLASSIFIER.expected_bytes,
+      match: false, md5: MD5 } })],
+    ["wrong local SHA-256", verifyStub({ checksums: {} }), state({ local_classifier_verification: {
+      sha256: "0".repeat(64), bytes: QIIME_CLASSIFIER.expected_bytes, match: true, md5: MD5 } })]
+  ];
+  for (const [label, stub, s] of cases) {
+    const { body, stored } = await advance(s, stub);
+    assert.equal(body.next_operation, "submit_stage", label);
+    assert.equal(stored.classifier_prep.usable, false, label);
+    assert.equal(stored.classifier_prep.status, "unavailable", label);
+    assert.match(stored.classifier_prep.reason, /^checksum_not_exposed:/, label);
+    assert.equal(stored.classifier_prep.computed_sha256, null, label);
+  }
 });
 
 test("TAXONOMY ROLE / the verified rep-seqs qza is used, not the exported FASTA", async () => {

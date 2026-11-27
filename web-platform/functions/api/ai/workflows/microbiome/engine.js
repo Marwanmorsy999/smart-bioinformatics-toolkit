@@ -3767,7 +3767,7 @@ function classifierFromArtifacts(artifacts, state, descriptor) {
   return result;
 }
 
-function verifyClassifierDetail(detail, descriptor, expectedHistoryId, state) {
+function verifyClassifierDetail(detail, descriptor, expectedHistoryId, state, expectedJobId = null) {
   if (!detail?.ok) return { ok: false, reason: `dataset_detail_unavailable: ${detail?.error?.message ?? detail?.error?.code ?? "unreadable"}` };
   const checksum = normalizeProviderChecksum(detail.checksums?.sha256);
   if (!checksum) {
@@ -3788,8 +3788,24 @@ function verifyClassifierDetail(detail, descriptor, expectedHistoryId, state) {
       return { ok: true, checksum: normalizeProviderChecksum(descriptor.expected_sha256),
         size: detail.size, size_status: "verified",
         verification_basis: "local_sha256_plus_provider_md5_and_size",
-        provider_sha256_exposed: false, provider_md5: providerMd5,
+        provider_checksum_exposed: true, provider_sha256_exposed: false, provider_md5: providerMd5,
         state: detail.state ?? null, fallback: true };
+    }
+    // Third, provenance-based path: Galaxy exposed NO checksum at all. Accept
+    // only the locally verified official artifact whose provider size, history
+    // AND creating job tie it to this run's verified URL import.
+    const localBytes = Number.isFinite(local.bytes) ? local.bytes : null;
+    const providerJob = safeString(detail.creating_job, 200) || null;
+    const sameJob = Boolean(expectedJobId) && providerJob === expectedJobId;
+    if (local.match === true && localSha === normalizeProviderChecksum(descriptor.expected_sha256)
+        && localBytes === descriptor.expected_bytes
+        && Number.isFinite(detail.size) && detail.size === descriptor.expected_bytes
+        && sameHistory && sameJob) {
+      return { ok: true, checksum: normalizeProviderChecksum(descriptor.expected_sha256),
+        size: detail.size, size_status: "verified",
+        verification_basis: "local_sha256_and_size_with_verified_url_import_provenance",
+        provider_checksum_exposed: false, provider_sha256_exposed: false, provider_md5: null,
+        creating_job: providerJob, state: detail.state ?? null, fallback: true };
     }
     return { ok: false, checksum: null,
       reason: `checksum_not_exposed: provider did not report a SHA-256 for dataset ${detail.dataset_id}; no classifier was claimed verified` };
@@ -3811,8 +3827,8 @@ function verifyClassifierDetail(detail, descriptor, expectedHistoryId, state) {
       reason: `different_history: provider reported history ${detail.history_id}; run history ${expectedHistoryId}; no classifier was claimed verified` };
   }
   return { ok: true, checksum, size: detail.size, size_status: "verified",
-    verification_basis: "provider_sha256_and_size", provider_sha256_exposed: true,
-    provider_md5: null, state: detail.state ?? null };
+    verification_basis: "provider_sha256_and_size", provider_checksum_exposed: true,
+    provider_sha256_exposed: true, provider_md5: null, state: detail.state ?? null };
 }
 
 function tableQzaOf(state) {
@@ -4166,7 +4182,8 @@ async function runAdvanceOperation(operation, adapter, db, row, state, env, ctx,
     // ONE dataset-detail GET. Provider SHA-256 is preferred; a locally
     // verified SHA-256 plus provider MD5/size is the explicit fallback.
     const detail = await adapter.getDatasetDetail({ dataset_id: prep.dataset_id }, ctx);
-    const verified = verifyClassifierDetail(detail, QIIME_CLASSIFIER, state.history_id, state);
+    const verified = verifyClassifierDetail(detail, QIIME_CLASSIFIER, state.history_id, state,
+      safeString(prep.provider_job_id ?? prep.job_id, 200) || null);
     if (!verified.ok) {
       state.classifier_prep = { ...prep, status: "unavailable", usable: false,
         computed_sha256: verified.checksum ?? null, detail_state: detail?.state ?? null,
@@ -4182,8 +4199,10 @@ async function runAdvanceOperation(operation, adapter, db, row, state, env, ctx,
     state.classifier_prep = { ...prep, status: "verified",
       source: verified.fallback ? "local_sha256_plus_provider_md5_and_size" : "provider_dataset_detail_verified",
       verification_basis: verified.verification_basis,
+      provider_checksum_exposed: verified.provider_checksum_exposed !== false,
       provider_sha256_exposed: verified.provider_sha256_exposed,
       provider_md5: verified.provider_md5 ?? null,
+      verified_creating_job: verified.creating_job ?? null,
       official_url: prep.official_url ?? QIIME_CLASSIFIER.url,
       source_url: prep.official_url ?? QIIME_CLASSIFIER.url,
       usable: true, computed_sha256: verified.checksum, verified_size: verified.size,
