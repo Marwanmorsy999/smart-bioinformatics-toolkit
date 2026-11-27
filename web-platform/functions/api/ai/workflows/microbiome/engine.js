@@ -4036,7 +4036,6 @@ function advanceFail(state, stepId, reason) {
 async function runAdvanceOperation(operation, adapter, db, row, state, env, ctx, options) {
   const stepId = state.current_step;
   const step = stepId ? (state.steps?.[stepId] ?? {}) : {};
-  const out = {};
 
   if (operation === "poll_current_job") {
     if (!stepId) return setCursor(state, "finalize_result");
@@ -4610,13 +4609,16 @@ async function runAdvanceOperation(operation, adapter, db, row, state, env, ctx,
     state.status = "succeeded";
     state.current_step = null;
     const result = await buildResult(state);
-    await runStatement(db, SQL.saveJobResult, ["succeeded", nowIso(), JSON.stringify(result),
-      JSON.stringify(state.validation), null, JSON.stringify(result.provenance),
-      JSON.stringify({ report_url: `/api/ai/runs/${state.run_id}/report` }), envExecutionMode(env),
-      state.run_id, "running"]);
+    // Best-effort jobs-table update only. A status-guard mismatch there must
+    // never block the run row's result_json from being persisted below.
+    try {
+      await runStatement(db, SQL.saveJobResult, ["succeeded", nowIso(), JSON.stringify(result),
+        JSON.stringify(state.validation), null, JSON.stringify(result.provenance),
+        JSON.stringify({ report_url: `/api/ai/runs/${state.run_id}/report` }), envExecutionMode(env),
+        state.run_id, "running"]);
+    } catch { /* the run row is the authoritative result store */ }
     state.result_built = true;
-    out.result = result;
-    return setCursor(state, null);
+    return { ...setCursor(state, null), result };
   }
 
   return setCursor(state, defaultAdvanceOp(state));
