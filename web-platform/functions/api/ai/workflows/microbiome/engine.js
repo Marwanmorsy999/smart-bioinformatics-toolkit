@@ -2344,6 +2344,11 @@ function labelDiversity(result, state, sourceKind) {
 
 async function finalizeStage(adapter, env, db, row, state, stepId, jobId, ctx, options = {}) {
   const toolMeta = state.steps[stepId]?.tool_id ? { id: state.steps[stepId].tool_id, version: state.steps[stepId].tool_version } : null;
+  // Diversity fallbacks compute from the REAL retrieved feature table. Reuse
+  // the once-per-state parsed view rather than parsing on every poll.
+  if (["alpha_diversity", "beta_diversity", "pcoa"].includes(stepId)) {
+    await rehydrateParsed(db, state, { force: Boolean(state.parsed_rehydrated && !state._parsed) });
+  }
   let collected = { selected: [], errors: [] };
   let downloaded = { artifacts: [], errors: [] };
   if (options.prefetched) {
@@ -2432,16 +2437,43 @@ function runIdOf(state) {
   return String(state.run_id ?? "");
 }
 
-// Rebuild parseable tables from ORIGINAL stored artifact content on every new
-// status request. No table is carried over in browser memory or invented.
-async function rehydrateParsed(db, state) {
-  if (state._parsed) return;
+// A single poll must never re-parse every stored artifact: the Worker has a
+// hard CPU limit. Rehydration happens at most once per state, only when a local
+// computation or the terminal result actually needs parsed tables.
+const MAX_PARSE_CHARS = 256 * 1024;
+// `report` is excluded: it needs no parsed table, and the terminal result
+// performs the single final rehydration for exports/integrity.
+const LOCAL_COMPUTE_STEPS = new Set([
+  "composition", "alpha_diversity", "beta_diversity", "pcoa", "ordination"
+]);
+
+function needsParsedFor(stepId, state) {
+  if (!LOCAL_COMPUTE_STEPS.has(stepId)) return false;
+  const providerRole = { alpha_diversity: "alpha", beta_diversity: "beta", pcoa: "pcoa" }[stepId];
+  // A provider stage does not need a local table parse on a polling request.
+  if (providerRole && state.discovery?.tools?.[providerRole]?.id) return false;
+  return true;
+}
+
+async function rehydrateParsed(db, state, options = {}) {
+  // `_parsed` is intentionally not persisted (large tables). The durable marker
+  // prevents repeated DB reads on later polls. The terminal result forces one
+  // final rebuild so exports/integrity still use the real stored artifacts.
+  if (!options.force && (state._parsed || state.parsed_rehydrated)) return;
   const rows = await listRows(db, SQL.listArtifactsForRun, [state.run_id]);
   const parsed = {};
+  const limits = [];
   for (const row of rows) {
     const kind = String(row.kind ?? "");
     const text = String(row.content ?? "");
     if (!text) continue;
+    if (text.length > MAX_PARSE_CHARS) {
+      // Never burn CPU on an oversized artifact; report the honest reason and
+      // keep the workflow advancing with no fabricated values.
+      limits.push({ kind, name: row.name ?? null, chars: text.length,
+        reason: `artifact_exceeds_${MAX_PARSE_CHARS}_character_local_parse_bound` });
+      continue;
+    }
     if (kind === "feature_table" && !parsed.table) {
       const value = parseFeatureTable(text);
       if (value.available) parsed.table = value;
@@ -2453,11 +2485,19 @@ async function rehydrateParsed(db, state) {
       if (value.available) parsed.taxonomy = value;
     }
   }
+  if (limits.length) {
+    state.parse_limits = [...(state.parse_limits ?? []), ...limits].slice(-12);
+  }
   state._parsed = parsed;
+  state.parsed_rehydrated = true;
+  state._parsed_rehydrated_at = nowIso();
 }
 
 function localStage(state, stepId) {
   if (stepId === "composition") {
+    // Once computed from real parsed artifacts the summary is persisted; do
+    // not rebuild it on every poll.
+    if (state.results.composition?.available) return state.results.composition;
     const composition = aggregateByRank(state._parsed?.table, state._parsed?.taxonomy, { rank: "phylum" });
     state.results.composition = composition;
     return composition;
@@ -2774,12 +2814,20 @@ export async function handleStatus(request, env, options = {}) {
   let state = parseJson(row.state_json);
   if (!state) return errorResponse("The stored run has no state record; nothing was reconstructed.", 409, request);
   const ctx = ctxFor(env, options);
-  await rehydrateParsed(db, state);
+  // Do NOT rehydrate on provider polls: step status comes only from stored
+  // state and the provider, and re-parsing artifacts on every poll exceeded
+  // the Worker CPU limit on the live run.
+  if (state.status === "running" && needsParsedFor(state.current_step, state)) {
+    await rehydrateParsed(db, state);
+  }
   if (state.status === "running" && state.current_step) {
     state.poll_count = Math.min((state.poll_count ?? 0) + 1, LIMITS.maxProviderPolls);
     try {
       await advanceOneStage(db, row, state, env, ctx, options);
       if (!state.current_step && state.status === "running") {
+        // The terminal result is the ONLY place that rebuilds exports; parsed
+        // tables are rehydrated at most once from stored artifacts.
+        await rehydrateParsed(db, state, { force: true });
         state.status = "succeeded";
         const result = await buildResult(state);
         await runStatement(db, SQL.saveJobResult, ["succeeded", nowIso(), JSON.stringify(result),
