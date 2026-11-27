@@ -74,7 +74,7 @@ function seededDb(s) {
   }] });
 }
 
-function makeStub() {
+function makeStub({ demuxOutputsAvailable = false } = {}) {
   const submissions = [];
   const textFetches = [];
   let demuxSubmitted = false;
@@ -93,7 +93,7 @@ function makeStub() {
     if (method === "GET" && /\/api\/histories\/[^/]+\/contents/.test(url)) {
       const items = [{ id: IMPORTED_QZA, name: "imported-sequences.qza", extension: "qza",
         state: "ok", history_id: HISTORY }];
-      if (demuxSubmitted) items.push(
+      if (demuxSubmitted || demuxOutputsAvailable) items.push(
         { id: PER_SAMPLE_QZA, name: "qiime2 demux emp-single on dataset 3 and 4: per_sample_sequences.qza",
           extension: "qza", state: "ok", history_id: HISTORY },
         { id: ERROR_QZA, name: "qiime2 demux emp-single on dataset 3 and 4: error_correction_details.qza",
@@ -232,8 +232,12 @@ test("CONTINUE / preserves succeeded demux job and resets only failed and later 
   assert.equal((await second.json()).continue_count, 2);
   refail();
   const third = await continueRun();
-  assert.equal(third.status, 409);
-  assert.equal((await third.json()).reason, "continue_limit_reached");
+  assert.equal(third.status, 202, JSON.stringify(await third.clone().json()));
+  assert.equal((await third.json()).continue_count, 3);
+  refail();
+  const fourth = await continueRun();
+  assert.equal(fourth.status, 409);
+  assert.equal((await fourth.json()).reason, "continue_limit_reached");
 });
 
 function liveStaleState(overrides = {}) {
@@ -300,6 +304,65 @@ test("REPAIR / live-shaped succeeded demux with missing frontier is repaired on 
   } finally { globalThis.fetch = previousFetch; }
 });
 
+test("REPAIR / no stored artifacts but real demux provider outputs resolve the qza", async () => {
+  const live = liveStaleState();
+  live.artifacts = [];
+  live.steps.demux.output_artifacts = [];
+  live.errors = [
+    { step: "demux", dataset_id: PER_SAMPLE_QZA, reason: "content_unavailable" },
+    { step: "dada2_denoise", reason: "dada2_denoise schema failure: no_data_input_for_reads" }
+  ];
+  const stub = makeStub({ demuxOutputsAvailable: true });
+  const { db, state: d1 } = seededDb(live);
+  const env = envFor(db, stub);
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = stub.fetchImpl;
+  try {
+    const response = await handleContinueStages(makePostRequest({ run_id: RUN_ID },
+      "/api/ai/workflows/microbiome/continue-stages"), env);
+    assert.equal(response.status, 202, JSON.stringify(await response.clone().json()));
+    const repair = (await response.json()).frontier_repair;
+    assert.equal(repair.repaired, true);
+    assert.equal(repair.dataset_id, PER_SAMPLE_QZA);
+    assert.equal(repair.error_correction_dataset_id, ERROR_QZA);
+    assert.equal(repair.basis, "recovered_from_demux_provider_job_outputs");
+    let s = stored(d1);
+    assert.equal(s.frontier.demuxReadsId, PER_SAMPLE_QZA);
+    assert.equal(s.frontier.demuxReadsHistoryId, HISTORY);
+    assert.equal(s.frontier.demuxReadsUuid, null);
+    assert.equal(s.frontier.demuxErrorCorrectionDetailsId, ERROR_QZA);
+    const provenance = s.steps.demux.demux_output_provenance;
+    assert.equal(provenance.basis, "recovered_from_demux_provider_job_outputs");
+    assert.equal(provenance.provider_job_id, DEMUX_JOB);
+    assert.match(provenance.per_sample_sequences_name, /per_sample_sequences\.qza/);
+    assert.equal(provenance.error_correction_details_dataset_id, ERROR_QZA);
+    assert.equal(s.errors.some((error) => String(error.reason).includes("content_unavailable")), false);
+    await drive(db, stub, 4);
+    s = stored(d1);
+    assert.equal(s.steps.dada2_denoise.status, "running");
+    assert.deepEqual(stub.denoiseSubmission()?.inputs.table, { src: "hda", id: PER_SAMPLE_QZA });
+    assert.equal(stub.submissions.some((entry) => entry.tool_id === DEMUX_TOOL), false,
+      "the succeeded demux job is never resubmitted");
+  } finally { globalThis.fetch = previousFetch; }
+});
+
+test("REPAIR / provider output resolution failure records an exact reason and invents nothing", async () => {
+  const live = liveStaleState();
+  live.artifacts = [];
+  live.steps.demux.output_artifacts = [];
+  const stub = makeStub(); // histories contain no demux qza outputs
+  const { db, state: d1 } = seededDb(live);
+  const response = await handleContinueStages(makePostRequest({ run_id: RUN_ID },
+    "/api/ai/workflows/microbiome/continue-stages"), envFor(db, stub));
+  assert.equal(response.status, 202);
+  const repair = (await response.json()).frontier_repair;
+  assert.equal(repair.repaired, false);
+  assert.match(repair.reason, /provider_job_output_resolution_failed: no_ready_per_sample_sequences_qza/);
+  const s = stored(d1);
+  assert.equal(s.frontier.demuxReadsId, undefined);
+  assert.match(s.steps.demux.demux_frontier_repair.reason, /no_stored_per_sample_sequences_qza_artifact/);
+});
+
 test("REPAIR / no matching stored qza leaves the frontier unset with an honest reason", async () => {
   const live = liveStaleState();
   live.steps.demux.output_artifacts = [];
@@ -314,9 +377,10 @@ test("REPAIR / no matching stored qza leaves the frontier unset with an honest r
   assert.equal(repair.repaired, false);
   assert.equal(repair.dataset_id, null);
   assert.match(repair.reason, /no_stored_per_sample_sequences_qza_artifact/);
+  assert.equal(repair.repaired, false);
   const s = stored(d1);
   assert.equal(s.frontier.demuxReadsId, undefined);
-  assert.match(s.steps.demux.demux_frontier_repair.reason, /no demux reads id was invented/);
+  assert.match(s.steps.demux.demux_frontier_repair.reason, /provider_job_output_resolution_failed|no demux reads id was invented/);
 });
 
 test("REPAIR / normal stage path repairs a running run without a continuation", async () => {

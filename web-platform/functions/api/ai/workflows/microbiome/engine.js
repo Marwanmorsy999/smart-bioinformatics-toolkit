@@ -320,10 +320,65 @@ function overridesFor(stepId, schema, state, discovery) {
   return overrides;
 }
 
+// Resolve a succeeded demux job's REAL qza outputs with GET-only provider
+// calls. No job is submitted and no id is guessed: each HDA/uuid association
+// is matched against the artifact inventory of its own history (falling back
+// to the run history) and must be ready with a qza extension.
+async function recoverDemuxOutputsFromJob(adapter, state, ctx, jobId) {
+  const outputs = await adapter.getJobOutputs({ job_id: jobId }, ctx);
+  if (!outputs?.ok) {
+    return { ok: false, reason: `job_outputs_unavailable: ${outputs?.error?.message ?? outputs?.error?.code ?? "unreadable"}` };
+  }
+  const candidates = [];
+  for (const association of outputs.outputs ?? []) {
+    const id = safeString(association?.galaxyHdaId ?? association?.id, 200);
+    const uuid = safeString(association?.galaxyDatasetUuid ?? association?.uuid, 200);
+    const historyId = safeString(association?.history_id, 200) || safeString(state.history_id, 200);
+    if (!id && !uuid) { candidates.push({ reason: "no_dataset_identity" }); continue; }
+    let contents;
+    try {
+      contents = await adapter.getArtifacts({ history_id: historyId }, ctx);
+    } catch (caught) {
+      candidates.push({ reason: `history_inventory_threw: ${safeString(caught?.message ?? caught, 200)}` });
+      continue;
+    }
+    if (!contents?.ok) {
+      candidates.push({ reason: `history_inventory_unavailable: ${contents?.error?.message ?? contents?.error?.code ?? "unreadable"}` });
+      continue;
+    }
+    const match = (contents.artifacts ?? []).find((item) =>
+      (id && String(item.id) === id) || (uuid && String(item.uuid) === uuid)) ?? null;
+    if (!match) { candidates.push({ reason: "output_dataset_not_found_or_not_ready" }); continue; }
+    if (!["ok", "success"].includes(String(match.state ?? "").toLowerCase())) {
+      candidates.push({ reason: `output_dataset_not_ready: ${match.state ?? "unknown"}` });
+      continue;
+    }
+    const name = String(match.name ?? "");
+    const ext = String(match.type ?? match.extension ?? "").replace(/^\./, "").toLowerCase();
+    if (ext !== "qza" && !/\.qza$/i.test(name)) {
+      candidates.push({ reason: "output_not_qza_artifact", name });
+      continue;
+    }
+    candidates.push({ dataset_id: String(match.id), uuid: uuid || String(match.uuid ?? "") || null,
+      history_id: safeString(match.history_id, 200) || historyId, name, state: String(match.state),
+      per_sample: /per_sample_sequences\.qza$/i.test(name) || /(?:^|[_\s])sequences?\.qza$/i.test(name),
+      error_details: /error_correction_details\.qza$/i.test(name) });
+  }
+  const perSample = candidates.find((entry) => entry.per_sample) ?? null;
+  if (!perSample) {
+    return { ok: false, reason: candidates.length
+      ? `no_ready_per_sample_sequences_qza: ${candidates.map((entry) => entry.reason ?? "non_matching_qza").join("; ")}`
+      : "no_job_output_associations", candidates };
+  }
+  return { ok: true, per_sample: perSample,
+    error_details: candidates.find((entry) => entry.error_details) ?? null, candidates };
+}
+
 // Repair a stale succeeded-demux state finalized before the qza frontier fix.
-// The id is NEVER invented: it must come from a stored demux output artifact
-// with a real name/extension, and the original demux job is never replayed.
-function repairDemuxFrontier(state) {
+// Stored artifacts are the cheap first source; the existing provider job's
+// READ-ONLY outputs are the fallback. The id is NEVER invented and the demux
+// job is never replayed.
+async function repairDemuxFrontier(adapter, state, ctx) {
   const result = { attempted: false, repaired: false, dataset_id: null,
     error_correction_dataset_id: null, reason: null, basis: "stored_demux_output_artifacts" };
   if ((state.steps?.demux?.status ?? null) !== "succeeded") {
@@ -350,9 +405,49 @@ function repairDemuxFrontier(state) {
     && named(artifact, /error_correction_details\.qza$/i)
     && /^[0-9a-f]{8,64}$/i.test(realId(artifact))) ?? null;
   if (!perSample) {
-    result.reason = "no_stored_per_sample_sequences_qza_artifact; no demux reads id was invented";
-    state.steps.demux.demux_frontier_repair = { ...result, status: "unavailable" };
-    return result;
+    const jobId = safeString(state.steps.demux.provider_job_id, 200);
+    if (!jobId) {
+      result.reason = "no_stored_per_sample_sequences_qza_artifact_and_no_demux_provider_job_id";
+      state.steps.demux.demux_frontier_repair = { ...result, status: "unavailable" };
+      return result;
+    }
+    let recovered;
+    try {
+      recovered = await recoverDemuxOutputsFromJob(adapter, state, ctx, jobId);
+    } catch (caught) {
+      result.reason = `demux_output_recovery_threw: ${safeString(caught?.message ?? caught, 300)}`;
+      state.steps.demux.demux_frontier_repair = { ...result, status: "unavailable" };
+      return result;
+    }
+    if (!recovered.ok) {
+      result.reason = `no_stored_per_sample_sequences_qza_artifact; provider_job_output_resolution_failed: ${recovered.reason}`;
+      result.recovery = recovered;
+      state.steps.demux.demux_frontier_repair = { ...result, status: "unavailable" };
+      return result;
+    }
+    result.basis = "recovered_from_demux_provider_job_outputs";
+    result.recovery = { ok: true, provider_job_id: jobId, candidates: recovered.candidates };
+    state.frontier = { ...(state.frontier ?? {}),
+      demuxReadsId: recovered.per_sample.dataset_id,
+      demuxReadsHistoryId: recovered.per_sample.history_id,
+      demuxReadsUuid: recovered.per_sample.uuid };
+    if (recovered.error_details) {
+      state.frontier.demuxErrorCorrectionDetailsId = recovered.error_details.dataset_id;
+    }
+    state.steps.demux.demux_output_provenance = {
+      per_sample_sequences_dataset_id: recovered.per_sample.dataset_id,
+      per_sample_sequences_name: recovered.per_sample.name,
+      per_sample_sequences_history_id: recovered.per_sample.history_id,
+      per_sample_sequences_uuid: recovered.per_sample.uuid,
+      error_correction_details_dataset_id: recovered.error_details?.dataset_id ?? null,
+      error_correction_details_name: recovered.error_details?.name ?? null,
+      provider_job_id: jobId,
+      basis: "recovered_from_demux_provider_job_outputs",
+      note: "Succeeded demux job was not replayed and binary qza was not parsed as text."
+    };
+    state.steps.demux.demux_frontier_repair = { ...result, status: "succeeded" };
+    return { ...result, repaired: true, dataset_id: recovered.per_sample.dataset_id,
+      error_correction_dataset_id: recovered.error_details?.dataset_id ?? null };
   }
   const datasetId = realId(perSample);
   state.frontier = { ...(state.frontier ?? {}), demuxReadsId: datasetId };
@@ -385,14 +480,8 @@ function rolesFor(stepId, state) {
         { id: state.dataset_ids.metadata, role: "table", name: state.filenames.metadata }
       ];
     }
-    case "qc_summary":
-      repairDemuxFrontier(state);
-      return [{ id: state.frontier?.demuxReadsId ?? state.dataset_ids.sequences, role: "reads", name: "demultiplexed reads" }];
-    case "dada2_denoise":
-      // A resumed run may have a succeeded demux with no frontier id; repair
-      // it from stored outputs before building the denoise payload.
-      repairDemuxFrontier(state);
-      return [{ id: state.frontier?.demuxReadsId ?? state.dataset_ids.sequences, role: "reads", name: "demultiplexed reads" }];
+    case "qc_summary": return [{ id: state.frontier?.demuxReadsId ?? state.dataset_ids.sequences, role: "reads", name: "demultiplexed reads" }];
+    case "dada2_denoise": return [{ id: state.frontier?.demuxReadsId ?? state.dataset_ids.sequences, role: "reads", name: "demultiplexed reads" }];
     case "taxonomy": return [
       { id: state.frontier?.repSeqsId, role: "fasta", name: "representative sequences" },
       // The classifier is a REAL history qza prepared from the official URL.
@@ -1344,7 +1433,7 @@ export async function handleContinueStages(request, env, options = {}) {
   if (state.workflow_type !== "microbiome") return refuse("not_microbiome_run", "The referenced run is not a microbiome workflow.");
   // The cap is checked first: even a resumed (running) run must report the
   // exhausted continuation rather than a merely unexpected status.
-  if (Number(state.continue_count ?? 0) >= 2) return refuse("continue_limit_reached", "This run has reached the cap of two bounded stage continuations.");
+  if (Number(state.continue_count ?? 0) >= 3) return refuse("continue_limit_reached", "This run has reached the cap of three bounded stage continuations.");
   if (state.status !== "failed") return refuse("status_not_failed", `The stored run status is ${state.status}, not failed.`);
   if ((state.steps?.import_reads?.status ?? null) !== "succeeded") {
     return refuse("import_reads_not_succeeded", "The original upload import is not recorded as succeeded.");
@@ -1372,7 +1461,7 @@ export async function handleContinueStages(request, env, options = {}) {
         && (String(entry?.step ?? "") === "demux" || /\bdemux\b/i.test(errorText(entry)))) return false;
     return true;
   });
-  const frontierRepair = repairDemuxFrontier(state);
+  const frontierRepair = await repairDemuxFrontier(createAdapter(env), state, ctxFor(env, options));
   state.status = "running";
   state.current_step = scientific[firstIndex];
   state.continue_count = Number(state.continue_count ?? 0) + 1;
@@ -2543,6 +2632,12 @@ async function advanceOneStage(db, row, state, env, ctx, options = {}) {
   }
   if (step.status === "failed") return;
   const adapter = createAdapter(env);
+  // A succeeded demux from an older finalization may have no frontier id.
+  // Repair it before any later stage builds its payload, without replaying the
+  // demux job or reading binary qza as text.
+  if (!["import_reads", "demux"].includes(stepId)) {
+    await repairDemuxFrontier(adapter, state, ctx);
+  }
 
   if (stepId === "import_reads") {
     if (!step.provider_job_id) {
