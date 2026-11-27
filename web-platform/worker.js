@@ -19,6 +19,7 @@ import { onRequest as onMicrobiomePlan } from "./functions/api/ai/workflows/micr
 import { onRequest as onMicrobiomeRun } from "./functions/api/ai/workflows/microbiome/run.js";
 import { onRequest as onMicrobiomeRetry } from "./functions/api/ai/workflows/microbiome/retry.js";
 import { onRequest as onMicrobiomeRefreshDiscovery } from "./functions/api/ai/workflows/microbiome/refresh-discovery.js";
+import { onRequest as onMicrobiomeResumeStages } from "./functions/api/ai/workflows/microbiome/resume-stages.js";
 import { onRequest as onMicrobiomeStatus } from "./functions/api/ai/workflows/microbiome/status.js";
 import { onRequest as onMicrobiomeResult } from "./functions/api/ai/workflows/microbiome/result.js";
 import {
@@ -92,6 +93,7 @@ export const handlers = {
   microbiomeRun: onMicrobiomeRun,
   microbiomeRetry: onMicrobiomeRetry,
   microbiomeRefreshDiscovery: onMicrobiomeRefreshDiscovery,
+  microbiomeResumeStages: onMicrobiomeResumeStages,
   microbiomeStatus: onMicrobiomeStatus,
   microbiomeResult: onMicrobiomeResult,
   proteinPlan: PROTEIN_HANDLERS.proteinPlan,
@@ -216,6 +218,7 @@ const ROUTES = [
   { key: "microbiomeRun", re: /^\/api\/ai\/workflows\/microbiome\/run\/?$/, names: [] },
   { key: "microbiomeRetry", re: /^\/api\/ai\/workflows\/microbiome\/retry\/?$/, names: [] },
   { key: "microbiomeRefreshDiscovery", re: /^\/api\/ai\/workflows\/microbiome\/refresh-discovery\/?$/, names: [] },
+  { key: "microbiomeResumeStages", re: /^\/api\/ai\/workflows\/microbiome\/resume-stages\/?$/, names: [] },
   { key: "microbiomeStatus", re: /^\/api\/ai\/workflows\/microbiome\/status\/?$/, names: [] },
   { key: "microbiomeResult", re: /^\/api\/ai\/workflows\/microbiome\/result\/?$/, names: [] },
   { key: "phyloTool", re: /^\/api\/ai\/workflows\/phylo\/tool\/?$/, names: [] },

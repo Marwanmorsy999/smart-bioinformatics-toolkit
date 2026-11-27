@@ -1003,6 +1003,106 @@ export async function handleRetry(request, env, options = {}) {
   return finish("upload_retry", "upload_retry: the single bounded re-upload succeeded; no analysis stage has run yet.");
 }
 
+// ------------------------------------------------------- /resume-stages
+
+// A pre-submission failure reason may be retried after genuine discovery is
+// refreshed. A failure that followed a real provider job may not be replayed
+// through this endpoint: there is no evidence the job would be safe to repeat.
+const PRE_SUBMISSION_REASON = /unavailable|schema|no_data_input|no discovered tool|qza_import_(tool|format|schema|source|input_mapping)|qza_export_(unavailable|payload_invalid)/i;
+
+export async function handleResumeStages(request, env, options = {}) {
+  const rejected = requireMethod(request, "POST", "POST, OPTIONS");
+  if (rejected) return rejected;
+  const { payload, error } = await readJsonBody(request);
+  if (error) return errorResponse(error, 400, request);
+  const db = getDb(env);
+  if (!db) return errorResponse("AI database binding is unavailable.", 503, request);
+
+  const runId = safeString(payload?.run_id, 100);
+  const refuse = (reason, detail) => jsonResponse({
+    workflow_type: "microbiome", run_id: runId || null, resumed: false,
+    reason, error: `stage_resume_refused: ${reason}`, detail,
+    execution_mode: envExecutionMode(env)
+  }, 409, request);
+  if (!runId) return refuse("run_missing", "run_id was not supplied.");
+  const row = await getRow(db, SQL.getMicrobiomeRunByPublicId, [runId]);
+  if (!row) return refuse("run_missing", "No stored run matches this run_id.");
+  const state = parseJson(row.state_json);
+  if (!state) return refuse("state_missing", "The stored run has no state record.");
+  if (state.workflow_type !== "microbiome") return refuse("not_microbiome_run", "The referenced run is not a microbiome workflow.");
+  if (state.status !== "failed") return refuse("status_not_failed", `The stored run status is ${state.status}, not failed.`);
+  if (Number(state.retry_count ?? -1) !== 1) return refuse("retry_count_not_one",
+    "Only a run resumed by exactly one bounded upload retry may resume stages.");
+  if (Number(state.stage_resume_count ?? 0) !== 0) return refuse("stage_resume_limit_reached",
+    "This run has already used its single stage resume.");
+  if ((state.steps?.import_reads?.status ?? null) !== "succeeded") {
+    return refuse("import_reads_not_succeeded", "The original upload import is not recorded as succeeded.");
+  }
+
+  const scientific = STEP_IDS.filter((id) => id !== "import_reads");
+  const started = scientific.filter((id) => {
+    const step = state.steps?.[id] ?? {};
+    return Boolean(safeString(step.provider_job_id, 200))
+      || ["running", "succeeded"].includes(String(step.status ?? ""));
+  });
+  if (started.length) return refuse("scientific_stage_exists",
+    `Scientific stages already started: ${started.join(", ")}.`);
+  const scientificArtifacts = (state.artifacts ?? []).filter((artifact) =>
+    scientific.includes(String(artifact.source_step ?? "")));
+  if (scientificArtifacts.length) return refuse("scientific_artifacts_present",
+    "Scientific artifacts already exist for this run.");
+  const badReason = scientific.find((id) => {
+    const step = state.steps?.[id] ?? {};
+    if (step.status === "succeeded" || step.status === "unavailable") return false;
+    if (step.status !== "failed" && !step.reason) return false;
+    const text = errorText(step.reason ?? step);
+    return !PRE_SUBMISSION_REASON.test(text);
+  });
+  if (badReason) return refuse("provider_failure_not_resumable",
+    `${badReason} failed after a provider job or for an unknown reason; no stage was replayed.`);
+
+  const firstIndex = scientific.findIndex((id) => (state.steps?.[id]?.status ?? "not_started") !== "succeeded");
+  if (firstIndex < 0) return refuse("no_stage_to_resume", "Every scientific stage is already succeeded.");
+  const resetStages = scientific.slice(firstIndex);
+
+  const ctx = ctxFor(env, options);
+  let discovery;
+  try {
+    discovery = await discover(env, ctx);
+  } catch (caught) {
+    return errorResponse(`Live discovery could not be refreshed: ${caught?.message ?? caught}`, 502, request);
+  }
+  // Only discovery is refreshed from the provider. A failed (not completed)
+  // import preparation is cleared so it can retry with the freshly discovered
+  // import tool; a succeeded import and the original upload job stay untouched.
+  state.discovery = { tools: discovery.toolVersions, classifier: discovery.classifier,
+    discovery_mode: discovery.discoveryMode, discovered_at: discovery.discoveredAt };
+  for (const stage of resetStages) delete state.steps[stage];
+  state.errors = (state.errors ?? []).filter((entry) => {
+    const text = errorText(entry);
+    return !resetStages.some((stage) => text.includes(stage));
+  });
+  if (state.import && state.import.status !== "succeeded") {
+    state.import = null;
+    if (state.frontier) delete state.frontier.importedSeqsId;
+  }
+  state.status = "running";
+  state.current_step = scientific[firstIndex];
+  state.stage_resume_count = 1;
+  await persistState(db, row, state);
+  return jsonResponse({
+    workflow_type: "microbiome", run_id: row.public_id, resumed: true,
+    retry_count: state.retry_count, stage_resume_count: state.stage_resume_count,
+    current_step: state.current_step, discovery_mode: state.discovery.discovery_mode,
+    discovered_at: state.discovery.discovered_at, tool_versions: state.discovery.tools,
+    classifier: state.discovery.classifier,
+    status_url: `/api/ai/workflows/microbiome/status?run_id=${encodeURIComponent(row.public_id)}`,
+    result_url: `/api/ai/workflows/microbiome/result?run_id=${encodeURIComponent(row.public_id)}`,
+    recovery_url: `/api/ai/runs/${encodeURIComponent(row.public_id)}/recovery`,
+    execution_mode: envExecutionMode(env)
+  }, 202, request);
+}
+
 // ------------------------------------------------------- /refresh-discovery
 
 // Re-run genuine discovery for a resumed, upload-only run. This performs GETs
@@ -1215,6 +1315,7 @@ async function prepareDemuxImport(adapter, env, db, row, state, ctx) {
     source_dataset_ids: { reads: readsId, barcodes: barcodesId },
     source_filenames: { reads: readsName, barcodes: barcodesName },
     format_value: matched.formatValue, selector: payload.selector,
+    selectors: payload.selectors ?? [],
     dataset_fields: payload.dataset_fields, submitted_at: nowIso(), status: "running",
     basis: "preparation_of_stored_inputs"
   };
@@ -1799,6 +1900,8 @@ export function microbiomeHandlers() {
     microbiomeRun: (context) => handleRun(context.request, context.env, {}),
     microbiomeRetry: (context) => handleRetry(context.request, context.env, { fetchImpl: context.env?.FETCH_IMPL }),
     microbiomeRefreshDiscovery: (context) => handleRefreshDiscovery(context.request, context.env,
+      { fetchImpl: context.env?.FETCH_IMPL }),
+    microbiomeResumeStages: (context) => handleResumeStages(context.request, context.env,
       { fetchImpl: context.env?.FETCH_IMPL }),
     microbiomeStatus: (context) => handleStatus(context.request, context.env, {}),
     microbiomeResult: (context) => handleResult(context.request, context.env)
