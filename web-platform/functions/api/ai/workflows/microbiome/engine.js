@@ -1143,8 +1143,8 @@ export async function handleResumeStages(request, env, options = {}) {
   if (state.status !== "failed") return refuse("status_not_failed", `The stored run status is ${state.status}, not failed.`);
   if (Number(state.retry_count ?? -1) !== 1) return refuse("retry_count_not_one",
     "Only a run resumed by exactly one bounded upload retry may resume stages.");
-  if (Number(state.stage_resume_count ?? 0) >= 6) return refuse("stage_resume_limit_reached",
-    "This run has reached the cap of six bounded stage resumes.");
+  if (Number(state.stage_resume_count ?? 0) >= 7) return refuse("stage_resume_limit_reached",
+    "This run has reached the cap of seven bounded stage resumes.");
   if ((state.steps?.import_reads?.status ?? null) !== "succeeded") {
     return refuse("import_reads_not_succeeded", "The original upload import is not recorded as succeeded.");
   }
@@ -1472,11 +1472,12 @@ async function resolveImportedQzaHistory(adapter, prior, state, ctx, datasetId) 
   return { ok: false, reason: "no_ready_job_output_association_with_history" };
 }
 
-// Copy a verified cross-history qza into the run history AT MOST ONCE. This is
-// called UNCONDITIONALLY for any resolved qza id, even when a prior recovery
-// already stored output_dataset_id: membership in the run history is proven by
-// a real getArtifacts lookup, never by a recorded flag. `copy_dataset_id` and
-// `copy_attempted` prevent a second copy.
+// Copy a verified cross-history qza into the run history with AT MOST TWO
+// bounded attempts. One retry is allowed so a state that failed with the old
+// request body can succeed with the verified contract. Called UNCONDITIONALLY
+// for any resolved qza id: membership is proven by a real getArtifacts lookup,
+// never by a recorded flag. `copy_dataset_id` stops any further copy once a
+// copy id exists; `copy_attempt_count` caps attempts at two.
 async function ensureQzaInRunHistory(adapter, state, ctx, prior, recovered) {
   const runHistory = safeString(state.history_id, 200);
   const originalId = safeString(recovered?.dataset_id ?? prior?.output_dataset_id
@@ -1509,15 +1510,19 @@ async function ensureQzaInRunHistory(adapter, state, ctx, prior, recovered) {
   if (String(originalHistory) === String(runHistory)) {
     return { ok: false, reason: `imported_qza_not_in_run_history: ${inRun.reason}` };
   }
-  if (prior?.copy_attempted) {
-    return { ok: false, reason: "qza_history_copy_already_attempted_without_dataset_id" };
+  // Migrate the legacy boolean guard so a single prior failed attempt may be
+  // retried exactly once with the corrected request body.
+  const attempts = Number(prior?.copy_attempt_count ?? (prior?.copy_attempted ? 1 : 0)) || 0;
+  if (attempts >= 2) {
+    return { ok: false, reason: "qza_history_copy_attempt_limit_reached", copy_attempt_count: attempts };
   }
+  const attemptCount = attempts + 1;
   let result;
   try {
     result = await adapter.copyDatasetToHistory({ dataset_id: sourceId, history_id: runHistory }, ctx);
   } catch (caught) {
     return { ok: false, reason: `qza_history_copy_threw: ${safeString(caught?.message ?? caught, 300)}`,
-      copy_attempted: true };
+      copy_attempt_count: attemptCount };
   }
   const copiedId = safeString(result?.dataset_id, 200);
   const provenance = {
@@ -1530,12 +1535,14 @@ async function ensureQzaInRunHistory(adapter, state, ctx, prior, recovered) {
   };
   if (!result?.ok || !copiedId) {
     return { ok: false, reason: `qza_history_copy_failed: ${result?.error?.message ?? result?.error?.code ?? "no_dataset_id_returned"}`,
-      copy_attempted: true, copy_provenance: provenance };
+      copy_attempt_count: attemptCount, copy_provenance: provenance };
   }
   const verified = await verifyQzaInHistory(adapter, copiedId, runHistory, ctx, "copied_dataset");
   return verified.ok
-    ? { ok: true, dataset_id: copiedId, copied: true, verified, copy_dataset_id: copiedId, copy_provenance: provenance }
-    : { ok: false, reason: verified.reason, copy_dataset_id: copiedId, copy_provenance: provenance };
+    ? { ok: true, dataset_id: copiedId, copied: true, verified, copy_dataset_id: copiedId,
+      copy_attempt_count: attemptCount, copy_provenance: provenance }
+    : { ok: false, reason: verified.reason, copy_dataset_id: copiedId,
+      copy_attempt_count: attemptCount, copy_provenance: provenance };
 }
 
 async function prepareDemuxImport(adapter, env, db, row, state, ctx) {
@@ -1558,7 +1565,13 @@ async function prepareDemuxImport(adapter, env, db, row, state, ctx) {
   }
 
   const applyEnsured = async (ensured) => {
-    if (ensured.copy_attempted) prior.copy_attempted = true;
+    // Migrate the legacy boolean to a counter so a prior single failure still
+    // counts as one of the two allowed attempts across polls.
+    if (prior.copy_attempted && !Number.isFinite(prior.copy_attempt_count)) prior.copy_attempt_count = 1;
+    delete prior.copy_attempted;
+    if (Number.isFinite(ensured.copy_attempt_count)) {
+      prior.copy_attempt_count = ensured.copy_attempt_count;
+    }
     if (ensured.copy_dataset_id) prior.copy_dataset_id = ensured.copy_dataset_id;
     if (ensured.copy_provenance) {
       prior.copy = { ...ensured.copy_provenance, verified: Boolean(ensured.verified),
@@ -1577,8 +1590,14 @@ async function prepareDemuxImport(adapter, env, db, row, state, ctx) {
       prior.status = "unavailable";
       prior.reason = `qza_history_copy_failed_or_unverified: ${ensured.reason}`;
       state.errors.push({ step: "demux", reason: prior.reason });
-      state.steps.demux = { status: "unavailable", reason: prior.reason };
-      await recordStep(db, state, "demux", "unavailable", { details: { reason: prior.reason } });
+      // A failed copy with a retry still available must leave demux unstarted,
+      // so the NEXT bounded status request can perform the single retry.
+      const retryAvailable = /qza_history_copy_failed|qza_history_copy_threw/.test(ensured.reason)
+        && Number(prior.copy_attempt_count ?? 0) < 2;
+      if (!retryAvailable) {
+        state.steps.demux = { status: "unavailable", reason: prior.reason };
+        await recordStep(db, state, "demux", "unavailable", { details: { reason: prior.reason } });
+      }
     }
     await persistState(db, row, state);
     return { handled: true };

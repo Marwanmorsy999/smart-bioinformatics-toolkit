@@ -153,7 +153,7 @@ test("LABELLED STUB / live-shaped failure resumes once: fresh discovery, stages 
   });
 });
 
-test("LABELLED STUB / cap of six resumes: first five allowed, seventh refused", async () => {
+test("LABELLED STUB / cap of seven resumes: first six allowed, eighth refused", async () => {
   const stub = resumeStub();
   const { db, state: d1 } = seededDb(liveFailedState());
   const refail = () => {
@@ -169,7 +169,7 @@ test("LABELLED STUB / cap of six resumes: first five allowed, seventh refused", 
     row.state = "failed";
   };
   await withStub(stub, async () => {
-    for (let expected = 1; expected <= 5; expected += 1) {
+    for (let expected = 1; expected <= 6; expected += 1) {
       const response = await resume(db, stub);
       assert.equal(response.status, 202);
       const body = await response.json();
@@ -177,9 +177,9 @@ test("LABELLED STUB / cap of six resumes: first five allowed, seventh refused", 
       assert.equal(stub.calls.some((call) => call.method === "POST"), false, "no job was submitted");
       refail();
     }
-    const sixth = await resume(db, stub);
-    assert.equal(sixth.status, 202);
-    assert.equal((await sixth.json()).stage_resume_count, 6);
+    const seventh = await resume(db, stub);
+    assert.equal(seventh.status, 202);
+    assert.equal((await seventh.json()).stage_resume_count, 7);
     refail();
     const capped = await resume(db, stub);
     assert.equal(capped.status, 409);

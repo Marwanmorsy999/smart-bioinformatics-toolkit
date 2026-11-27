@@ -223,7 +223,7 @@ test("RESUME / sixth pre-job resume succeeds; seventh cap and provider-job failu
       row.state_json = JSON.stringify(state);
       row.state = "failed";
     };
-    refail(6, { status: "failed", reason: "demux submission failed: HTTP 400", provider_job_id: null });
+    refail(7, { status: "failed", reason: "demux submission failed: HTTP 400", provider_job_id: null });
     const capped = await resume();
     assert.equal(capped.status, 409);
     assert.equal((await capped.json()).reason, "stage_resume_limit_reached");
