@@ -257,15 +257,23 @@ function stepToolFor(stepId, discovery) {
   }
 }
 
-// The live demux `barcodes|column` is a ColumnListParameter with no default.
-// Its value must come from the ACTUAL stored metadata header: use the verified
-// `barcode-sequence` column, or another real barcode-named header if that is
-// what the metadata declares. Nothing is hardcoded as a fallback value.
-function barcodeColumnFromMetadata(metadataText) {
+// The live demux `barcodes|column` is a ColumnListParameter: Galaxy rejects a
+// column NAME and accepts a 1-BASED numeric column position. The position must
+// come from the ACTUAL stored metadata header (indexOf + 1). No index is
+// invented when the header is absent.
+const DEMUX_COLUMN_PROVENANCE_KEY = "__demux_barcode_column_provenance";
+const DEMUX_COLUMN_EVIDENCE = "Live Galaxy HTTP 400: invalid option 'barcode-sequence' for ColumnListParameter "
+  + "'column'; nine numeric options were offered for the nine-column metadata header, so the value is a 1-based position.";
+
+function barcodeColumnPosition(metadataText) {
   const columns = parseMetadataTsv(metadataText).columns ?? [];
-  const exact = columns.find((name) => String(name).trim().toLowerCase() === "barcode-sequence");
-  if (exact) return exact;
-  return columns.find((name) => /barcode/i.test(String(name))) ?? null;
+  let index = columns.findIndex((name) => String(name).trim().toLowerCase() === "barcode-sequence");
+  if (index < 0) index = columns.findIndex((name) => /barcode/i.test(String(name)));
+  if (index < 0) {
+    return { found: false, header: null, columns, position: null,
+      reason: "No barcode-named column exists in the stored metadata header; no column index was invented." };
+  }
+  return { found: true, header: columns[index], columns, position: index + 1, reason: null };
 }
 
 function overridesFor(stepId, schema, state, discovery) {
@@ -279,8 +287,18 @@ function overridesFor(stepId, schema, state, discovery) {
     // are left to the schema-driven payload builder.
     const columnField = names.find((name) => /(?:^|\|)column$/i.test(name) && /barcode/i.test(name))
       ?? find(/(?:^|\|)column$/i);
-    const column = barcodeColumnFromMetadata(state.input?.metadata_text);
-    if (columnField && column) overrides[columnField] = column;
+    const column = barcodeColumnPosition(state.input?.metadata_text);
+    const value = column.found && columnField ? String(column.position) : null;
+    if (value) overrides[columnField] = value;
+    // Reserved diagnostic key: buildMicrobiomePayload only reads real schema
+    // field names, so this is never sent to Galaxy.
+    overrides[DEMUX_COLUMN_PROVENANCE_KEY] = {
+      header: column.header, columns: column.columns, position: column.position,
+      parameter_field: columnField ?? null, parameter_type: "ColumnListParameter",
+      value_rule: "numeric_1_based_column_position", value_sent: value,
+      basis: "actual_stored_metadata_header_index", evidence: DEMUX_COLUMN_EVIDENCE,
+      reason: column.reason
+    };
   }
   if (stepId === "dada2_denoise") {
     const trim = find(/(?:^|\|)trim[_-]?left$/i);
@@ -1403,8 +1421,8 @@ export async function handleResumeStages(request, env, options = {}) {
   if (state.status !== "failed") return refuse("status_not_failed", `The stored run status is ${state.status}, not failed.`);
   if (Number(state.retry_count ?? -1) !== 1) return refuse("retry_count_not_one",
     "Only a run resumed by exactly one bounded upload retry may resume stages.");
-  if (Number(state.stage_resume_count ?? 0) >= 8) return refuse("stage_resume_limit_reached",
-    "This run has reached the cap of eight bounded stage resumes.");
+  if (Number(state.stage_resume_count ?? 0) >= 9) return refuse("stage_resume_limit_reached",
+    "This run has reached the cap of nine bounded stage resumes.");
   if ((state.steps?.import_reads?.status ?? null) !== "succeeded") {
     return refuse("import_reads_not_succeeded", "The original upload import is not recorded as succeeded.");
   }
@@ -2141,11 +2159,18 @@ async function submitStage(adapter, env, state, stepId, ctx) {
     return { skipped: true, reason: state.steps[stepId].reason };
   }
   const schema = await fetchToolSchema(env, toolMeta.id, toolMeta.version);
-  const payload = buildMicrobiomePayload(schema, rolesFor(stepId, state), overridesFor(stepId, schema, state, { classifier: state.discovery.classifier }));
+  const overrides = overridesFor(stepId, schema, state, { classifier: state.discovery.classifier });
+  const payload = buildMicrobiomePayload(schema, rolesFor(stepId, state), overrides);
   if (!payload.valid) {
     recordSubmissionFailure(state, env, stepId, toolMeta, payload,
       { error: { code: "schema_failure", status: null, message: payload.errors.join(", ") } });
     throw new Error(`${stepId} schema failure: ${payload.errors.join(", ")}`);
+  }
+  // Persist demux column provenance even when the submission is rejected: the
+  // live Galaxy error is the evidence for the 1-based numeric value.
+  if (stepId === "demux" && overrides[DEMUX_COLUMN_PROVENANCE_KEY]) {
+    state.steps[stepId] = { ...(state.steps[stepId] ?? {}),
+      barcode_column: overrides[DEMUX_COLUMN_PROVENANCE_KEY] };
   }
   // The classifier dataset must land in a classifier/reference data field of
   // the LIVE schema. A bare qza field with no such evidence fails closed.
@@ -2165,6 +2190,8 @@ async function submitStage(adapter, env, state, stepId, ctx) {
     tool_id: toolMeta.id, tool_version: toolMeta.version ?? null,
     applied_overrides: payload.applied_overrides, dataset_fields: payload.dataset_fields,
     started_at: nowIso(),
+    ...(stepId === "demux" && overrides[DEMUX_COLUMN_PROVENANCE_KEY]
+      ? { barcode_column: overrides[DEMUX_COLUMN_PROVENANCE_KEY] } : {}),
     ...(stepId === "taxonomy" && state.classifier_prep ? {
       classifier_dataset_id: state.classifier_prep.dataset_id ?? null,
       classifier_source: state.classifier_prep.source ?? null,
