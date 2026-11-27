@@ -1330,6 +1330,133 @@ export async function handleImportSchema(request, env, options = {}) {
   }
 }
 
+// ------------------------------------------- /tool-schema + /tool-search (GET)
+//
+// Read-only diagnostics for the LIVE Galaxy tool panel. They exist so an
+// operator can see which output formats a genuine export tool exposes and
+// whether a BIOM conversion tool is installed, WITHOUT submitting a job.
+// Only bounded structural metadata leaves this boundary: no raw tool body,
+// URL, credential, dataset id or payload value is ever returned.
+
+const TOOL_DIAG_MAX_CHARS = 20 * 1024;
+
+function toolSchemaShape(schema) {
+  const topLevelFields = [];
+  const featureTableCases = [];
+  const seen = new Set();
+
+  const formatPairs = (inputs) => {
+    const pairs = [];
+    for (const raw of Array.isArray(inputs) ? inputs.slice(0, 80) : []) {
+      const field = raw && typeof raw === "object" ? raw : {};
+      const name = safeString(field.name, 200).replace(/^.*\|/, "");
+      if (!/output[_\s-]?format/i.test(name)) continue;
+      for (const rawOption of (Array.isArray(field.options) ? field.options : []).slice(0, 80)) {
+        const option = rawOption && typeof rawOption === "object" ? rawOption : {};
+        const label = safeString(option.label ?? option.name, 200) || null;
+        const value = safeString(option.value, 300) || null;
+        if (label !== null || value !== null) pairs.push([label, value]);
+      }
+    }
+    return pairs;
+  };
+
+  const walk = (inputs, depth) => {
+    if (!Array.isArray(inputs) || depth > 10) return;
+    for (const raw of inputs.slice(0, 120)) {
+      const field = raw && typeof raw === "object" ? raw : {};
+      const name = safeString(field.name, 200);
+      const kind = safeString(field.model_class, 100);
+      if (depth === 0 && name && /select|conditional/i.test(kind)) {
+        topLevelFields.push({ name, type: kind });
+      }
+      if (/conditional/i.test(kind)) {
+        for (const rawCase of (Array.isArray(field.cases) ? field.cases : []).slice(0, 50)) {
+          const entry = rawCase && typeof rawCase === "object" ? rawCase : {};
+          const value = safeString(entry.value ?? entry.name, 300);
+          if (/feature.?table|biom/i.test(value)) {
+            const key = `${name}|${value}`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              featureTableCases.push({ value, output_format: formatPairs(entry.inputs) });
+            }
+          }
+          walk(entry.inputs, depth + 1);
+        }
+      }
+      if (Array.isArray(field.inputs)) walk(field.inputs, depth + 1);
+    }
+  };
+  walk(schema?.inputs, 0);
+  return { feature_table_cases: featureTableCases.slice(0, 40),
+    top_level_fields: topLevelFields.slice(0, 60) };
+}
+
+export async function handleToolSchema(request, env, options = {}) {
+  try {
+    const rejected = requireMethod(request, "GET", "GET, OPTIONS");
+    if (rejected) return rejected;
+    const params = new URL(request.url).searchParams;
+    const toolId = safeString(params.get("tool_id"), 300);
+    const version = safeString(params.get("version"), 100);
+    if (!toolId || !/^[A-Za-z0-9._+\-/]+$/.test(toolId) || toolId.includes("..")) {
+      return errorResponse("A bounded, valid tool_id is required.", 400, request);
+    }
+    if (version && !/^[A-Za-z0-9._+\-]+$/.test(version)) {
+      return errorResponse("Invalid version parameter.", 400, request);
+    }
+    let schema;
+    try {
+      schema = await fetchToolSchema(env, toolId, version || null);
+    } catch (caught) {
+      return jsonResponse({ available: false, tool_id: toolId, version: version || null,
+        reason: `schema_unavailable: ${scrubDiagnosticText(caught?.message ?? caught, env).slice(0, 300)}` }, 502, request);
+    }
+    const body = { available: true, tool_id: toolId, version: version || null,
+      ...toolSchemaShape(schema),
+      note: "Structural metadata only; no raw tool body, URL, credential or dataset identity is exposed." };
+    if (JSON.stringify(body).length > TOOL_DIAG_MAX_CHARS) {
+      return jsonResponse({ available: false, tool_id: toolId, version: version || null,
+        reason: "schema_summary_exceeds_20kb_bound" }, 200, request);
+    }
+    return jsonResponse(body, 200, request);
+  } catch (caught) {
+    return jsonResponse({ available: false, error: "tool_schema_handler_failed",
+      detail: sanitizedErrorDetail(caught, env) }, 500, request);
+  }
+}
+
+export async function handleToolSearch(request, env, options = {}) {
+  try {
+    const rejected = requireMethod(request, "GET", "GET, OPTIONS");
+    if (rejected) return rejected;
+    const query = safeString(new URL(request.url).searchParams.get("query"), 120).trim();
+    if (query.length < 2) {
+      return errorResponse("A search query of at least two characters is required.", 400, request);
+    }
+    const result = await createAdapter(env).searchTools({ query }, ctxFor(env, options));
+    if (!result.ok) {
+      return jsonResponse({ available: false, tools: [],
+        reason: safeString(result.reason ?? result.error?.message ?? "tool_search_unavailable", 300) }, 502, request);
+    }
+    const tools = [];
+    let bytes = 0;
+    for (const tool of result.tools) {
+      const entry = { id: safeString(tool?.id, 300), name: safeString(tool?.name, 300),
+        version: safeString(tool?.version, 100) || null };
+      const size = JSON.stringify(entry).length + 1;
+      if (bytes + size > TOOL_DIAG_MAX_CHARS) break;
+      tools.push(entry);
+      bytes += size;
+    }
+    return jsonResponse({ available: true, tools, truncated: tools.length < result.tools.length,
+      note: "Tool identity metadata only; no credential, URL or dataset id is exposed." }, 200, request);
+  } catch (caught) {
+    return jsonResponse({ available: false, error: "tool_search_handler_failed",
+      detail: sanitizedErrorDetail(caught, env) }, 500, request);
+  }
+}
+
 // ---------------------------------------------------- /import-job (GET)
 
 // Read-only diagnostic for the single pre-demux qza import job recorded in a

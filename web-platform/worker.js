@@ -21,6 +21,8 @@ import { onRequest as onMicrobiomeRetry } from "./functions/api/ai/workflows/mic
 import { onRequest as onMicrobiomeRefreshDiscovery } from "./functions/api/ai/workflows/microbiome/refresh-discovery.js";
 import { onRequest as onMicrobiomeResumeStages } from "./functions/api/ai/workflows/microbiome/resume-stages.js";
 import { onRequest as onMicrobiomeContinueStages } from "./functions/api/ai/workflows/microbiome/continue-stages.js";
+import { onRequest as onMicrobiomeToolSchema } from "./functions/api/ai/workflows/microbiome/tool-schema.js";
+import { onRequest as onMicrobiomeToolSearch } from "./functions/api/ai/workflows/microbiome/tool-search.js";
 import { onRequest as onMicrobiomeImportSchema } from "./functions/api/ai/workflows/microbiome/import-schema.js";
 import { onRequest as onMicrobiomeImportJob } from "./functions/api/ai/workflows/microbiome/import-job.js";
 import { onRequest as onMicrobiomeStatus } from "./functions/api/ai/workflows/microbiome/status.js";
@@ -101,6 +103,8 @@ export const handlers = {
   microbiomeRefreshDiscovery: onMicrobiomeRefreshDiscovery,
   microbiomeResumeStages: onMicrobiomeResumeStages,
   microbiomeContinueStages: onMicrobiomeContinueStages,
+  microbiomeToolSchema: onMicrobiomeToolSchema,
+  microbiomeToolSearch: onMicrobiomeToolSearch,
   microbiomeImportSchema: onMicrobiomeImportSchema,
   microbiomeImportJob: onMicrobiomeImportJob,
   microbiomeStatus: onMicrobiomeStatus,
@@ -232,6 +236,8 @@ const ROUTES = [
   { key: "microbiomeRefreshDiscovery", re: /^\/api\/ai\/workflows\/microbiome\/refresh-discovery\/?$/, names: [] },
   { key: "microbiomeResumeStages", re: /^\/api\/ai\/workflows\/microbiome\/resume-stages\/?$/, names: [] },
   { key: "microbiomeContinueStages", re: /^\/api\/ai\/workflows\/microbiome\/continue-stages\/?$/, names: [] },
+  { key: "microbiomeToolSchema", re: /^\/api\/ai\/workflows\/microbiome\/tool-schema\/?$/, names: [] },
+  { key: "microbiomeToolSearch", re: /^\/api\/ai\/workflows\/microbiome\/tool-search\/?$/, names: [] },
   { key: "microbiomeImportSchema", re: /^\/api\/ai\/workflows\/microbiome\/import-schema\/?$/, names: [] },
   { key: "microbiomeImportJob", re: /^\/api\/ai\/workflows\/microbiome\/import-job\/?$/, names: [] },
   { key: "microbiomeStatus", re: /^\/api\/ai\/workflows\/microbiome\/status\/?$/, names: [] },
