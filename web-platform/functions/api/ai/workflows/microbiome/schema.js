@@ -204,9 +204,9 @@ function fastqEvidence(input) {
 }
 
 function compactEvidence(evidence) {
-  if (!evidence) return null;
-  const one = (hit) => hit ? { target: hit.target, source: hit.source, raw: hit.raw,
-    value: hit.value, basis: hit.basis } : null;
+  if (!evidence || typeof evidence !== "object") return null;
+  const one = (hit) => hit && typeof hit === "object" ? { target: hit.target, source: hit.source,
+    raw: hit.raw, value: hit.value, basis: hit.basis } : null;
   return { type: one(evidence.type), format: one(evidence.format) };
 }
 
@@ -488,50 +488,73 @@ export function buildImportPayload(schema, matched, { readsId, barcodesId, reads
  * credentials, dataset content, history data or provider responses are exposed.
  */
 export function describeImportCase(schema, matched) {
+  const unavailable = (reason) => ({ available: false, reason,
+    tool_id: String(schema?.tool_id ?? null), version: null });
   if (!matched) {
-    return { available: false,
-      reason: `The live import schema does not expose the ${LEGACY_FORMAT_HINT} format case, `
-        + `nor the ${EMP_TYPE_TARGET} + ${EMP_FORMAT_TARGET} EMP directory case; no value was invented.`,
-      tool_id: String(schema?.tool_id ?? null), version: null };
+    return unavailable(`The live import schema does not expose the ${LEGACY_FORMAT_HINT} format case, `
+      + `nor the ${EMP_TYPE_TARGET} + ${EMP_FORMAT_TARGET} EMP directory case; no value was invented.`);
   }
-  const entries = [];
-  collectCaseInputs(matched.caseEntry.inputs, matched.prefix, entries);
-  const preview = (value) => String(value ?? "").slice(0, 300);
-  const roles = resolveCaseRoles(entries, { allowOrderFallback: matched.legacy === true });
-  const inputs = entries.map((entry) => {
-    const nameParam = nearestNameParam(entries, entries.indexOf(entry));
-    const mappedRole = roles.mapped.find((item) => item.entry === entry);
+  // A live-schema shape must never turn a read-only diagnostic into a throw.
+  // Require the minimum metadata this function actually reads; anything less
+  // is reported honestly instead of producing an empty platform error.
+  const caseEntry = asObject(matched.caseEntry);
+  const selectors = Array.isArray(matched.selectors) ? matched.selectors : null;
+  const usableSelectors = selectors && selectors.length > 0
+    && selectors.every((entry) => entry && typeof entry === "object"
+      && typeof entry.name === "string" && entry.name !== "" && entry.value !== undefined);
+  if (!matched.caseEntry || typeof matched.caseEntry !== "object" || !usableSelectors) {
+    return unavailable("The live import case metadata is incomplete (missing case entry or selector path); no case was selected.");
+  }
+  try {
+    const entries = [];
+    collectCaseInputs(Array.isArray(caseEntry.inputs) ? caseEntry.inputs : [],
+      typeof matched.prefix === "string" ? matched.prefix : "", entries);
+    const preview = (value) => String(value ?? "").slice(0, 300);
+    const roles = resolveCaseRoles(entries, { allowOrderFallback: matched.legacy === true });
+    const inputs = entries.map((entry) => {
+      const nameParam = nearestNameParam(entries, entries.indexOf(entry));
+      // resolveCaseRoles() returns no `mapped` on failure; a non-mappable live
+      // case must be reported with a null mapping, not throw a TypeError here.
+      const mappedRole = roles.mapped?.find((item) => item.entry === entry) ?? null;
+      return {
+        name: String(entry.input.name ?? ""),
+        field: entry.field,
+        model_class: String(entry.input.model_class ?? ""),
+        extensions: (Array.isArray(entry.input.extensions) ? entry.input.extensions : [])
+          .slice(0, 20).map((ext) => String(ext ?? "").slice(0, 100)),
+        help: preview(entry.input.help),
+        label: preview(entry.input.label),
+        resolved_role: mappedRole ? mappedRole.role : null,
+        name_param_evidence: isData(entry.input) && nameParam ? nameParamEvidence(nameParam.entry) : null,
+        fastq_compatible: isData(entry.input) ? fastqEvidence(entry.input).compatible : null
+      };
+    });
     return {
-      name: String(entry.input.name ?? ""),
-      field: entry.field,
-      model_class: String(entry.input.model_class ?? ""),
-      extensions: (Array.isArray(entry.input.extensions) ? entry.input.extensions : []).slice(0, 20).map((ext) => String(ext)),
-      help: preview(entry.input.help),
-      label: preview(entry.input.label),
-      resolved_role: mappedRole ? mappedRole.role : null,
-      name_param_evidence: isData(entry.input) && nameParam ? nameParamEvidence(nameParam.entry) : null,
-      fastq_compatible: isData(entry.input) ? fastqEvidence(entry.input).compatible : null
+      available: true,
+      selected_case: matched.legacy ? "legacy_format_hint" : "emp_single_end_directory",
+      selection_basis: matched.selection_basis ?? "live_io_details_schema",
+      tool_id: String(schema?.tool_id ?? matched.tool_id ?? null),
+      tool_version: String(schema?.tool_version ?? matched.tool_version ?? null),
+      discovered_format_value: matched.formatValue ?? null,
+      type_value: matched.type_value ?? null,
+      selector_path: selectors.map((entry) => ({ name: entry.name, value: entry.value })),
+      case_evidence: compactEvidence(matched.evidence),
+      manifest_yaml_branch_excluded: matched.manifestYamlCase === false,
+      inputs,
+      chosen_mapping: roles.valid ? roles.mapping : null,
+      mapping_basis: roles.valid ? roles.mappingBasis : null,
+      chosen_dataset_mapping: roles.valid ? {
+        uploaded_sequences_fastaq: roles.mapping.reads, uploaded_barcodes_fastq: roles.mapping.barcodes
+      } : null,
+      basis: "live_io_details_schema"
     };
-  });
-  return {
-    available: true,
-    selected_case: matched.legacy ? "legacy_format_hint" : "emp_single_end_directory",
-    selection_basis: matched.selection_basis ?? "live_io_details_schema",
-    tool_id: String(schema?.tool_id ?? matched.tool_id ?? null),
-    tool_version: String(schema?.tool_version ?? matched.tool_version ?? null),
-    discovered_format_value: matched.formatValue,
-    type_value: matched.type_value ?? null,
-    selector_path: matched.selectors.map((entry) => ({ name: entry.name, value: entry.value })),
-    case_evidence: compactEvidence(matched.evidence),
-    manifest_yaml_branch_excluded: matched.manifestYamlCase === false,
-    inputs,
-    chosen_mapping: roles.valid ? roles.mapping : null,
-    mapping_basis: roles.valid ? roles.mappingBasis : null,
-    chosen_dataset_mapping: roles.valid ? {
-      uploaded_sequences_fastaq: roles.mapping.reads, uploaded_barcodes_fastq: roles.mapping.barcodes
-    } : null,
-    basis: "live_io_details_schema"
-  };
+  } catch (caught) {
+    const reason = String(caught?.message ?? caught ?? "")
+      .replace(/\b(api[-_]?key|token|secret|password|credential)\b\s*[:=]\s*\S+/gi, "$1=[redacted]")
+      .slice(0, 200);
+    return unavailable(`The live import case metadata could not be described safely: `
+      + `${String(caught?.name ?? "Error")}: ${reason}`);
+  }
 }
 
 /** Optional `?format=all` view: every candidate case, metadata only. */

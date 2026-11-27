@@ -1006,44 +1006,76 @@ export async function handleRetry(request, env, options = {}) {
 
 // ---------------------------------------------------- /import-schema (GET)
 
+// Error text in this diagnostic is scrubbed before it is returned: a provider
+// exception can contain an API key, a signed URL or a full response body. The
+// scrub removes configured secret values verbatim and masks key/token patterns
+// and URLs, leaving only the exception name and a bounded message/stack.
+function scrubDiagnosticText(value, env) {
+  let text = String(value ?? "");
+  for (const secret of [env?.GALAXY_API_KEY, env?.AI_API_KEY, env?.NINEROUTER_API_KEY,
+    env?.SMARTSBIO_API_KEY, env?.X_AGENT_TOKEN, env?.API_KEY]) {
+    if (typeof secret === "string" && secret.length >= 4) text = text.split(secret).join("[redacted]");
+  }
+  return text
+    .replace(/\b(api[-_]?key|x-api-key|authorization|token|secret|password|passwd|credential)\b\s*[:=]\s*["']?[^\s,;"']+/gi, "$1=[redacted]")
+    .replace(/https?:\/\/[^\s"'<>]+/gi, "[url]")
+    .replace(/[?&][^=\s]+=[^\s&]+/g, "[query]");
+}
+
+function sanitizedErrorDetail(caught, env) {
+  const scrub = (value, cap) => scrubDiagnosticText(value, env).slice(0, cap);
+  return {
+    name: scrub(caught?.name ?? "Error", 100),
+    message: scrub(caught?.message ?? caught ?? "", 300),
+    stack: scrub(caught?.stack ?? "", 500)
+  };
+}
+
 // Read-only provenance diagnostic: inspect the LIVE `qiime2 tools import`
 // schema using the exact same discovery/format-case path as the import phase.
 // It returns metadata only — no credentials, dataset content or history data.
+// The whole body is guarded: an unexpected live-schema shape must produce a
+// JSON 500 with a bounded, sanitized error detail, never an empty platform 500.
 export async function handleImportSchema(request, env, options = {}) {
-  const rejected = requireMethod(request, "GET", "GET, OPTIONS");
-  if (rejected) return rejected;
-  const ctx = ctxFor(env, options);
-  let discovery;
   try {
-    discovery = await discover(env, ctx);
+    const rejected = requireMethod(request, "GET", "GET, OPTIONS");
+    if (rejected) return rejected;
+    const ctx = ctxFor(env, options);
+    let discovery;
+    try {
+      discovery = await discover(env, ctx);
+    } catch (caught) {
+      return errorResponse(`Live discovery could not be read: ${scrubDiagnosticText(caught?.message ?? caught, env)}`, 502, request);
+    }
+    const tool = discovery.tools?.importTool;
+    if (!tool?.id) {
+      return jsonResponse({ available: false,
+        reason: "No genuine `qiime2 tools import` tool was discovered; no tool id was invented.",
+        tool_id: null, version: null }, 200, request);
+    }
+    let schema;
+    try {
+      schema = await fetchToolSchema(env, tool.id, tool.version);
+    } catch (caught) {
+      return jsonResponse({ available: false,
+        reason: `The live import schema could not be read: ${scrubDiagnosticText(caught?.message ?? caught, env)}`,
+        tool_id: tool.id, version: tool.version ?? null }, 200, request);
+    }
+    const detail = describeImportCase(schema, findImportFormatCase(schema));
+    const body = { ...detail, version: tool.version ?? null,
+      discovery_mode: discovery.discoveryMode, discovered_at: discovery.discoveredAt,
+      execution_mode: envExecutionMode(env) };
+    // Optional candidate list for independent review. The default response stays
+    // the single selected EMP directory case; this view is still GET-only and
+    // contains metadata only (no dataset ids, credentials or provider responses).
+    if (String(new URL(request.url).searchParams.get("format") ?? "").toLowerCase() === "all") {
+      body.candidates = describeAllImportCases(schema);
+    }
+    return jsonResponse(body, 200, request);
   } catch (caught) {
-    return errorResponse(`Live discovery could not be read: ${caught?.message ?? caught}`, 502, request);
+    return jsonResponse({ available: false, error: "import_schema_handler_failed",
+      detail: sanitizedErrorDetail(caught, env) }, 500, request);
   }
-  const tool = discovery.tools?.importTool;
-  if (!tool?.id) {
-    return jsonResponse({ available: false,
-      reason: "No genuine `qiime2 tools import` tool was discovered; no tool id was invented.",
-      tool_id: null, version: null }, 200, request);
-  }
-  let schema;
-  try {
-    schema = await fetchToolSchema(env, tool.id, tool.version);
-  } catch (caught) {
-    return jsonResponse({ available: false,
-      reason: `The live import schema could not be read: ${caught?.message ?? caught}`,
-      tool_id: tool.id, version: tool.version ?? null }, 200, request);
-  }
-  const detail = describeImportCase(schema, findImportFormatCase(schema));
-  const body = { ...detail, version: tool.version ?? null,
-    discovery_mode: discovery.discoveryMode, discovered_at: discovery.discoveredAt,
-    execution_mode: envExecutionMode(env) };
-  // Optional candidate list for independent review. The default response stays
-  // the single selected EMP directory case; this view is still GET-only and
-  // contains metadata only (no dataset ids, credentials or provider responses).
-  if (String(new URL(request.url).searchParams.get("format") ?? "").toLowerCase() === "all") {
-    body.candidates = describeAllImportCases(schema);
-  }
-  return jsonResponse(body, 200, request);
 }
 
 // ------------------------------------------------------- /resume-stages
