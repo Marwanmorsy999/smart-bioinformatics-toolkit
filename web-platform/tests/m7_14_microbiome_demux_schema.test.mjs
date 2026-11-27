@@ -186,7 +186,8 @@ test("FAILED SUBMISSION / bounded sanitized field-name summary is persisted", as
     assert.ok(entry.field_names.includes("seqs"));
     assert.ok(entry.field_names.includes("barcodes|column"));
     const serialized = JSON.stringify(entry);
-    assert.ok(serialized.length <= 800, `diagnostic must stay bounded: ${serialized.length}`);
+    assert.ok(serialized.length <= 1200, `diagnostic must stay bounded: ${serialized.length}`);
+    assert.ok(String(entry.upstream_excerpt ?? "").length <= 600, "excerpt itself is capped");
     assert.doesNotMatch(serialized, new RegExp(SECRET));
     assert.doesNotMatch(serialized, /barcode-sequence/);
     assert.doesNotMatch(serialized, new RegExp(QZA));
@@ -195,9 +196,9 @@ test("FAILED SUBMISSION / bounded sanitized field-name summary is persisted", as
   });
 });
 
-test("RESUME / sixth pre-job resume succeeds; seventh cap and provider-job failure are refused", async () => {
+test("RESUME / eighth pre-job resume succeeds; ninth cap and provider-job failure are refused", async () => {
   const failedState = () => stateAtDemux({
-    status: "failed", retry_count: 1, stage_resume_count: 5, current_step: "demux",
+    status: "failed", retry_count: 1, stage_resume_count: 7, current_step: "demux",
     steps: { import_reads: { status: "succeeded", provider_job_id: "uploadjob00000001" },
       demux: { status: "failed", reason: "demux submission failed: HTTP 400", provider_job_id: null } },
     errors: [{ step: "demux", reason: "demux submission failed: HTTP 400" }],
@@ -208,9 +209,9 @@ test("RESUME / sixth pre-job resume succeeds; seventh cap and provider-job failu
   await withStub(stub, async () => {
     const resume = () => handleResumeStages(makePostRequest({ run_id: RUN_ID },
       "/api/ai/workflows/microbiome/resume-stages"), envFor(db, stub), { fetchImpl: stub.fetchImpl });
-    const sixth = await resume();
-    assert.equal(sixth.status, 202, JSON.stringify(await sixth.clone().json()));
-    assert.equal((await sixth.json()).stage_resume_count, 6);
+    const eighth = await resume();
+    assert.equal(eighth.status, 202, JSON.stringify(await eighth.clone().json()));
+    assert.equal((await eighth.json()).stage_resume_count, 8);
     assert.equal(storedState(d1).import.provider_job_id, IMPORT_JOB, "import preparation survived");
     assert.equal(storedState(d1).steps.demux, undefined);
 
@@ -223,7 +224,7 @@ test("RESUME / sixth pre-job resume succeeds; seventh cap and provider-job failu
       row.state_json = JSON.stringify(state);
       row.state = "failed";
     };
-    refail(7, { status: "failed", reason: "demux submission failed: HTTP 400", provider_job_id: null });
+    refail(8, { status: "failed", reason: "demux submission failed: HTTP 400", provider_job_id: null });
     const capped = await resume();
     assert.equal(capped.status, 409);
     assert.equal((await capped.json()).reason, "stage_resume_limit_reached");

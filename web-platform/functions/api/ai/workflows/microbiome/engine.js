@@ -1403,8 +1403,8 @@ export async function handleResumeStages(request, env, options = {}) {
   if (state.status !== "failed") return refuse("status_not_failed", `The stored run status is ${state.status}, not failed.`);
   if (Number(state.retry_count ?? -1) !== 1) return refuse("retry_count_not_one",
     "Only a run resumed by exactly one bounded upload retry may resume stages.");
-  if (Number(state.stage_resume_count ?? 0) >= 7) return refuse("stage_resume_limit_reached",
-    "This run has reached the cap of seven bounded stage resumes.");
+  if (Number(state.stage_resume_count ?? 0) >= 8) return refuse("stage_resume_limit_reached",
+    "This run has reached the cap of eight bounded stage resumes.");
   if ((state.steps?.import_reads?.status ?? null) !== "succeeded") {
     return refuse("import_reads_not_succeeded", "The original upload import is not recorded as succeeded.");
   }
@@ -2112,6 +2112,10 @@ function recordSubmissionFailure(state, env, stepId, tool, payload, result, thro
     http_status: Number(error?.status) || null,
     error_code: safeString(error?.code, 80) || null,
     error_message: scrubDiagnosticText(error?.message ?? "", env).slice(0, 300),
+    // Allowlisted only: a bounded, redacted excerpt of the provider's own
+    // error text. Never the full response body, payload values or credentials.
+    upstream_excerpt: error?.upstream_excerpt
+      ? scrubDiagnosticText(error.upstream_excerpt, env).slice(0, 600) : null,
     basis: "sanitized_failed_submission_request_summary"
   };
   state.submission_failures = [...(state.submission_failures ?? []), entry].slice(-MAX_SUBMISSION_FAILURES);

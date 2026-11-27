@@ -6,16 +6,20 @@
 // uniform. Retry policy: 408, 429 and 5xx (plus network errors only when the
 // request may safely be repeated). Nothing is retried forever.
 
+import { sanitizeUpstreamExcerpt } from "./contract.js";
+
 const RETRYABLE = new Set([408, 429]);
 
 export class ProviderHttpError extends Error {
-  constructor({ status = 0, code = "network_error", message = "provider request failed", retryable = false, retryAfterMs = 0, name = "ProviderHttpError" } = {}) {
+  constructor({ status = 0, code = "network_error", message = "provider request failed",
+    retryable = false, retryAfterMs = 0, upstream_excerpt = "", name = "ProviderHttpError" } = {}) {
     super(message);
     this.name = name;
     this.status = Number(status) || 0;
     this.code = String(code);
     this.retryable = Boolean(retryable);
     this.retryAfterMs = Math.max(0, Number(retryAfterMs) || 0);
+    this.upstream_excerpt = String(upstream_excerpt).slice(0, 600);
   }
 }
 
@@ -94,17 +98,21 @@ function retryAfterMs(response) {
   return 0;
 }
 
-// Extract a *code* only. Raw provider bodies are never surfaced to callers;
-// normalizeProviderError() is the single place that builds outward messages.
-async function errorCodeFrom(response) {
-  try {
-    const body = await response.clone().json();
-    if (!body || typeof body !== "object") return null;
+// Extract a bounded *code* plus a bounded, redacted excerpt. Raw provider
+// bodies are never surfaced; normalizeProviderError() is the only outward seam.
+async function errorDetailsFrom(response, env = {}) {
+  let body = null;
+  try { body = await response.clone().json(); }
+  catch {
+    try { body = await response.clone().text(); } catch { /* unavailable */ }
+  }
+  let code = null;
+  if (body && typeof body === "object") {
     const candidate = body.error ?? body.code ?? body.error_code ?? body.detail?.code;
-    if (typeof candidate === "string" && candidate.length <= 120) return candidate;
-    if (candidate && typeof candidate === "object" && typeof candidate.code === "string") return candidate.code;
-  } catch { /* non-JSON or already consumed: use the HTTP status */ }
-  return null;
+    if (typeof candidate === "string" && candidate.length <= 120) code = candidate;
+    else if (candidate && typeof candidate === "object" && typeof candidate.code === "string") code = candidate.code;
+  }
+  return { code, excerpt: sanitizeUpstreamExcerpt(body, env, 600) };
 }
 
 function defaultFetch() {
@@ -139,13 +147,14 @@ export async function requestResponse(provider, fetchImpl, url, options = {}, op
           return { response, cleanup: () => timer.cleanup(), attempts: attempt };
         }
         const status = Number(response?.status) || 0;
-        const code = await errorCodeFrom(response);
+        const details = await errorDetailsFrom(response, opts.env);
         error = new ProviderHttpError({
           status,
-          code: code || `http_${status || 0}`,
+          code: details.code || `http_${status || 0}`,
           message: `${provider} returned HTTP ${status || 0}`,
           retryable: isRetryableStatus(status),
-          retryAfterMs: retryAfterMs(response)
+          retryAfterMs: retryAfterMs(response),
+          upstream_excerpt: details.excerpt
         });
       } catch (caught) {
         if (timer.signal.aborted) throw abortError(parentSignal?.reason ?? caught?.reason ?? caught);

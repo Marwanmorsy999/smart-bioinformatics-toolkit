@@ -65,11 +65,41 @@ export const ADAPTER_METHODS = Object.freeze([
   "getUsage"
 ]);
 
-// A normalized error. Never leak provider raw bodies/secrets to callers.
+// Bounded redaction shared by adapters and diagnostics. Configured secret
+// values are removed verbatim; key/token/secret patterns, URLs and query
+// strings are masked. Never returns a raw provider body.
+export function redactDiagnosticText(value, env = {}) {
+  let text = String(value ?? "");
+  for (const secret of [env?.GALAXY_API_KEY, env?.AI_API_KEY, env?.NINEROUTER_API_KEY,
+    env?.SMARTSBIO_API_KEY, env?.X_AGENT_TOKEN, env?.API_KEY]) {
+    if (typeof secret === "string" && secret.length >= 4) text = text.split(secret).join("[redacted]");
+  }
+  return text
+    .replace(/\b(api[-_]?key|x-api-key|authorization|token|secret|password|passwd|credential)\b\s*[:=]\s*["']?[^\s,;"']+/gi, "$1=[redacted]")
+    .replace(/https?:\/\/[^\s"'<>]+/gi, "[url]")
+    .replace(/[?&][^=\s]+=[^\s&]+/g, "[query]");
+}
+
+// Prefer Galaxy's own human-readable error fields. The result is capped and
+// redacted before it can be attached to an error or persisted anywhere.
+export function sanitizeUpstreamExcerpt(body, env = {}, cap = 600) {
+  let text = "";
+  if (body && typeof body === "object") {
+    const candidate = [body.err_msg, body.message, body.detail, body.error_description,
+      body.error?.message, body.error?.detail]
+      .find((value) => typeof value === "string" && value.trim());
+    text = candidate ?? (typeof body.detail === "string" ? body.detail : JSON.stringify(body));
+  } else if (typeof body === "string") text = body;
+  if (!text) return "";
+  return redactDiagnosticText(text, env).slice(0, Math.max(1, Math.min(Number(cap) || 600, 600)));
+}
+
+// A normalized error. Never leak provider raw bodies/secrets to callers;
+// only the bounded, sanitized `upstream_excerpt` is allowlisted out.
 export function normalizeProviderError(provider, error, meta = {}) {
   const reason = error?.message ?? (typeof error === "string" ? error : "unknown error");
   const status = Number(error?.status ?? error?.response?.status ?? meta.status ?? 0) || 0;
-  return {
+  const normalized = {
     provider,
     code: String(error?.code ?? meta.code ?? ("http_" + (status || "0"))),
     message: String(reason).slice(0, 500),
@@ -77,6 +107,10 @@ export function normalizeProviderError(provider, error, meta = {}) {
     retryable: Boolean(error?.retryable ?? (status === 408 || status === 429 || status >= 500)),
     at: meta.at ?? null
   };
+  if (error?.upstream_excerpt) {
+    normalized.upstream_excerpt = redactDiagnosticText(error.upstream_excerpt, meta.env).slice(0, 600);
+  }
+  return normalized;
 }
 
 export function makeResult(provider, ok, extra = {}) {
