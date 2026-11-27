@@ -207,9 +207,9 @@ test("COPY / repeated polls never issue a second copy", async () => {
   });
 });
 
-test("RESUME / fifth pre-job resume succeeds on a live-shaped cross-history state", async () => {
+test("RESUME / sixth pre-job resume succeeds on a live-shaped cross-history state", async () => {
   const liveState = state({
-    status: "failed", stage_resume_count: 4, retry_count: 1, current_step: "demux",
+    status: "failed", stage_resume_count: 5, retry_count: 1, current_step: "demux",
     steps: { import_reads: { status: "succeeded", provider_job_id: "uploadjob00000001" },
       demux: { status: "failed", reason: "demux submission failed: HTTP 400", provider_job_id: null } },
     errors: [{ step: "demux", reason: "demux submission failed: HTTP 400" }]
@@ -220,12 +220,112 @@ test("RESUME / fifth pre-job resume succeeds on a live-shaped cross-history stat
     const response = await handleResumeStages(makePostRequest({ run_id: RUN_ID },
       "/api/ai/workflows/microbiome/resume-stages"), envFor(db, stub), { fetchImpl: stub.fetchImpl });
     assert.equal(response.status, 202, JSON.stringify(await response.clone().json()));
-    assert.equal((await response.json()).stage_resume_count, 5);
+    assert.equal((await response.json()).stage_resume_count, 6);
     assert.equal(stored(d1).import.provider_job_id, IMPORT_JOB, "preparation job preserved");
     await status(db, stub);
     await status(db, stub);
     assert.equal(stub.copies.length, 1);
     assert.equal(stored(d1).frontier.importedSeqsId, COPIED_QZA);
     assert.deepEqual(stub.submissions[0].inputs.seqs, { src: "hda", id: COPIED_QZA });
+  });
+});
+
+// The exact live shape from the final finding: a PRIOR recovery already stored
+// output_dataset_id (the foreign HDA) and frontier, so the old copy path was
+// skipped and demux referenced a cross-history id.
+function staleResolvedState(overrides = {}) {
+  return state({
+    import: { status: "succeeded", provider_job_id: IMPORT_JOB,
+      output_dataset_id: ORIGINAL_QZA, output_history_id: OUTPUT_HISTORY, history_mismatch: true },
+    frontier: { importedSeqsId: ORIGINAL_QZA },
+    errors: [], ...overrides
+  });
+}
+
+test("STALE OUTPUT / a recorded foreign id still triggers exactly one copy; demux uses the copy", async () => {
+  const stub = makeStub();
+  const { db, state: d1 } = seededDb(staleResolvedState());
+  await withStub(stub, async () => {
+    await status(db, stub); // unconditional in-run-history proof + copy
+    await status(db, stub); // demux submission
+    for (let index = 0; index < 4; index += 1) await status(db, stub);
+    assert.equal(stub.copies.length, 1, "never copy twice across polls");
+    assert.deepEqual(stub.copies[0].body, { source: "hda", id: ORIGINAL_QZA });
+    const s = stored(d1);
+    assert.equal(s.frontier.importedSeqsId, COPIED_QZA);
+    assert.equal(s.import.output_dataset_id, ORIGINAL_QZA, "original id retained as provenance");
+    assert.equal(s.import.copy_dataset_id, COPIED_QZA);
+    assert.equal(s.import.copy.copied_from_history, OUTPUT_HISTORY);
+    assert.equal(s.import.copy.copy_basis, "authenticated_hda_copy_into_run_history");
+    assert.equal(stub.submissions.length, 1);
+    assert.deepEqual(stub.submissions[0].inputs.seqs, { src: "hda", id: COPIED_QZA });
+  });
+});
+
+test("STALE OUTPUT / missing history evidence is re-resolved from the GET job output", async () => {
+  const stub = makeStub();
+  const live = staleResolvedState();
+  delete live.import.output_history_id;
+  delete live.import.history_mismatch;
+  const { db, state: d1 } = seededDb(live);
+  await withStub(stub, async () => {
+    await status(db, stub);
+    await status(db, stub);
+    assert.equal(stub.copies.length, 1);
+    assert.equal(stored(d1).import.copy.copied_from_history, OUTPUT_HISTORY);
+    assert.deepEqual(stub.submissions[0].inputs.seqs, { src: "hda", id: COPIED_QZA });
+  });
+});
+
+test("STALE OUTPUT / same-history resolved id skips the copy entirely", async () => {
+  const stub = makeStub({ outputHistory: RUN_HISTORY });
+  const live = staleResolvedState();
+  live.import.output_history_id = RUN_HISTORY;
+  const { db, state: d1 } = seededDb(live);
+  await withStub(stub, async () => {
+    await status(db, stub);
+    await status(db, stub);
+    assert.equal(stub.copies.length, 0);
+    assert.equal(stored(d1).frontier.importedSeqsId, ORIGINAL_QZA);
+    assert.deepEqual(stub.submissions[0].inputs.seqs, { src: "hda", id: ORIGINAL_QZA });
+  });
+});
+
+test("STALE OUTPUT / unavailable history evidence records an exact reason, no copy and no job", async () => {
+  const stub = makeStub();
+  const live = staleResolvedState();
+  delete live.import.output_history_id;
+  delete live.import.history_mismatch;
+  const { db, state: d1 } = seededDb(live);
+  const originalFetch = stub.fetchImpl;
+  stub.fetchImpl = async (input, init = {}) => {
+    if (String(input).includes("/outputs")) return json({ error: "outputs_unavailable" }, 404);
+    return originalFetch(input, init);
+  };
+  await withStub(stub, async () => {
+    await status(db, stub);
+    const s = stored(d1);
+    assert.equal(s.import.status, "unavailable");
+    assert.match(s.import.reason, /history_evidence_unavailable: job_outputs_unavailable/);
+    assert.equal(stub.copies.length, 0);
+    assert.equal(stub.submissions.length, 0);
+    assert.equal(s.frontier.importedSeqsId, ORIGINAL_QZA, "the unresolved id is not replaced by a guess");
+  });
+});
+
+test("RESUME / seventh pre-job attempt is capped after the sixth", async () => {
+  const live = state({
+    status: "failed", stage_resume_count: 6, retry_count: 1, current_step: "demux",
+    import: { status: "succeeded", provider_job_id: IMPORT_JOB, output_dataset_id: ORIGINAL_QZA },
+    steps: { import_reads: { status: "succeeded", provider_job_id: "uploadjob00000001" },
+      demux: { status: "failed", reason: "demux submission failed: HTTP 400", provider_job_id: null } }
+  });
+  const stub = makeStub();
+  const { db } = seededDb(live);
+  await withStub(stub, async () => {
+    const response = await handleResumeStages(makePostRequest({ run_id: RUN_ID },
+      "/api/ai/workflows/microbiome/resume-stages"), envFor(db, stub), { fetchImpl: stub.fetchImpl });
+    assert.equal(response.status, 409);
+    assert.equal((await response.json()).reason, "stage_resume_limit_reached");
   });
 });
