@@ -53,11 +53,12 @@ function seededDb(s) {
 }
 
 function makeStub({ copyStatus = 200, copyFails = false, outputHistory = OUTPUT_HISTORY,
-  copyReady = true, copyReturnsId = true } = {}) {
+  copyReady = true, copyReturnsId = true, failFirstCopy = false } = {}) {
   const calls = [];
   const copies = [];
   const submissions = [];
   let copied = false;
+  let failuresLeft = failFirstCopy ? 1 : 0;
   const fetchImpl = async (input, init = {}) => {
     const url = String(input);
     const method = String(init.method ?? "GET").toUpperCase();
@@ -90,6 +91,10 @@ function makeStub({ copyStatus = 200, copyFails = false, outputHistory = OUTPUT_
     if (method === "POST" && /\/api\/histories\/[^/]+\/contents/.test(url)) {
       copies.push({ url, body });
       if (copyFails) return json({ error: "copy_refused" }, copyStatus);
+      if (failuresLeft > 0) {
+        failuresLeft -= 1;
+        return json({ error: "bad_request", message: "invalid content field" }, 400);
+      }
       copied = true;
       const target = decodeURIComponent(url.slice(url.lastIndexOf("/histories/") + 11).split("/")[0]);
       return json({ id: copyReturnsId ? COPIED_QZA : null, history_id: target });
@@ -142,7 +147,8 @@ test("ADAPTER / copy posts source hda into the EXISTING history and returns the 
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, `https://galaxy.example.test/api/histories/${RUN_HISTORY}/contents`);
   assert.equal(calls[0].init.method, "POST");
-  assert.deepEqual(JSON.parse(calls[0].init.body), { source: "hda", id: ORIGINAL_QZA });
+  assert.deepEqual(JSON.parse(calls[0].init.body), { source: "hda", content: ORIGINAL_QZA,
+    type: "dataset", instance_type: "history", history_id: RUN_HISTORY });
   assert.doesNotMatch(JSON.stringify(result), new RegExp(SECRET));
   const missing = await adapter.copyDatasetToHistory({ history_id: RUN_HISTORY }, { fetch: fetchImpl });
   assert.equal(missing.ok, false);
@@ -157,7 +163,8 @@ test("COPY / cross-history qza is copied once and demux uses the copied id", asy
     await status(db, stub); // recover + copy + verify
     await status(db, stub); // demux submission
     assert.equal(stub.copies.length, 1);
-    assert.deepEqual(stub.copies[0].body, { source: "hda", id: ORIGINAL_QZA });
+    assert.deepEqual(stub.copies[0].body, { source: "hda", content: ORIGINAL_QZA,
+      type: "dataset", instance_type: "history", history_id: RUN_HISTORY });
     const s = stored(d1);
     assert.equal(s.frontier.importedSeqsId, COPIED_QZA);
     assert.equal(s.import.copy_dataset_id, COPIED_QZA);
@@ -180,8 +187,11 @@ test("COPY / same-history qza needs no copy and keeps the original id", async ()
 });
 
 test("COPY / failed or unverifiable copy records the exact reason and never submits demux", async () => {
-  for (const options of [{ copyFails: true, copyStatus: 403 }, { copyReady: false },
-    { copyReturnsId: false }]) {
+  for (const [options, expectedCopies] of [
+    [{ copyFails: true, copyStatus: 403 }, 2],
+    [{ copyReady: false }, 1],
+    [{ copyReturnsId: false }, 2]
+  ]) {
     const stub = makeStub(options);
     const { db, state: d1 } = seededDb(state());
     await withStub(stub, async () => {
@@ -192,7 +202,7 @@ test("COPY / failed or unverifiable copy records the exact reason and never subm
       assert.equal(s.import.status, "unavailable");
       assert.match(s.import.reason, /^qza_history_copy_failed_or_unverified: /);
       assert.equal(stub.submissions.length, 0, "no demux job was submitted");
-      assert.equal(stub.copies.length, 1, "a failed copy is never retried in the same state");
+      assert.equal(stub.copies.length, expectedCopies, "at most two bounded copy attempts");
     });
   }
 });
@@ -250,7 +260,8 @@ test("STALE OUTPUT / a recorded foreign id still triggers exactly one copy; demu
     await status(db, stub); // demux submission
     for (let index = 0; index < 4; index += 1) await status(db, stub);
     assert.equal(stub.copies.length, 1, "never copy twice across polls");
-    assert.deepEqual(stub.copies[0].body, { source: "hda", id: ORIGINAL_QZA });
+    assert.deepEqual(stub.copies[0].body, { source: "hda", content: ORIGINAL_QZA,
+      type: "dataset", instance_type: "history", history_id: RUN_HISTORY });
     const s = stored(d1);
     assert.equal(s.frontier.importedSeqsId, COPIED_QZA);
     assert.equal(s.import.output_dataset_id, ORIGINAL_QZA, "original id retained as provenance");
@@ -313,9 +324,62 @@ test("STALE OUTPUT / unavailable history evidence records an exact reason, no co
   });
 });
 
-test("RESUME / seventh pre-job attempt is capped after the sixth", async () => {
+test("RETRY / one failed copy is retried once on the next poll, then demux uses the verified copy", async () => {
+  const stub = makeStub({ failFirstCopy: true });
+  const { db, state: d1 } = seededDb(staleResolvedState());
+  await withStub(stub, async () => {
+    await status(db, stub); // first failure
+    assert.equal(stub.copies.length, 1);
+    assert.equal(stored(d1).import.copy_attempt_count, 1);
+    assert.equal(stored(d1).frontier.importedSeqsId, ORIGINAL_QZA, "no unverified id was used");
+    await status(db, stub); // the single allowed retry succeeds
+    assert.equal(stub.copies.length, 2);
+    assert.equal(stored(d1).import.copy_attempt_count, 2);
+    assert.equal(stored(d1).frontier.importedSeqsId, COPIED_QZA);
+    await status(db, stub); // demux submission
+    await status(db, stub); // no extra work
+    assert.equal(stub.copies.length, 2, "never a third copy");
+    assert.equal(stub.submissions.length, 1);
+    assert.deepEqual(stub.submissions[0].inputs.seqs, { src: "hda", id: COPIED_QZA });
+  });
+});
+
+test("RETRY / legacy one-attempt state gets exactly one retry with the corrected body", async () => {
+  const live = staleResolvedState();
+  live.import.copy_attempted = true; // old boolean from the HTTP 400 failure
+  const stub = makeStub();
+  const { db, state: d1 } = seededDb(live);
+  await withStub(stub, async () => {
+    await status(db, stub);
+    await status(db, stub);
+    assert.equal(stub.copies.length, 1, "the prior failure counts as attempt one, leaving one retry");
+    assert.deepEqual(stub.copies[0].body, { source: "hda", content: ORIGINAL_QZA,
+      type: "dataset", instance_type: "history", history_id: RUN_HISTORY });
+    const s = stored(d1);
+    assert.equal(s.import.copy_attempt_count, 2, "legacy attempt plus one retry");
+    assert.equal("copy_attempted" in s.import, false, "legacy boolean was migrated");
+    assert.equal(s.frontier.importedSeqsId, COPIED_QZA);
+    assert.deepEqual(stub.submissions[0].inputs.seqs, { src: "hda", id: COPIED_QZA });
+  });
+});
+
+test("RETRY / two failures cap further copies and never submit demux", async () => {
+  const stub = makeStub({ copyFails: true, copyStatus: 400 });
+  const { db, state: d1 } = seededDb(staleResolvedState());
+  await withStub(stub, async () => {
+    for (let index = 0; index < 6; index += 1) await status(db, stub);
+    assert.equal(stub.copies.length, 2, "exactly two attempts, never a third");
+    const s = stored(d1);
+    assert.equal(s.import.copy_attempt_count, 2);
+    assert.match(s.import.reason, /qza_history_copy_(attempt_limit_reached|failed):/);
+    assert.equal(s.frontier.importedSeqsId, ORIGINAL_QZA, "no unverified copy id was substituted");
+    assert.equal(stub.submissions.length, 0, "demux requires a verified in-history qza");
+  });
+});
+
+test("RESUME / eighth pre-job attempt is capped after the seventh", async () => {
   const live = state({
-    status: "failed", stage_resume_count: 6, retry_count: 1, current_step: "demux",
+    status: "failed", stage_resume_count: 7, retry_count: 1, current_step: "demux",
     import: { status: "succeeded", provider_job_id: IMPORT_JOB, output_dataset_id: ORIGINAL_QZA },
     steps: { import_reads: { status: "succeeded", provider_job_id: "uploadjob00000001" },
       demux: { status: "failed", reason: "demux submission failed: HTTP 400", provider_job_id: null } }

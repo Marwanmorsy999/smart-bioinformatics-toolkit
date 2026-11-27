@@ -377,9 +377,9 @@ export function createAdapter(env = {}, deps = {}) {
   }
 
   // Copy an existing HDA into an ALREADY EXISTING history with Galaxy's
-  // authenticated history-contents endpoint. No new history is created and no
-  // credentials are returned or logged. The caller verifies the copy's state
-  // and format before using the returned dataset id.
+  // verified `CreateHistoryContentPayload` contract (GET /openapi.json).
+  // No new history is created and no credentials are returned or logged. The
+  // caller verifies the copy's state and format before using the returned id.
   async function copyDataset(request = {}, ctx = {}) {
     const at = makeNow(ctx);
     const bad = (code, message) => failure(PROVIDER,
@@ -387,10 +387,17 @@ export function createAdapter(env = {}, deps = {}) {
     const datasetId = safeId(request?.dataset_id, { max: 200 });
     const historyId = safeId(request?.history_id, { max: 200 });
     if (!datasetId) return bad("dataset_id_required", "Dataset copy requires a source dataset id.");
+    if (!/^[0-9a-f]{16,}$/i.test(datasetId)) {
+      return bad("invalid_content_hda_id", "Dataset copy requires an encoded HDA id of at least 16 hex characters.");
+    }
     if (!historyId) return bad("history_id_required", "Dataset copy requires an existing target history_id.");
     try {
+      // VERIFIED CreateHistoryContentPayload: `content` is the encoded HDA id;
+      // there is no `id` field. `type`, `instance_type` and `history_id` are
+      // required for a history dataset copy.
       const { body } = await call("POST", `/api/histories/${encodeURIComponent(historyId)}/contents`,
-        { source: "hda", id: datasetId }, ctx, { attempts: 2 });
+        { source: "hda", content: datasetId, type: "dataset", instance_type: "history", history_id: historyId },
+        ctx, { attempts: 2 });
       const output = asObject(body);
       return {
         provider: PROVIDER, ok: true, at, source_dataset_id: datasetId,
