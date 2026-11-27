@@ -27,14 +27,18 @@ import {
   describeLiveParameters, findImportFormatCase
 } from "./schema.js";
 import {
-  aggregateByRank, chooseTruncation, computeAlphaFromTable, computeBrayCurtis,
-  computePcoa, ordinationEvidence, parseAlphaDiversity, parseDenoisingStats,
-  parseDistanceMatrix, parseFastq, parseFeatureTable, parseMetadataTsv,
-  parsePcoa, parseQcSummary, parseRepSeqsFasta, parseTaxonomyTsv, rawQcSummary,
-  validateFeatureTableIntegrity, validateSampleCorrespondence
+  aggregateByRank, chooseRarefactionDepth, chooseTruncation, computeAlphaFromTable,
+  computeBrayCurtis, computePcoa, ordinationEvidence, parseAlphaDiversity,
+  parseDenoisingStats, parseDistanceMatrix, parseFastq, parseFeatureTable,
+  parseMetadataTsv, parsePcoa, parseQcSummary, parseRepSeqsFasta, parseTaxonomyTsv,
+  rawQcSummary, validateFeatureTableIntegrity, validateSampleCorrespondence
 } from "./parsers.js";
 import { PUBLIC_DATASETS } from "../../../../../public/js/microbiome-zip.js";
 import { resolvePublicDataset } from "./public-data.js";
+import { verifyRemoteSha256 } from "./sha256-stream.js";
+import {
+  QIIME_CLASSIFIER, classifierProvenance, inspectClassifierInventory
+} from "./classifier-prep.js";
 
 export const STEP_IDS = Object.freeze([
   "import_reads", "demux", "qc_summary", "dada2_denoise", "taxonomy",
@@ -264,7 +268,10 @@ function overridesFor(stepId, schema, state, discovery) {
     if (trim) overrides[trim] = state.params.trim_left;
     if (trunc) overrides[trunc] = state.params.trunc_len;
   }
-  if (stepId === "taxonomy" && discovery.classifier?.available && discovery.classifier.parameter_name
+  // A verified history qza wins over a live select option. The option is kept
+  // only as an honest fallback when preparation could not be verified.
+  if (stepId === "taxonomy" && !state.classifier_prep?.dataset_id
+      && discovery.classifier?.available && discovery.classifier.parameter_name
       && discovery.classifier.option_value) {
     overrides[discovery.classifier.parameter_name] = discovery.classifier.option_value;
   }
@@ -290,7 +297,13 @@ function rolesFor(stepId, state) {
     }
     case "qc_summary": return [{ id: state.frontier?.demuxReadsId ?? state.dataset_ids.sequences, role: "reads", name: "demultiplexed reads" }];
     case "dada2_denoise": return [{ id: state.frontier?.demuxReadsId ?? state.dataset_ids.sequences, role: "reads", name: "demultiplexed reads" }];
-    case "taxonomy": return [{ id: state.frontier?.repSeqsId, role: "fasta", name: "representative sequences" }];
+    case "taxonomy": return [
+      { id: state.frontier?.repSeqsId, role: "fasta", name: "representative sequences" },
+      // The classifier is a REAL history qza prepared from the official URL.
+      // Both dataset fields are resolved from the live tool schema below.
+      ...(state.classifier_prep?.dataset_id ? [{ id: state.classifier_prep.dataset_id,
+        role: "classifier", name: state.classifier_prep.filename ?? QIIME_CLASSIFIER.filename }] : [])
+    ];
     case "alpha_diversity": return [{ id: state.frontier?.featureTableId, role: "table", name: "feature table" }];
     case "beta_diversity": return [{ id: state.frontier?.featureTableId, role: "table", name: "feature table" }];
     case "pcoa": return [{ id: state.frontier?.distanceMatrixId ?? state.frontier?.featureTableId, role: "table", name: "distance matrix" }];
@@ -1374,7 +1387,8 @@ async function prepareDemuxImport(adapter, env, db, row, state, ctx) {
   }
   let submission;
   try {
-    submission = await adapter.submitJob({ operation: "submit_job", tool_id: importTool.id, inputs: payload.inputs }, ctx);
+    submission = await adapter.submitJob({ operation: "submit_job", tool_id: importTool.id,
+      history_id: state.history_id ?? null, inputs: payload.inputs }, ctx);
   } catch (caught) {
     await markUnavailable("qza_import_submission_failed", `Import submission failed: ${caught?.message ?? caught}`);
     return { handled: true };
@@ -1407,6 +1421,94 @@ async function prepareDemuxImport(adapter, env, db, row, state, ctx) {
   return { handled: true };
 }
 
+// ------------------------------------------------------ classifier qza prep
+//
+// Before taxonomy, prepare the OFFICIAL classifier as a real Galaxy history
+// qza. A READ-ONLY inventory is checked first: a dataset with the official
+// filename and matching checksum is reused with NO upload. Otherwise exactly
+// one verified streamed download is imported by URL into the EXISTING history.
+// state.classifier_prep is written before any await and persisted, so a second
+// preparation can never run. `options.classifierDescriptor` is an OFFLINE TEST
+// SEAM only (production handlers call this without it).
+
+async function prepareClassifier(adapter, env, db, row, state, ctx, options = {}) {
+  if (state.classifier_prep) return { handled: true, skipped: true };
+  const descriptor = options.classifierDescriptor ?? QIIME_CLASSIFIER;
+  const prep = { ...classifierProvenance(descriptor), status: "running",
+    started_at: nowIso(), attempts: 1, dataset_id: null, history_id: null, job_id: null,
+    computed_sha256: null };
+  state.classifier_prep = prep; // guard set BEFORE any await
+  const finish = async () => {
+    prep.finished_at = nowIso();
+    await persistState(db, row, state);
+    return { handled: true, status: prep.status };
+  };
+  const inventory = await adapter.inventoryDatasets({}, ctx);
+  prep.inventory = { ok: Boolean(inventory.ok), at: inventory.at ?? nowIso(),
+    histories: inventory.histories ?? [], datasets_found: (inventory.datasets ?? []).length,
+    reason: inventory.reason ?? null, error: inventory.error ?? null };
+  const matched = inspectClassifierInventory(inventory, state.history_id, descriptor);
+  prep.inventory_match = { verified: Boolean(matched.verified), candidates: matched.candidates,
+    basis: matched.basis, reason: matched.reason };
+  if (!inventory.ok) {
+    prep.status = "unavailable";
+    prep.reason = "inventory_unavailable: Galaxy inventory was unreadable; no classifier upload was attempted.";
+    return finish();
+  }
+  if (matched.verified) {
+    prep.status = "reused";
+    prep.source = "read_only_inventory_reuse";
+    prep.dataset_id = matched.verified.dataset_id;
+    prep.history_id = matched.verified.history_id;
+    prep.job_id = null;
+    prep.computed_sha256 = matched.verified.checksum_exposed;
+    prep.reason = null;
+    return finish();
+  }
+  if (!state.history_id) {
+    prep.status = "unavailable";
+    prep.reason = "history_unavailable: the run has no existing Galaxy history; no classifier upload was attempted.";
+    return finish();
+  }
+  const verification = await verifyRemoteSha256(ctx.fetch, descriptor.url, {
+    expected_sha256: descriptor.expected_sha256, expected_bytes: descriptor.expected_bytes,
+    chunkBytes: options.classifierChunkBytes ?? 1024 * 1024
+  });
+  prep.download = { ok: verification.ok, verified: verification.verified,
+    computed_sha256: verification.computed_sha256, actual_bytes: verification.actual_bytes,
+    expected_bytes: verification.expected_bytes, chunks: verification.chunks,
+    source_url: verification.source_url, basis: verification.basis, reason: verification.reason };
+  prep.computed_sha256 = verification.computed_sha256;
+  if (!verification.ok) {
+    prep.status = "unavailable";
+    prep.reason = `classifier_verification_failed: ${verification.reason}`;
+    return finish();
+  }
+  let upload;
+  try {
+    upload = await adapter.importUrlIntoHistory({
+      url: descriptor.url, name: descriptor.filename, ext: "qza", history_id: state.history_id
+    }, ctx);
+  } catch (caught) {
+    upload = { ok: false, error: { code: "url_import_threw", message: safeString(caught?.message ?? caught, 500) } };
+  }
+  prep.upload = { attempted: true, ok: Boolean(upload?.ok), error: upload?.error ?? null,
+    provider: upload?.provider ?? null, status: upload?.status ?? null, at: nowIso() };
+  if (!upload?.ok || !upload.dataset_id) {
+    prep.status = "failed";
+    prep.reason = `classifier_url_upload_failed: ${upload?.error?.message ?? upload?.error?.code ?? "no_dataset_id_returned"}`;
+    return finish();
+  }
+  prep.status = "uploaded";
+  prep.source = "verified_url_import_into_existing_history";
+  prep.dataset_id = upload.dataset_id;
+  prep.history_id = upload.history_id ?? state.history_id;
+  prep.job_id = upload.job_id ?? null;
+  prep.provider_job_id = upload.provider_job_id ?? null;
+  prep.reason = null;
+  return finish();
+}
+
 async function submitStage(adapter, env, state, stepId, ctx) {
   // The cached discovery stores metadata, not the full tool object; no new
   // discovery call is made here.
@@ -1418,19 +1520,46 @@ async function submitStage(adapter, env, state, stepId, ctx) {
     state.steps[stepId] = { status: "unavailable", reason: `No discovered tool for ${stepId}; no tool id was invented.` };
     return { skipped: true, reason: state.steps[stepId].reason };
   }
-  if (stepId === "taxonomy" && !state.discovery.classifier?.available) {
-    state.steps[stepId] = { status: "unavailable", reason: state.discovery.classifier?.reason ?? "No classifier option was available." };
+  // A prepared history qza satisfies the classifier input even when the live
+  // schema exposes no select option; taxonomy is NOT skipped in that case.
+  if (stepId === "taxonomy" && !state.classifier_prep?.dataset_id && !state.discovery.classifier?.available) {
+    state.steps[stepId] = { status: "unavailable", reason: state.discovery.classifier?.reason
+      ?? "No verified classifier dataset and no live classifier option were available." };
     return { skipped: true, reason: state.steps[stepId].reason };
   }
   const schema = await fetchToolSchema(env, toolMeta.id, toolMeta.version);
   const payload = buildMicrobiomePayload(schema, rolesFor(stepId, state), overridesFor(stepId, schema, state, { classifier: state.discovery.classifier }));
   if (!payload.valid) throw new Error(`${stepId} schema failure: ${payload.errors.join(", ")}`);
-  const submission = await adapter.submitJob({ operation: "submit_job", tool_id: toolMeta.id, inputs: payload.inputs }, ctx);
+  // The classifier dataset must land in a classifier/reference data field of
+  // the LIVE schema. A bare qza field with no such evidence fails closed.
+  if (stepId === "taxonomy" && state.classifier_prep?.dataset_id) {
+    const classifierField = String(payload.dataset_fields?.classifier ?? "");
+    if (!/classif|referen|database|rrna|silva|taxonomy/i.test(classifierField)) {
+      throw new Error(`taxonomy schema failure: classifier data field was not identified (${classifierField || "none"})`);
+    }
+  }
+  const submission = await adapter.submitJob({ operation: "submit_job", tool_id: toolMeta.id,
+    history_id: state.history_id ?? null, inputs: payload.inputs }, ctx);
   if (submission.error) throw new Error(`${stepId} submission failed: ${submission.error.message ?? submission.error.code}`);
   state.steps[stepId] = { status: "running", provider_job_id: submission.provider_job_id ?? null,
     tool_id: toolMeta.id, tool_version: toolMeta.version ?? null,
     applied_overrides: payload.applied_overrides, dataset_fields: payload.dataset_fields,
-    started_at: nowIso() };
+    started_at: nowIso(),
+    ...(stepId === "taxonomy" && state.classifier_prep ? {
+      classifier_dataset_id: state.classifier_prep.dataset_id ?? null,
+      classifier_source: state.classifier_prep.source ?? null,
+      classifier_digest: state.classifier_prep.computed_sha256 ?? null,
+      classifier_provenance: {
+        official_url: state.classifier_prep.official_url ?? QIIME_CLASSIFIER.url,
+        filename: state.classifier_prep.filename ?? QIIME_CLASSIFIER.filename,
+        expected_sha256: state.classifier_prep.expected_sha256 ?? QIIME_CLASSIFIER.expected_sha256,
+        computed_sha256: state.classifier_prep.computed_sha256 ?? null,
+        identity: state.classifier_prep.identity ?? QIIME_CLASSIFIER.identity,
+        classifier_kind: state.classifier_prep.classifier_kind ?? QIIME_CLASSIFIER.classifier_kind,
+        compatible_qiime2: state.classifier_prep.compatible_qiime2 ?? QIIME_CLASSIFIER.compatible_qiime2,
+        limitations: [...(state.classifier_prep.limitations ?? QIIME_CLASSIFIER.limitations)]
+      }
+    } : {}) };
   return { skipped: false, provider_job_id: submission.provider_job_id };
 }
 
@@ -1452,6 +1581,9 @@ async function collectDenoise(state, collected, downloaded) {
       reason: "No denoising statistics table was retrieved." },
     parameter_rationale: state.params.trunc_rationale
   };
+  const rarefaction = chooseRarefactionDepth(table, { metadata: { sample_ids: state.input?.sample_ids ?? [] } });
+  state.params.rarefaction_depth = rarefaction.depth;
+  state.results.rarefaction = rarefaction;
   state._parsed = { ...(state._parsed ?? {}), table, repSeqs };
   return { table, repSeqs };
 }
@@ -1522,7 +1654,8 @@ async function submitNeededExports(adapter, env, state, stepId, jobId, collected
         exportFailure(state, stepId, `qza_export_payload_invalid: ${payload.errors.join(", ")}`, artifact.id);
         continue;
       }
-      const result = await adapter.submitJob({ operation: "submit_job", tool_id: tool.id, inputs: payload.inputs }, ctx);
+      const result = await adapter.submitJob({ operation: "submit_job", tool_id: tool.id,
+        history_id: state.history_id ?? null, inputs: payload.inputs }, ctx);
       if (result.error) {
         exportFailure(state, stepId, `qza_export_submission_failed: ${result.error.message ?? result.error.code}`, artifact.id);
         continue;
@@ -1579,6 +1712,21 @@ async function pollPendingExports(adapter, state, stepId, ctx) {
   return { done: true, artifacts, errors };
 }
 
+// Diversity values are either parsed from retrieved Galaxy/QIIME 2 artifacts
+// or deterministically computed from the REAL retrieved feature table. Both
+// paths are labelled here; no value comes from a fixture or a model guess.
+function labelDiversity(result, state, sourceKind) {
+  if (!result?.available) return result;
+  const table = state._parsed?.table;
+  return {
+    ...result,
+    source_kind: sourceKind,
+    derived_from_retrieved_feature_table: Boolean(table?.available),
+    feature_table_dataset_id: table?.available ? (state.frontier?.featureTableId ?? null) : null,
+    basis_detail: "derived_from_retrieved_artifacts_or_real_feature_table_counts"
+  };
+}
+
 async function finalizeStage(adapter, env, db, row, state, stepId, jobId, ctx, options = {}) {
   const toolMeta = state.steps[stepId]?.tool_id ? { id: state.steps[stepId].tool_id, version: state.steps[stepId].tool_version } : null;
   let collected = { selected: [], errors: [] };
@@ -1615,14 +1763,17 @@ async function finalizeStage(adapter, env, db, row, state, stepId, jobId, ctx, o
     state._parsed = { ...(state._parsed ?? {}), taxonomy: taxonomy.parsed };
   } else if (stepId === "alpha_diversity") {
     const alpha = bestParsed(downloaded.artifacts, "alpha");
-    state.results.alpha = alpha.parsed.available ? alpha.parsed : computeAlphaFromTable(state._parsed?.table);
+    state.results.alpha = labelDiversity(
+      alpha.parsed.available ? alpha.parsed : computeAlphaFromTable(state._parsed?.table), state, "alpha");
   } else if (stepId === "beta_diversity") {
     const distance = bestParsed(downloaded.artifacts, "distance_matrix");
-    state.results.beta = distance.parsed.available ? distance.parsed : computeBrayCurtis(state._parsed?.table);
+    state.results.beta = labelDiversity(
+      distance.parsed.available ? distance.parsed : computeBrayCurtis(state._parsed?.table), state, "beta");
     if (distance.artifact) state.frontier.distanceMatrixId = distance.artifact.id;
   } else if (stepId === "pcoa") {
     const pcoa = bestParsed(downloaded.artifacts, "pcoa");
-    state.results.pcoa = pcoa.parsed.available ? pcoa.parsed : computePcoa(state.results.beta);
+    state.results.pcoa = labelDiversity(
+      pcoa.parsed.available ? pcoa.parsed : computePcoa(state.results.beta), state, "pcoa");
     if (pcoa.artifact) state.frontier.pcoaId = pcoa.artifact.id;
   }
   const exportProvenance = downloaded.artifacts.filter((artifact) => artifact.export_of).map((artifact) => ({
@@ -1672,7 +1823,9 @@ function localStage(state, stepId) {
     return composition;
   }
   if (stepId === "alpha_diversity") {
-    if (!state.results.alpha?.available) state.results.alpha = computeAlphaFromTable(state._parsed?.table);
+    if (!state.results.alpha?.available) {
+      state.results.alpha = labelDiversity(computeAlphaFromTable(state._parsed?.table), state, "alpha");
+    }
     return state.results.alpha;
   }
   if (stepId === "ordination") {
@@ -1754,7 +1907,7 @@ export async function buildExports(state, report) {
   return tagged;
 }
 
-async function buildResult(state) {
+export async function buildResult(state) {
   const integrity = validateFeatureTableIntegrity({
     table: state._parsed?.table, repSeqs: state._parsed?.repSeqs,
     taxonomy: state._parsed?.taxonomy, metadata: { sample_ids: state.input.sample_ids }
@@ -1766,11 +1919,29 @@ async function buildResult(state) {
     const value = key === "qc" ? qc : state.results[key];
     if (!value?.available) unavailable.push(`${key}: ${value?.reason ?? "no reason recorded"}`);
   }
+  const prep = state.classifier_prep ?? null;
+  const rarefaction = state.results.rarefaction ?? null;
+  const classifierLine = prep
+    ? `Classifier preparation: ${prep.status} (${prep.source ?? "no source"}); identity ${prep.identity}; ` +
+      `${prep.classifier_kind}; compatible QIIME 2 ${prep.compatible_qiime2}; official URL ${prep.official_url}; ` +
+      `expected SHA-256 ${prep.expected_sha256}; expected bytes ${prep.expected_bytes}; ` +
+      `computed SHA-256 ${prep.computed_sha256 ?? "not computed"}; ` +
+      `dataset ${prep.dataset_id ?? "none"}; history ${prep.history_id ?? "none"}; job ${prep.job_id ?? "none"}.`
+    : `Classifier preparation: not recorded; classifier: ${state.discovery.classifier?.available
+      ? state.discovery.classifier.option_label : state.discovery.classifier?.reason}`;
+  const excludedText = (rarefaction?.excluded ?? []).map((entry) =>
+    `${entry.sample_id} (${entry.reason})`).join(", ") || "none";
   const result = {
     workflow_type: "microbiome", run_id: state.run_id, plan_id: state.plan_id,
     status: state.status, input: state.input, input_sha256: state.input_sha256,
     metadata_sha256: state.metadata_sha256,
     params: state.params, tools: state.discovery.tools, classifier: state.discovery.classifier,
+    classifier_prep: prep, rarefaction,
+    diversity_basis: {
+      alpha: state.results.alpha?.basis ?? null, beta: state.results.beta?.basis ?? null,
+      pcoa: state.results.pcoa?.basis ?? null,
+      note: "Diversity derives only from retrieved Galaxy/QIIME 2 artifacts or deterministic computations on the retrieved feature table; no rooted tree or forced phylogenetic core-metrics pipeline is required."
+    },
     qc,
     asv: state.results.asv ?? null,
     taxonomy: state.results.taxonomy ?? null, composition: state.results.composition ?? null,
@@ -1787,17 +1958,28 @@ async function buildResult(state) {
       `16S microbiome run ${state.run_id}`,
       `Samples: ${state.input.sample_count}; reads: ${state.results.asv?.total_assignable_reads ?? "unavailable"}; ASVs: ${state.results.asv?.feature_count ?? "unavailable"}.`,
       `Truncation: trim-left ${state.params.trim_left}, trunc-len ${state.params.trunc_len}. ${state.params.trunc_rationale}`,
-      `Classifier: ${state.discovery.classifier?.available ? state.discovery.classifier.option_label : state.discovery.classifier?.reason}`,
+      classifierLine,
+      `Rarefaction depth: ${rarefaction?.depth ?? "not chosen"}; basis ${rarefaction?.basis ?? "none"}; ` +
+        `included ${rarefaction?.included?.length ?? 0} sample(s); excluded ${excludedText}.`,
+      `Diversity basis: alpha ${state.results.alpha?.basis ?? "unavailable"}; beta ${state.results.beta?.basis ?? "unavailable"}; ` +
+        `PCoA ${state.results.pcoa?.basis ?? "unavailable"}; derived from retrieved artifacts / real feature-table counts.`,
       `Integrity: ${validateFeatureTableIntegrity({ table: state._parsed?.table, repSeqs: state._parsed?.repSeqs,
         taxonomy: state._parsed?.taxonomy, metadata: { sample_ids: state.input.sample_ids } }).valid ? "passed" : "failed"}.`,
       "No statistical significance or differential-abundance claim is made by this workflow."
     ].join("\n"),
     limitations: [
-      "No statistical significance or differential-abundance claim is made by this workflow.",
-      "Relative abundance is computed from actual feature-table counts; unclassified reads are retained.",
-      "Faith's PD is null unless a valid rooted tree was retrieved.",
+      "No statistical significance, group separation or differential-abundance claim is made by this workflow.",
+      "Relative abundance is computed from actual feature-table counts; unclassified features are retained.",
+      "Faith's PD is null unless a valid rooted tree was retrieved; no rooted tree or phylogenetic core-metrics pipeline is required.",
       "qza artifacts are binary; only exported text was parsed, with failures recorded above.",
-      "Taxonomy identity and release are exactly the discovered live option label; no release was guessed."
+      prep
+        ? `Classifier: ${prep.identity} (${prep.classifier_kind}); official URL ${prep.official_url}; ` +
+          `expected SHA-256 ${prep.expected_sha256}; expected size ${prep.expected_bytes} bytes; ` +
+          `computed SHA-256 ${prep.computed_sha256 ?? "not computed"}; ` +
+          `compatible QIIME 2 ${prep.compatible_qiime2}.`
+        : "No verified classifier provenance was recorded; no release or checksum was guessed.",
+      ...(prep?.limitations ?? QIIME_CLASSIFIER.limitations),
+      `Rarefaction depth is derived from real post-denoising per-sample counts; ${rarefaction?.excluded?.length ?? 0} sample(s) were excluded with reasons: ${excludedText}.`
     ],
     execution_mode: state.execution_mode ?? "real",
     reopen: { ai_run_id: state.run_id, ai_run_url: `/api/ai/runs/${state.run_id}`,
@@ -1807,7 +1989,7 @@ async function buildResult(state) {
   return result;
 }
 
-async function advanceOneStage(db, row, state, env, ctx) {
+async function advanceOneStage(db, row, state, env, ctx, options = {}) {
   const stepId = state.current_step;
   if (!stepId) return;
   const step = state.steps[stepId] ?? {};
@@ -1880,6 +2062,19 @@ async function advanceOneStage(db, row, state, env, ctx) {
   }
 
   if (!step.status) {
+    if (stepId === "taxonomy") {
+      // Exactly one bounded preparation. state.classifier_prep is the durable
+      // guard, so a refresh/status replay can never start a second download.
+      try {
+        await prepareClassifier(adapter, env, db, row, state, ctx, options);
+      } catch (caught) {
+        if (state.classifier_prep) {
+          state.classifier_prep.status = "unavailable";
+          state.classifier_prep.reason = `classifier_prep_error: ${safeString(caught?.message ?? caught, 500)}`;
+        }
+        throw caught;
+      }
+    }
     if (stepId === "demux") {
       const prepared = await prepareDemuxImport(adapter, env, db, row, state, ctx);
       if (prepared.handled) return;
@@ -1926,7 +2121,7 @@ export async function handleStatus(request, env, options = {}) {
   if (state.status === "running" && state.current_step) {
     state.poll_count = Math.min((state.poll_count ?? 0) + 1, LIMITS.maxProviderPolls);
     try {
-      await advanceOneStage(db, row, state, env, ctx);
+      await advanceOneStage(db, row, state, env, ctx, options);
       if (!state.current_step && state.status === "running") {
         state.status = "succeeded";
         const result = await buildResult(state);

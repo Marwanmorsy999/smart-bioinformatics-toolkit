@@ -18,7 +18,9 @@ const EXACT_NAMES = Object.freeze({
   denoise: Object.freeze(["qiime2 dada2 denoise-single"]),
   classify: Object.freeze(["qiime2 feature-classifier classify-sklearn"]),
   alpha: Object.freeze(["qiime2 diversity alpha"]),
-  beta: Object.freeze(["qiime2 diversity core-metrics-phylogenetic", "qiime2 diversity beta"]),
+  // Prefer the non-phylogenetic distance tool: Bray–Curtis needs no rooted
+  // tree. core-metrics-phylogenetic is only an ordered fallback.
+  beta: Object.freeze(["qiime2 diversity beta", "qiime2 diversity core-metrics-phylogenetic"]),
   pcoa: Object.freeze(["qiime2 emperor plot"]),
   exportTool: Object.freeze(["qiime2 tools export"]),
   importTool: Object.freeze(["qiime2 tools import"]),
