@@ -63,6 +63,9 @@ test("FIXTURE: metadata parser reports missing, duplicate and invalid sample ids
   const noColumn = parseMetadataTsv("id\tbarcode\nsampleA\tAAAA\n");
   assert.equal(noColumn.valid, false);
   assert.match(noColumn.errors.join(" "), /no sample-id column/);
+  const noBarcode = parseMetadataTsv("sample-id\tbody-site\nsampleA\ttongue\n");
+  assert.equal(noBarcode.valid, false);
+  assert.match(noBarcode.errors.join(" "), /no barcode-sequence column/);
 });
 
 test("FIXTURE: QIIME 2 #q2:types directive is skipped and 34 samples parse", () => {

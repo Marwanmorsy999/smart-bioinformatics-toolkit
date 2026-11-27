@@ -81,6 +81,49 @@ test("BOUNDED PLAN: a larger fixture still samples only its bounded prefix", asy
   assert.equal(bytes.reads.length > 0, true);
 });
 
+test("BOUNDED PLAN: raw EMP barcode errors are informational, not a hard failure", () => {
+  const metadataText = fixture("sample-metadata-q2-types.tsv").toString();
+  const readsText = fixture("sequences.fastq").toString();
+  // One exact metadata barcode and one realistic error-bearing raw barcode.
+  const barcodeText = "@b1\nACGT0001\n+\nIIIIIIII\n@b2\nCCCCTCAGCGGC\n+\nIIIIIIIIIIII\n";
+  const resolved = {
+    mode: "public", metadata_text: metadataText,
+    source: { expected: { samples: 34, reads: 302581 }, expectation_basis: "published_descriptor_expectation" },
+    observed_sample: {
+      reads: { text: readsText, bytes: readsText.length, truncated: true },
+      barcodes: { text: barcodeText, bytes: barcodeText.length, truncated: false },
+      sample_size_bytes: SAMPLE_BYTES, basis: "bounded_gzip_prefix_sample", note: "labelled test sample"
+    }
+  };
+  const inspection = inspectInputs(resolved);
+  const validation = validationOf(inspection);
+  assert.equal(validation.status, "pass");
+  assert.equal(validation.errors.length, 0);
+  assert.ok(inspection.correspondence.unknown_sampled_barcodes.includes("CCCCTCAGCGGC"));
+  assert.ok(validation.warnings.some((warning) => /Golay correction/.test(warning)));
+  assert.ok(!validation.checked_rules.includes("sampled_barcodes_subset_of_metadata"));
+  assert.ok(validation.checked_rules.includes("sampled_barcode_observation_informational"));
+  // No provider call is involved in this direct plan-path inspection.
+  assert.equal(typeof resolved.reads_text, "undefined");
+});
+
+test("BOUNDED PLAN: malformed sampled FASTQ still fails hard", () => {
+  const metadataText = fixture("sample-metadata-q2-types.tsv").toString();
+  const readsText = fixture("sequences.fastq").toString();
+  const brokenBarcodes = "@b1\nACGT0001\n+\nIII\n"; // 8 bases / 3 qualities
+  const resolved = {
+    mode: "public", metadata_text: metadataText, source: { expected: {} },
+    observed_sample: {
+      reads: { text: readsText, bytes: readsText.length, truncated: true },
+      barcodes: { text: brokenBarcodes, bytes: brokenBarcodes.length, truncated: false },
+      sample_size_bytes: SAMPLE_BYTES, basis: "bounded_gzip_prefix_sample", note: "labelled test sample"
+    }
+  };
+  const validation = validationOf(inspectInputs(resolved));
+  assert.equal(validation.status, "fail");
+  assert.match(validation.errors.join(" "), /length mismatch/);
+});
+
 test("QC GATE: plan samples are never reported as QC; tool artifacts are", () => {
   const publicState = { input: { mode: "public" },
     qc: { raw: null, basis: "bounded_first_bytes_sample" } };
