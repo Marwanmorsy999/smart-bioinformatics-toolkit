@@ -56,6 +56,7 @@ function state() {
     history_id: HISTORY, frontier: { importedSeqsId: DEMUX_QZA, demuxReadsId: DEMUX_QZA,
       repSeqsId: REP_SEQS, featureTableId: TABLE, distanceMatrixId: DISTANCE },
     classifier_prep: { dataset_id: CLASSIFIER, filename: "silva-138-99-nb-classifier.qza",
+      status: "reused", usable: true,
       official_url: "https://data.qiime2.org/classifiers/sklearn-1.4.2/silva/silva-138-99-nb-classifier.qza" },
     results: {}, artifacts: [], errors: [], poll_count: 0, exports: {}, pending_exports: [],
     steps: {

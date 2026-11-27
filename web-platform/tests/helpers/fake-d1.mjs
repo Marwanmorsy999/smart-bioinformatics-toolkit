@@ -240,5 +240,8 @@ export function createFakeD1AI(initialRows = {}) {
 }
 
 export function mockAIEnv(db, token = "test-agent-token") {
-  return { AI_DB: db, AI_AGENT_TOKEN: token };
+  // Offline seam: the existing focused suite drives the stage machine through
+  // /status. Production never sets this flag; there status is strictly
+  // read-only and progress is driven by POST /advance.
+  return { AI_DB: db, AI_AGENT_TOKEN: token, MICROBIOME_TEST_ADVANCE: true };
 }
