@@ -154,6 +154,7 @@ export function parseMetadataTsv(text) {
   const barcodeIndex = headerIndex(header, ["barcode-sequence", "barcode sequence", "barcode"]);
   const errors = [];
   if (sampleIndex < 0) errors.push("metadata has no sample-id column");
+  if (barcodeIndex < 0) errors.push("metadata has no barcode-sequence column");
   const samples = [];
   const seen = new Map();
   const duplicates = [];

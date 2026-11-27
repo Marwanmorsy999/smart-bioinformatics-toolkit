@@ -102,21 +102,24 @@ function capLocalFastq(text, label) {
     reason: `${label} exceeds the ${LIMITS.maxLocalReads}-read local parse cap; QC and counts are deferred to Galaxy artifacts.` };
 }
 
-// A sampled correspondence check never claims full sample coverage. It only
-// verifies that observed barcodes belong to the metadata, leaving the complete
-// sample-to-reads mapping to the Galaxy demultiplexing artifacts.
+// Informational ONLY. Raw EMP barcode reads routinely carry sequencing errors
+// that QIIME 2 demux emp-single corrects with Golay decoding, so an inexact
+// match is never a hard validation failure. Final sample assignment comes from
+// genuine Galaxy demultiplexing artifacts.
 function sampledCorrespondence(metadata, reads, barcodes, sample) {
   const metadataBarcodes = new Set(metadata.samples
     .map((item) => item.barcode_sequence).filter(Boolean));
   const unknown = [...new Set(barcodes.records
     .map((record) => record.sequence).filter((value) => value && !metadataBarcodes.has(value)))];
   return {
-    valid: metadata.valid && reads.valid && barcodes.valid && unknown.length === 0,
-    basis: "bounded_sample_barcodes_subset",
+    valid: metadata.valid && reads.valid && barcodes.valid,
+    basis: "bounded_sample_barcodes_observation",
     sampled_reads: reads.record_count, sampled_barcodes: barcodes.record_count,
     sample_size_bytes: sample?.sample_size_bytes ?? null,
     unknown_sampled_barcodes: unknown, missing_samples: [],
-    note: "Full sample-to-reads correspondence and read counts are verified only from Galaxy demux/QC artifacts."
+    note: `${unknown.length} sampled raw barcode(s) have no exact metadata match; EMP Golay correction and ` +
+      "demultiplexing in Galaxy determine final sample assignment. Full correspondence and read counts " +
+      "are verified only from Galaxy demux/QC artifacts."
   };
 }
 
@@ -169,11 +172,10 @@ export function inspectInputs(resolved) {
 
 export function validationOf(inspection) {
   const sampled = Boolean(inspection.sample);
-  const correspondenceErrors = sampled
-    ? (inspection.correspondence.unknown_sampled_barcodes ?? []).length
-      ? [`sampled barcode(s) absent from metadata: ${inspection.correspondence.unknown_sampled_barcodes.slice(0, 10).join(", ")}`]
-      : []
-    : (inspection.correspondence.valid ? [] : [inspection.correspondence.reason ?? "sample correspondence failed"]);
+  // Sampled barcode mismatches are informational, never a pass/fail gate: raw
+  // EMP barcodes may be error-bearing until Galaxy's Golay correction runs.
+  const correspondenceErrors = sampled ? [] : (inspection.correspondence.valid
+    ? [] : [inspection.correspondence.reason ?? "sample correspondence failed"]);
   const errors = [
     ...(!inspection.reads.valid ? inspection.reads.errors : []),
     ...(!inspection.barcodes.valid ? inspection.barcodes.errors : []),
@@ -181,14 +183,21 @@ export function validationOf(inspection) {
     ...correspondenceErrors
   ].filter(Boolean);
   const warnings = [];
-  if (sampled) warnings.push("Plan-time values come from a bounded sample; full read counts, QC and diversity are reported only from retrieved Galaxy artifacts.");
-  else if (inspection.correspondence.barcode_count_matches_reads === false) {
+  if (sampled) {
+    warnings.push("Plan-time values come from a bounded sample; full read counts, QC and diversity are reported only from retrieved Galaxy artifacts.");
+    const unknown = inspection.correspondence?.unknown_sampled_barcodes ?? [];
+    if (unknown.length) {
+      warnings.push(`${unknown.length} sampled raw barcode(s) have no exact metadata match; ` +
+        "EMP Golay correction and demultiplexing in Galaxy determine final sample assignment.");
+    }
+  } else if (inspection.correspondence.barcode_count_matches_reads === false) {
     warnings.push("Barcode and sequence FASTQ record counts differ; demultiplexing may fail.");
   }
   return {
     status: errors.length ? "fail" : "pass",
     checked_rules: sampled
-      ? ["metadata_unique_samples", "barcode_column_present", "sampled_fastq_structure", "sampled_barcodes_subset_of_metadata"]
+      ? ["metadata_unique_samples", "barcode_column_present", "sampled_fastq_structure",
+        "sampled_barcode_observation_informational"]
       : ["fastq_record_structure", "sequence_quality_length", "unique_sample_ids",
         "barcode_column_present", "metadata_to_reads_correspondence", "barcode_read_count"],
     reads: sampled ? null : inspection.reads.record_count,
