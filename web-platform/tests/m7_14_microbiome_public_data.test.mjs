@@ -8,12 +8,13 @@ import { gzipSync } from "node:zlib";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { resolvePublicDataset } from "../functions/api/ai/workflows/microbiome/public-data.js";
+import { resolvePublicDataset, sampleGzipPrefix } from "../functions/api/ai/workflows/microbiome/public-data.js";
 import { PUBLIC_DATASETS, sha256Bytes } from "../public/js/microbiome-zip.js";
 import { parseFastq, parseMetadataTsv } from "../functions/api/ai/workflows/microbiome/parsers.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const fixture = (name) => readFileSync(resolve(HERE, "fixtures/m7_14_microbiome", name));
+const SAMPLE_BYTES = 200 * 1024;
 
 async function descriptor({ corrupt = null, gzReads = true, gzBarcodes = true } = {}) {
   const metadata = fixture("sample-metadata.tsv");
@@ -46,27 +47,47 @@ function stubFor({ metadata, reads, barcodes }, overrides = {}) {
   };
 }
 
-test("PUBLIC DATASET: three direct gzip sources are checksum-verified and decoded", async () => {
+test("PUBLIC DATASET: direct sources are checksum-verified; only a bounded prefix is decoded", async () => {
   const { descriptor: desc, bytes } = await descriptor();
-  const resolved = await resolvePublicDataset(desc, stubFor(bytes));
+  const resolved = await resolvePublicDataset(desc, stubFor(bytes), { sampleBytes: SAMPLE_BYTES });
   assert.equal(resolved.mode, "public");
-  assert.equal(resolved.reads_filename, "sequences.fastq");
-  assert.match(resolved.reads_text, /@instrument1 sequences/);
-  assert.match(resolved.barcodes_text, /ACCGCACTT/);
+  // Original .gz bytes are preserved for upload; NO full text is produced.
+  assert.equal(resolved.reads_filename, "sequences.fastq.gz");
+  assert.equal(resolved.reads_text, null);
+  assert.equal(resolved.barcodes_text, null);
+  assert.equal(resolved.reads_bytes.length, bytes.reads.length);
+  assert.equal(resolved.barcodes_bytes.length, bytes.barcodes.length);
   assert.match(resolved.metadata_text, /sampleA/);
   assert.equal(resolved.source.urls.reads, desc.reads_url);
   assert.equal(resolved.source.urls.barcodes, desc.barcodes_url);
-  assert.match(resolved.source.urls.sequences_zip, /archive\.zip|moving-pictures/);
   assert.equal(resolved.source.checksums.reads_sha256, await sha256Bytes(bytes.reads));
   assert.equal(resolved.source.checksums.barcodes_sha256, await sha256Bytes(bytes.barcodes));
   assert.match(resolved.source.provenance_note, /provenance references only/);
-  assert.equal(resolved.source.expected.samples, 3);
+  assert.match(resolved.source.expectation_basis, /published_descriptor_expectation/);
+  assert.equal(resolved.observed_sample.basis, "bounded_first_bytes_sample");
+  assert.ok(resolved.observed_sample.reads.bytes <= SAMPLE_BYTES);
+  assert.match(resolved.observed_sample.reads.text, /@instrument1 sequences/);
+  assert.match(resolved.observed_sample.barcodes.text, /ACCGCACTT/);
+  assert.match(resolved.observed_sample.note, /NOT a read count/);
+});
+
+test("PUBLIC DATASET: sampleGzipPrefix never decodes more than its cap", async () => {
+  const big = Buffer.from(("x".repeat(64 * 1024) + "\n").repeat(20));
+  const gz = gzipSync(big);
+  const sample = await sampleGzipPrefix(new Uint8Array(gz), 4096);
+  assert.equal(sample.bytes, 4096);
+  assert.equal(sample.text.length, 4096);
+  assert.equal(sample.truncated, true);
+  assert.equal(sample.basis, "bounded_gzip_prefix_sample");
+  const plain = await sampleGzipPrefix(new Uint8Array(Buffer.from("abcdef")), 3);
+  assert.equal(plain.text, "abc");
+  assert.equal(plain.basis, "plain_prefix_sample");
 });
 
 test("PUBLIC DATASET: a checksum mismatch on ANY of the three sources fails closed", async () => {
   for (const field of ["metadata", "reads", "barcodes"]) {
     const { descriptor: desc, bytes } = await descriptor({ corrupt: field });
-    await assert.rejects(() => resolvePublicDataset(desc, stubFor(bytes)),
+    await assert.rejects(() => resolvePublicDataset(desc, stubFor(bytes), { sampleBytes: SAMPLE_BYTES }),
       (error) => error.code === "public_checksum_mismatch");
   }
 });
@@ -75,13 +96,13 @@ test("PUBLIC DATASET: missing entries and decompression failures are honest", as
   const { descriptor: desc, bytes } = await descriptor();
   await assert.rejects(() => resolvePublicDataset(desc, stubFor(bytes, {
     [desc.reads_url]: new Response(null, { status: 404 })
-  })), (error) => error.code === "public_entry_unavailable");
+  }), { sampleBytes: SAMPLE_BYTES }), (error) => error.code === "public_entry_unavailable");
 
-  // Bytes with a valid checksum but invalid gzip content must not be used.
-  const broken = Buffer.from("not-gzip-data");
+  // Bytes with a valid checksum but a broken gzip stream must not be used.
+  const broken = Buffer.concat([gzipSync(fixture("sequences.fastq")).subarray(0, 12), Buffer.from("garbage")]);
   const brokenDesc = { ...desc, expected_reads_sha256: await sha256Bytes(new Uint8Array(broken)) };
   await assert.rejects(() => resolvePublicDataset(brokenDesc,
-    stubFor({ ...bytes, reads: new Uint8Array(broken) })),
+    stubFor({ ...bytes, reads: new Uint8Array(broken) }), { sampleBytes: SAMPLE_BYTES }),
   (error) => error.code === "public_entry_unavailable");
 });
 
@@ -101,7 +122,7 @@ test("PUBLIC DATASET descriptor: direct URLs and verified checksums are recorded
   assert.match(dataset.zip_provenance.url, /emp-single-end-sequences\.zip$/);
 });
 
-test("REAL SHAPE: 34 samples and 302581 reads parse and are preserved as provenance", async () => {
+test("REAL SHAPE: 34 samples and 302581 published reads are preserved; plan only samples bytes", async () => {
   const dataset = PUBLIC_DATASETS["moving-pictures-2026.10"];
   const samples = Array.from({ length: 34 }, (_, index) => {
     const id = `sample${String(index + 1).padStart(3, "0")}`;
@@ -114,8 +135,7 @@ test("REAL SHAPE: 34 samples and 302581 reads parse and are preserved as provena
   assert.equal(metadata.sample_ids.length, 34);
   assert.equal(metadata.duplicates.length, 0);
 
-  // 302581 deterministic 152 bp reads (the verified real-file shape). The
-  // sequence/quality strings are shared constants so this stays bounded.
+  // 302581 deterministic 152 bp reads match the verified real-file shape.
   const sequence = "ACGT".repeat(38);
   const quality = "I".repeat(152);
   const chunks = [];
@@ -123,10 +143,10 @@ test("REAL SHAPE: 34 samples and 302581 reads parse and are preserved as provena
     chunks.push(`@instrument${index % 34} read${index}\n${sequence}\n+\n${quality}\n`);
   }
   const readsText = chunks.join("");
-  const reads = parseFastq(readsText);
-  assert.equal(reads.record_count, 302581);
-  assert.equal(reads.min_length, 152);
-  assert.equal(reads.max_length, 152);
+  const fullReads = parseFastq(readsText);
+  assert.equal(fullReads.record_count, 302581);
+  assert.equal(fullReads.min_length, 152);
+  assert.equal(fullReads.max_length, 152);
 
   const bytes = { metadata: new Uint8Array(Buffer.from(metadataText)),
     reads: new Uint8Array(Buffer.from(readsText)),
@@ -141,9 +161,12 @@ test("REAL SHAPE: 34 samples and 302581 reads parse and are preserved as provena
     expected_samples: dataset.expected_samples, expected_reads: dataset.expected_reads,
     rationale: dataset.rationale
   };
-  const resolved = await resolvePublicDataset(desc, stubFor(bytes));
+  const resolved = await resolvePublicDataset(desc, stubFor(bytes), { sampleBytes: SAMPLE_BYTES });
   assert.equal(resolved.source.expected.samples, 34);
   assert.equal(resolved.source.expected.reads, 302581);
-  assert.equal(parseFastq(resolved.reads_text).record_count, 302581);
+  // The plan path samples at most SAMPLE_BYTES; it never claims the full count.
+  assert.equal(resolved.reads_text, null);
+  assert.ok(resolved.observed_sample.reads.bytes <= SAMPLE_BYTES);
+  assert.ok(parseFastq(resolved.observed_sample.reads.text).record_count < 302581);
   assert.equal(parseMetadataTsv(resolved.metadata_text).sample_ids.length, 34);
 });
