@@ -153,16 +153,37 @@ test("LABELLED STUB / live-shaped failure resumes once: fresh discovery, stages 
   });
 });
 
-test("LABELLED STUB / second stage resume is refused with 409", async () => {
+test("LABELLED STUB / cap of three resumes: first two allowed, fourth refused", async () => {
   const stub = resumeStub();
-  const state = liveFailedState({ stage_resume_count: 1 });
-  const { db } = seededDb(state);
+  const { db, state: d1 } = seededDb(liveFailedState());
+  const refail = () => {
+    const row = d1.tables.microbiome_runs[0];
+    const state = parseJson(row.state_json);
+    state.status = "failed";
+    state.steps.demux = { status: "unavailable", reason: "qza_import_tool_unavailable" };
+    state.steps.qc_summary = { status: "failed", reason: "qc_summary schema failure: no_data_input_for_reads" };
+    state.import = { status: "unavailable", reason: "qza_import_tool_unavailable" };
+    state.errors = [{ step: "demux", reason: "qza_import_tool_unavailable" },
+      { step: "qc_summary", reason: "qc_summary schema failure: no_data_input_for_reads" }];
+    row.state_json = JSON.stringify(state);
+    row.state = "failed";
+  };
   await withStub(stub, async () => {
-    const response = await resume(db, stub);
-    assert.equal(response.status, 409);
-    const body = await response.json();
-    assert.equal(body.reason, "stage_resume_limit_reached");
-    assert.equal(stub.calls.length, 0, "guards run before discovery");
+    for (let expected = 1; expected <= 2; expected += 1) {
+      const response = await resume(db, stub);
+      assert.equal(response.status, 202);
+      const body = await response.json();
+      assert.equal(body.stage_resume_count, expected);
+      assert.equal(stub.calls.some((call) => call.method === "POST"), false, "no job was submitted");
+      refail();
+    }
+    const third = await resume(db, stub);
+    assert.equal(third.status, 202);
+    assert.equal((await third.json()).stage_resume_count, 3);
+    refail();
+    const capped = await resume(db, stub);
+    assert.equal(capped.status, 409);
+    assert.equal((await capped.json()).reason, "stage_resume_limit_reached");
   });
 });
 
@@ -179,6 +200,10 @@ test("LABELLED STUB / strict guards: provider job, succeeded stage, artifacts, s
     [liveFailedState({ retry_count: 2 }), "retry_count_not_one"],
     [liveFailedState({ steps: { ...liveFailedState().steps,
       qc_summary: { status: "failed", reason: "provider job job-real ended in state error" } } }),
+    "provider_failure_not_resumable"],
+    // Still under the cap: a real provider-job failure must never be replayed.
+    [liveFailedState({ stage_resume_count: 1, steps: { ...liveFailedState().steps,
+      dada2_denoise: { status: "failed", reason: "provider job job-real ended in state error" } } }),
     "provider_failure_not_resumable"]
   ];
   for (const [state, reason] of cases) {

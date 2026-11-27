@@ -23,7 +23,8 @@ import {
 import { fetchToolSchema } from "../../../../../providers/galaxy/galaxy_schema.js";
 import { classifyJobState } from "../../../../../providers/galaxy/galaxy_ids.js";
 import {
-  buildImportPayload, buildMicrobiomePayload, describeLiveParameters, findImportFormatCase
+  buildImportPayload, buildMicrobiomePayload, describeImportCase, describeLiveParameters,
+  findImportFormatCase
 } from "./schema.js";
 import {
   aggregateByRank, chooseTruncation, computeAlphaFromTable, computeBrayCurtis,
@@ -1003,6 +1004,41 @@ export async function handleRetry(request, env, options = {}) {
   return finish("upload_retry", "upload_retry: the single bounded re-upload succeeded; no analysis stage has run yet.");
 }
 
+// ---------------------------------------------------- /import-schema (GET)
+
+// Read-only provenance diagnostic: inspect the LIVE `qiime2 tools import`
+// schema using the exact same discovery/format-case path as the import phase.
+// It returns metadata only — no credentials, dataset content or history data.
+export async function handleImportSchema(request, env, options = {}) {
+  const rejected = requireMethod(request, "GET", "GET, OPTIONS");
+  if (rejected) return rejected;
+  const ctx = ctxFor(env, options);
+  let discovery;
+  try {
+    discovery = await discover(env, ctx);
+  } catch (caught) {
+    return errorResponse(`Live discovery could not be read: ${caught?.message ?? caught}`, 502, request);
+  }
+  const tool = discovery.tools?.importTool;
+  if (!tool?.id) {
+    return jsonResponse({ available: false,
+      reason: "No genuine `qiime2 tools import` tool was discovered; no tool id was invented.",
+      tool_id: null, version: null }, 200, request);
+  }
+  let schema;
+  try {
+    schema = await fetchToolSchema(env, tool.id, tool.version);
+  } catch (caught) {
+    return jsonResponse({ available: false,
+      reason: `The live import schema could not be read: ${caught?.message ?? caught}`,
+      tool_id: tool.id, version: tool.version ?? null }, 200, request);
+  }
+  const detail = describeImportCase(schema, findImportFormatCase(schema));
+  return jsonResponse({ ...detail, version: tool.version ?? null,
+    discovery_mode: discovery.discoveryMode, discovered_at: discovery.discoveredAt,
+    execution_mode: envExecutionMode(env) }, 200, request);
+}
+
 // ------------------------------------------------------- /resume-stages
 
 // A pre-submission failure reason may be retried after genuine discovery is
@@ -1033,8 +1069,8 @@ export async function handleResumeStages(request, env, options = {}) {
   if (state.status !== "failed") return refuse("status_not_failed", `The stored run status is ${state.status}, not failed.`);
   if (Number(state.retry_count ?? -1) !== 1) return refuse("retry_count_not_one",
     "Only a run resumed by exactly one bounded upload retry may resume stages.");
-  if (Number(state.stage_resume_count ?? 0) !== 0) return refuse("stage_resume_limit_reached",
-    "This run has already used its single stage resume.");
+  if (Number(state.stage_resume_count ?? 0) >= 3) return refuse("stage_resume_limit_reached",
+    "This run has reached the cap of three bounded stage resumes.");
   if ((state.steps?.import_reads?.status ?? null) !== "succeeded") {
     return refuse("import_reads_not_succeeded", "The original upload import is not recorded as succeeded.");
   }
@@ -1088,7 +1124,7 @@ export async function handleResumeStages(request, env, options = {}) {
   }
   state.status = "running";
   state.current_step = scientific[firstIndex];
-  state.stage_resume_count = 1;
+  state.stage_resume_count = Number(state.stage_resume_count ?? 0) + 1;
   await persistState(db, row, state);
   return jsonResponse({
     workflow_type: "microbiome", run_id: row.public_id, resumed: true,
@@ -1316,6 +1352,7 @@ async function prepareDemuxImport(adapter, env, db, row, state, ctx) {
     source_filenames: { reads: readsName, barcodes: barcodesName },
     format_value: matched.formatValue, selector: payload.selector,
     selectors: payload.selectors ?? [],
+    mapping_basis: payload.mapping_basis ?? null, mapping: payload.mapping ?? null,
     dataset_fields: payload.dataset_fields, submitted_at: nowIso(), status: "running",
     basis: "preparation_of_stored_inputs"
   };
@@ -1902,6 +1939,8 @@ export function microbiomeHandlers() {
     microbiomeRefreshDiscovery: (context) => handleRefreshDiscovery(context.request, context.env,
       { fetchImpl: context.env?.FETCH_IMPL }),
     microbiomeResumeStages: (context) => handleResumeStages(context.request, context.env,
+      { fetchImpl: context.env?.FETCH_IMPL }),
+    microbiomeImportSchema: (context) => handleImportSchema(context.request, context.env,
       { fetchImpl: context.env?.FETCH_IMPL }),
     microbiomeStatus: (context) => handleStatus(context.request, context.env, {}),
     microbiomeResult: (context) => handleResult(context.request, context.env)
