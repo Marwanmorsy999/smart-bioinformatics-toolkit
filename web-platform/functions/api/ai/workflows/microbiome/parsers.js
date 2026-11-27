@@ -15,6 +15,17 @@ const num = (value) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+// `biom convert` writes integer counts as integer-valued floats ("2068.0").
+// Accept plain integers and exactly integer-valued decimals only: fractional or
+// non-numeric cells are invalid evidence, never silently coerced to zero.
+const biomCount = (value) => {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  if (!/^[+-]?\d+(?:\.0+)?$/.test(text)) return null;
+  const parsed = Number(text);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+};
+
 function splitDelimited(line) {
   const trimmed = clean(line, 20000);
   if (trimmed.includes("\t")) return trimmed.split("\t");
@@ -355,7 +366,16 @@ export function parseFeatureTable(text) {
     feature_ids: [], sample_ids: [], counts: {}, totals: {}, taxonomy: {}, rows: [] };
   if (source.startsWith("{")) return parseBiomJson(source);
   const lines = source.split("\n").filter((line) => line.trim());
-  const header = splitDelimited(lines[0]).map((cell) => clean(cell).replace(/^#/, ""));
+  // Classic BIOM TSV starts with a provenance comment such as
+  // "# Constructed from biom file" before the real "#OTU ID" header. Skip
+  // comment lines until a header with sample columns is found.
+  let headerLine = lines.findIndex((line) => {
+    const cells = splitDelimited(line);
+    return cells.length > 1 && /^#\s*(otu|feature)\s*id\b/i.test(clean(cells[0]));
+  });
+  if (headerLine < 0) headerLine = 0; // legacy first-line header stays supported
+  const dataLines = lines.slice(headerLine + 1).filter((line) => !line.trim().startsWith("#"));
+  const header = splitDelimited(lines[headerLine]).map((cell) => clean(cell).replace(/^#/, ""));
   let sampleEnd = header.length;
   const taxonIndex = headerIndex(header, ["taxon", "taxonomy", "consensus", "classification"]);
   if (taxonIndex >= 0 && taxonIndex === header.length - 1) sampleEnd = taxonIndex;
@@ -365,7 +385,7 @@ export function parseFeatureTable(text) {
   const taxonomy = {};
   const featureIds = [];
   const errors = [];
-  for (const line of lines.slice(1)) {
+  for (const line of dataLines) {
     const cells = splitDelimited(line);
     const featureId = clean(cells[0], 300);
     if (!featureId) continue;
@@ -373,8 +393,9 @@ export function parseFeatureTable(text) {
     featureIds.push(featureId);
     const values = {};
     sampleIds.forEach((sample, index) => {
-      const value = num(cells[index + 1]) ?? 0;
-      values[sample] = value;
+      const value = biomCount(cells[index + 1]);
+      if (value === null) errors.push(`non_integer_count: ${featureId}/${sample}`);
+      values[sample] = value ?? 0;
     });
     counts[featureId] = values;
     if (taxonIndex >= 0) taxonomy[featureId] = clean(cells[taxonIndex], 2000) || null;
@@ -382,9 +403,12 @@ export function parseFeatureTable(text) {
   }
   const totals = {};
   for (const sample of sampleIds) totals[sample] = rows.reduce((sum, row) => sum + (row.counts[sample] ?? 0), 0);
+  const invalidCounts = errors.filter((entry) => entry.startsWith("non_integer_count:"));
+  const available = rows.length > 0 && sampleIds.length > 0 && invalidCounts.length === 0;
   return {
-    available: rows.length > 0 && sampleIds.length > 0,
-    reason: rows.length && sampleIds.length ? null : "Feature table has no features or no samples.",
+    available,
+    reason: !rows.length || !sampleIds.length ? "Feature table has no features or no samples."
+      : invalidCounts.length ? `Invalid non-integer cell value(s): ${invalidCounts.slice(0, 5).join("; ")}.` : null,
     format: "tsv", feature_ids: featureIds, sample_ids: sampleIds, counts, totals, taxonomy, rows,
     duplicates: duplicatesOf(featureIds), errors
   };
