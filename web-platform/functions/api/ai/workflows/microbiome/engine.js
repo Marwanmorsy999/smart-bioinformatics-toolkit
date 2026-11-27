@@ -320,6 +320,58 @@ function overridesFor(stepId, schema, state, discovery) {
   return overrides;
 }
 
+// Repair a stale succeeded-demux state finalized before the qza frontier fix.
+// The id is NEVER invented: it must come from a stored demux output artifact
+// with a real name/extension, and the original demux job is never replayed.
+function repairDemuxFrontier(state) {
+  const result = { attempted: false, repaired: false, dataset_id: null,
+    error_correction_dataset_id: null, reason: null, basis: "stored_demux_output_artifacts" };
+  if ((state.steps?.demux?.status ?? null) !== "succeeded") {
+    return { ...result, reason: "demux_not_succeeded" };
+  }
+  const current = safeString(state.frontier?.demuxReadsId, 200);
+  if (/^[0-9a-f]{8,64}$/i.test(current)) {
+    return { ...result, dataset_id: current, reason: "frontier_already_set" };
+  }
+  result.attempted = true;
+  const stored = [
+    ...(Array.isArray(state.steps.demux.output_artifacts) ? state.steps.demux.output_artifacts : []),
+    ...((state.artifacts ?? []).filter((artifact) => String(artifact?.source_step ?? "") === "demux"))
+  ];
+  const realId = (artifact) => safeString(artifact?.dataset_id ?? artifact?.id, 200);
+  const isQza = (artifact) => /\.qza$/i.test(String(artifact?.name ?? ""))
+    || /^qza$/i.test(String(artifact?.extension ?? ""));
+  const named = (artifact, name) => name.test(String(artifact?.name ?? ""));
+  const perSample = stored.find((artifact) => isQza(artifact)
+    && named(artifact, /per_sample_sequences\.qza$/i) && /^[0-9a-f]{8,64}$/i.test(realId(artifact)))
+    ?? stored.find((artifact) => isQza(artifact) && named(artifact, /(?:^|[_\s])sequences?\.qza$/i)
+      && /^[0-9a-f]{8,64}$/i.test(realId(artifact))) ?? null;
+  const errorDetails = stored.find((artifact) => isQza(artifact)
+    && named(artifact, /error_correction_details\.qza$/i)
+    && /^[0-9a-f]{8,64}$/i.test(realId(artifact))) ?? null;
+  if (!perSample) {
+    result.reason = "no_stored_per_sample_sequences_qza_artifact; no demux reads id was invented";
+    state.steps.demux.demux_frontier_repair = { ...result, status: "unavailable" };
+    return result;
+  }
+  const datasetId = realId(perSample);
+  state.frontier = { ...(state.frontier ?? {}), demuxReadsId: datasetId };
+  if (errorDetails) {
+    state.frontier.demuxErrorCorrectionDetailsId = realId(errorDetails);
+  }
+  state.steps.demux.demux_output_provenance = {
+    per_sample_sequences_dataset_id: datasetId,
+    per_sample_sequences_name: String(perSample.name ?? ""),
+    error_correction_details_dataset_id: errorDetails ? realId(errorDetails) : null,
+    error_correction_details_name: errorDetails ? String(errorDetails.name ?? "") : null,
+    basis: "repaired_from_stored_demux_output_artifacts",
+    note: "Succeeded demux job was not replayed and binary qza was not parsed as text."
+  };
+  state.steps.demux.demux_frontier_repair = { ...result, status: "succeeded" };
+  return { ...result, repaired: true, dataset_id: datasetId,
+    error_correction_dataset_id: errorDetails ? realId(errorDetails) : null };
+}
+
 function rolesFor(stepId, state) {
   switch (stepId) {
     case "demux": {
@@ -333,8 +385,14 @@ function rolesFor(stepId, state) {
         { id: state.dataset_ids.metadata, role: "table", name: state.filenames.metadata }
       ];
     }
-    case "qc_summary": return [{ id: state.frontier?.demuxReadsId ?? state.dataset_ids.sequences, role: "reads", name: "demultiplexed reads" }];
-    case "dada2_denoise": return [{ id: state.frontier?.demuxReadsId ?? state.dataset_ids.sequences, role: "reads", name: "demultiplexed reads" }];
+    case "qc_summary":
+      repairDemuxFrontier(state);
+      return [{ id: state.frontier?.demuxReadsId ?? state.dataset_ids.sequences, role: "reads", name: "demultiplexed reads" }];
+    case "dada2_denoise":
+      // A resumed run may have a succeeded demux with no frontier id; repair
+      // it from stored outputs before building the denoise payload.
+      repairDemuxFrontier(state);
+      return [{ id: state.frontier?.demuxReadsId ?? state.dataset_ids.sequences, role: "reads", name: "demultiplexed reads" }];
     case "taxonomy": return [
       { id: state.frontier?.repSeqsId, role: "fasta", name: "representative sequences" },
       // The classifier is a REAL history qza prepared from the official URL.
@@ -1544,9 +1602,9 @@ export async function handleContinueStages(request, env, options = {}) {
   const state = parseJson(row.state_json);
   if (!state) return refuse("state_missing", "The stored run has no state record.");
   if (state.workflow_type !== "microbiome") return refuse("not_microbiome_run", "The referenced run is not a microbiome workflow.");
-  // Single-use is checked first: even a resumed (running) run must report the
+  // The cap is checked first: even a resumed (running) run must report the
   // exhausted continuation rather than a merely unexpected status.
-  if (Number(state.continue_count ?? 0) >= 1) return refuse("continue_limit_reached", "This run has already used its single stage continuation.");
+  if (Number(state.continue_count ?? 0) >= 2) return refuse("continue_limit_reached", "This run has reached the cap of two bounded stage continuations.");
   if (state.status !== "failed") return refuse("status_not_failed", `The stored run status is ${state.status}, not failed.`);
   if ((state.steps?.import_reads?.status ?? null) !== "succeeded") {
     return refuse("import_reads_not_succeeded", "The original upload import is not recorded as succeeded.");
@@ -1564,17 +1622,27 @@ export async function handleContinueStages(request, env, options = {}) {
   if (firstIndex < 0) return refuse("no_stage_to_continue", "Every scientific stage is already succeeded.");
   const resetStages = scientific.slice(firstIndex);
   for (const stage of resetStages) delete state.steps[stage];
-  state.errors = (state.errors ?? []).filter((entry) =>
-    !resetStages.some((stage) => errorText(entry).includes(stage)));
+  // `content_unavailable` errors from the ALREADY-SUCCEEDED demux stage are
+  // obsolete: those binary qza downloads are no longer attempted. Genuine
+  // failures for other stages are untouched.
+  const demuxSucceeded = (state.steps?.demux?.status ?? null) === "succeeded";
+  state.errors = (state.errors ?? []).filter((entry) => {
+    if (resetStages.some((stage) => errorText(entry).includes(stage))) return false;
+    if (demuxSucceeded && /content_unavailable/.test(errorText(entry))
+        && (String(entry?.step ?? "") === "demux" || /\bdemux\b/i.test(errorText(entry)))) return false;
+    return true;
+  });
+  const frontierRepair = repairDemuxFrontier(state);
   state.status = "running";
   state.current_step = scientific[firstIndex];
-  state.continue_count = 1;
+  state.continue_count = Number(state.continue_count ?? 0) + 1;
   await persistState(db, row, state);
   return jsonResponse({
     workflow_type: "microbiome", run_id: row.public_id, continued: true,
     continue_count: state.continue_count, current_step: state.current_step,
     preserved_succeeded_stages: succeeded,
     reset_stages: resetStages,
+    frontier_repair: frontierRepair,
     status_url: `/api/ai/workflows/microbiome/status?run_id=${encodeURIComponent(row.public_id)}`,
     result_url: `/api/ai/workflows/microbiome/result?run_id=${encodeURIComponent(row.public_id)}`,
     recovery_url: `/api/ai/runs/${encodeURIComponent(row.public_id)}/recovery`,
