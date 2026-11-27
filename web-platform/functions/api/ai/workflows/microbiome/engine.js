@@ -2638,7 +2638,13 @@ function submissionFailureView(entry, env) {
       : (Number.isFinite(Number(rawStatus)) ? Number(rawStatus) : null),
     error_code: field(entry?.error_code, 80),
     error_message: field(entry?.error_message, 300),
-    basis: field(entry?.basis, 120)
+    basis: field(entry?.basis, 120),
+    // A newer state shape persists Galaxy's non-2xx body excerpt here. It is
+    // allowlisted only when actually stored, and re-scrubbed/capped at this
+    // boundary so no credential, signed URL or raw body escapes. Entries
+    // without it keep the original response shape.
+    ...(entry?.upstream_excerpt !== undefined && entry?.upstream_excerpt !== null
+      ? { upstream_excerpt: field(entry.upstream_excerpt, 600) } : {})
   };
 }
 
