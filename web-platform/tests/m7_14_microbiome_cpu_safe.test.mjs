@@ -283,7 +283,8 @@ test("ADVANCE / classifier_import submits one URL import and never streams the o
   const { db, d1 } = seed(s);
   const stub = makeStub({ noClassifier: true });
   const body = await (await advance(db, envFor(db, stub.fetchImpl), stub.fetchImpl)).json();
-  assert.equal(body.next_operation, "classifier_verify");
+  // The URL-import job must finish before any checksum read is attempted.
+  assert.equal(body.next_operation, "classifier_wait");
   assert.equal(stub.posts().filter((call) => call.url.includes("/api/tools/fetch")).length, 1);
   const form = stub.calls.find((call) => call.url.includes("/api/tools/fetch")).body;
   assert.deepEqual(JSON.parse(form.get("targets"))[0].elements[0],

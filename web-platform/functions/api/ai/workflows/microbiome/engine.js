@@ -3484,6 +3484,31 @@ function biomConversionNeeded(state) {
     /content_unavailable|BIOMV210|get_content_as_text|biom/i.test(JSON.stringify(entry ?? {})));
 }
 
+// A classifier imported by URL is NOT ready merely because a dataset id was
+// returned: its provider job must finish before a checksum can be exposed.
+function classifierNextOp(state) {
+  const prep = state.classifier_prep ?? {};
+  if (prep.usable === true && prep.dataset_id) return "submit_stage";
+  if (["unavailable", "failed", "not_found", "pending"].includes(prep.status)) return "submit_stage";
+  if (prep.dataset_id && ["uploaded", "imported"].includes(prep.status)) return "classifier_wait";
+  return "classifier_inventory";
+}
+
+const CLASSIFIER_READY_RESUME = "m7143_classifier_ready";
+
+function classifierResumeEligible(state) {
+  if (state.status !== "failed") return false;
+  const marker = CLASSIFIER_READY_RESUME;
+  if ((state.resume_markers ?? []).includes(marker)) return false;
+  const errors = Array.isArray(state.errors) ? state.errors : [];
+  const exactFailure = errors.some((entry) => String(entry?.step) === "taxonomy"
+    && /^provider_job_id_missing$/.test(String(entry?.reason ?? "").trim()));
+  const taxonomy = state.steps?.taxonomy ?? {};
+  const skippedSubmission = !safeString(taxonomy.provider_job_id, 200)
+    && /No classifier\/reference option was exposed by the live tool schema/.test(String(taxonomy.reason ?? ""));
+  return exactFailure && skippedSubmission;
+}
+
 function defaultAdvanceOp(state) {
   if (state.status !== "running") return null;
   if (biomConversionNeeded(state)) {
@@ -3507,7 +3532,7 @@ function defaultAdvanceOp(state) {
   if (step.status === "succeeded" || step.status === "unavailable" || step.status === "running") {
     return "poll_current_job";
   }
-  if (stepId === "taxonomy") return "classifier_inventory";
+  if (stepId === "taxonomy") return classifierNextOp(state);
   if (stepId === "demux") return "prepare_demux_import";
   if (stepId === "import_reads") return "poll_current_job";
   if (["composition", "ordination", "report"].includes(stepId)) return "local_stage";
@@ -3870,10 +3895,7 @@ async function runAdvanceOperation(operation, adapter, db, row, state, env, ctx,
     }
     if (step.status === "failed") return setCursor(state, null);
     if (!step.status) {
-      if (stepId === "taxonomy") {
-        return setCursor(state, state.classifier_prep?.usable === true && state.classifier_prep?.dataset_id
-          ? "submit_stage" : "classifier_inventory");
-      }
+      if (stepId === "taxonomy") return setCursor(state, classifierNextOp(state));
       if (stepId === "demux") return setCursor(state, "prepare_demux_import");
       if (stepId === "import_reads") return setCursor(state, "poll_current_job");
       if (["composition", "ordination", "report"].includes(stepId)) return setCursor(state, "local_stage");
@@ -3904,11 +3926,7 @@ async function runAdvanceOperation(operation, adapter, db, row, state, env, ctx,
 
   if (operation === "classifier_inventory") {
     const prep = state.classifier_prep;
-    if (prep?.usable === true && prep.dataset_id) return setCursor(state, "submit_stage");
-    if (prep?.status === "uploaded" && prep.dataset_id) return setCursor(state, "classifier_verify");
-    if (prep && ["unavailable", "failed", "not_found"].includes(prep.status)) {
-      return setCursor(state, "submit_stage");
-    }
+    if (prep?.dataset_id) return setCursor(state, classifierNextOp(state));
     const descriptor = QIIME_CLASSIFIER;
     const fresh = { ...classifierProvenance(descriptor), status: "running", started_at: nowIso(),
       attempts: 1, dataset_id: null, history_id: state.history_id ?? null, job_id: null,
@@ -3963,7 +3981,8 @@ async function runAdvanceOperation(operation, adapter, db, row, state, env, ctx,
 
   if (operation === "classifier_import") {
     const prep = state.classifier_prep ?? {};
-    if (prep.dataset_id) return setCursor(state, "classifier_verify");
+    // An imported dataset id is NOT proof the URL job finished. Wait first.
+    if (prep.dataset_id) return setCursor(state, classifierNextOp(state));
     if (!state.history_id) {
       state.classifier_prep = { ...prep, ...classifierProvenance(QIIME_CLASSIFIER), status: "unavailable",
         usable: false, reason: "history_unavailable: no existing history for a URL import." };
@@ -3989,6 +4008,32 @@ async function runAdvanceOperation(operation, adapter, db, row, state, env, ctx,
       history_id: upload.history_id ?? state.history_id, job_id: upload.job_id ?? null,
       provider_job_id: upload.provider_job_id ?? null, computed_sha256: null, at: nowIso(),
       reason: "provider_checksum_verification_pending" };
+    return setCursor(state, "classifier_wait");
+  }
+
+  if (operation === "classifier_wait") {
+    const prep = state.classifier_prep ?? {};
+    if (prep.usable === true) return setCursor(state, "submit_stage");
+    const jobId = safeString(prep.provider_job_id ?? prep.job_id, 200);
+    // Inventory reuse has no provider job; verification is safe there.
+    if (!jobId) return setCursor(state, "classifier_verify");
+    // ONE job-status read. No other state mutation while the job is in flight.
+    const status = await adapter.getJobStatus({ job_id: jobId }, ctx);
+    const observed = status.output?.structured?.state ?? status.status;
+    const classified = classifyJobState(observed);
+    if (classified === "running" || classified === "unknown") return setCursor(state, "classifier_wait");
+    if (classified === "failed") {
+      const reason = `classifier_import_job_failed: provider job ${jobId} ended in state ${observed}`;
+      state.classifier_prep = { ...prep, status: "unavailable", usable: false,
+        reason, detail_state: observed ?? null, checked_at: nowIso() };
+      if (state.steps?.taxonomy) {
+        state.steps.taxonomy = { ...state.steps.taxonomy, status: "unavailable",
+          reason, finished_at: nowIso() };
+        await recordStep(db, state, "taxonomy", "unavailable", { details: { reason } });
+      }
+      const next = advanceStep(state);
+      return setCursor(state, next ? "poll_current_job" : "finalize_result");
+    }
     return setCursor(state, "classifier_verify");
   }
 
@@ -4041,7 +4086,18 @@ async function runAdvanceOperation(operation, adapter, db, row, state, env, ctx,
       return setCursor(state, next ? "poll_current_job" : "finalize_result");
     }
     try {
-      await submitStage(adapter, env, state, stepId, ctx);
+      const submission = await submitStage(adapter, env, state, stepId, ctx);
+      if (submission?.skipped) {
+        // NO job was submitted. Never record a running step with a null
+        // provider job id: that dead-ends the workflow with provider_job_id_missing.
+        const reason = safeString(submission.reason ?? state.steps[stepId]?.reason
+          ?? `No provider job was submitted for ${stepId}.`, 500);
+        state.steps[stepId] = { ...step, status: "unavailable", reason,
+          provider_job_id: null, finished_at: nowIso() };
+        await recordStep(db, state, stepId, "unavailable", { details: { reason } });
+        const next = advanceStep(state);
+        return setCursor(state, next ? "poll_current_job" : "finalize_result");
+      }
       await recordStep(db, state, stepId, "running", {
         providerJobId: state.steps[stepId]?.provider_job_id ?? null,
         details: { tool_id: state.steps[stepId]?.tool_id ?? null, tool_version: state.steps[stepId]?.tool_version ?? null }
@@ -4409,6 +4465,31 @@ export async function handleAdvance(request, env, options = {}) {
   const state = parseJson(row.state_json);
   if (!state) return errorResponse("The stored run has no state record.", 409, request);
   if (state.workflow_type !== "microbiome") return errorResponse("The referenced run is not a microbiome workflow.", 400, request);
+  // Explicit, single-use recovery is checked BEFORE the terminal-state return.
+  // Normal polls can never revive a failed run.
+  const resume = safeString(payload?.resume, 80);
+  if (resume) {
+    const refuseResume = (reason) => jsonResponse({ workflow_type: "microbiome", run_id: row.public_id,
+      operation: null, resumed: false, reason, status: state.status,
+      current_step: state.current_step, steps_summary: statusStepSummary(state),
+      execution_mode: envExecutionMode(env) }, 409, request);
+    if (resume !== CLASSIFIER_READY_RESUME) return refuseResume("unknown_resume_token");
+    if (!classifierResumeEligible(state)) return refuseResume("resume_not_eligible");
+    state.status = "running";
+    state.steps = state.steps ?? {};
+    state.errors = (state.errors ?? []).filter((entry) =>
+      !(String(entry?.step) === "taxonomy"
+        && /^provider_job_id_missing$/.test(String(entry?.reason ?? "").trim())));
+    state.steps.taxonomy = {};
+    state.advance_op = null;
+    state.resume_markers = [...(state.resume_markers ?? []), CLASSIFIER_READY_RESUME];
+    state.resumed_at = nowIso();
+    await persistState(db, row, state);
+    return jsonResponse({ workflow_type: "microbiome", run_id: row.public_id,
+      operation: "resume_failed", resumed: true, status: "running",
+      current_step: state.current_step, next_operation: defaultAdvanceOp(state),
+      steps_summary: statusStepSummary(state), execution_mode: envExecutionMode(env) }, 200, request);
+  }
   if (state.status !== "running") {
     return jsonResponse({ workflow_type: "microbiome", run_id: row.public_id, operation: null,
       status: state.status, current_step: state.current_step, next_operation: null,
