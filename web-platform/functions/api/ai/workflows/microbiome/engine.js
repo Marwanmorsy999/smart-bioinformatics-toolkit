@@ -1044,7 +1044,8 @@ async function collectDenoise(state, collected, downloaded) {
   const { parsed: table } = bestParsed(downloaded.artifacts, "feature_table");
   const { parsed: repSeqs } = bestParsed(downloaded.artifacts, "rep_seqs");
   const denoiseStats = bestParsed(downloaded.artifacts, "qc");
-  state.frontier.featureTable = table.available ? downloaded.artifacts.find((artifact) => artifact.kind === "feature_table")?.id ?? null : null;
+  // Single canonical key: rolesFor() reads featureTableId for alpha/beta/pcoa.
+  state.frontier.featureTableId = table.available ? downloaded.artifacts.find((artifact) => artifact.kind === "feature_table")?.id ?? null : null;
   state.frontier.repSeqsId = repSeqs.available ? downloaded.artifacts.find((artifact) => artifact.kind === "rep_seqs")?.id ?? null : null;
   state.results.asv = {
     available: table.available,
