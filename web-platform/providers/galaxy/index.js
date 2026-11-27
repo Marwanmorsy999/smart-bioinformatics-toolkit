@@ -68,6 +68,16 @@ import { parseJobOutputs } from "./galaxy_ids.js";
 
 const PROVIDER = "galaxy";
 
+// TEMP diagnostics: labels, elapsed ms, counts and HTTP status codes only.
+// Never log ids, URLs, keys, payloads or response bodies.
+const JOB_DIAG = true;
+function jobDiag(label, started, count = null, status = null) {
+  if (!JOB_DIAG) return;
+  const ms = Math.round((Date.now() - started) * 10) / 10;
+  console.log("[job-diag]", label, `${ms}ms`,
+    count === null ? "" : `count=${count}`, status === null ? "" : `status=${status}`);
+}
+
 // Platform upload primitive only. Never added to the discovered capability
 // list; submitJob uses it to select the dataset-upload wire format.
 const UPLOAD_TOOL_ID = "upload1";
@@ -132,6 +142,7 @@ export function createAdapter(env = {}, deps = {}) {
   }
 
   async function call(method, path, body, ctx = {}, extra = {}) {
+    const callStarted = Date.now();
     const headers = { "X-API-Key": apiKey, Accept: "application/json" };
     let payload;
     if (body !== undefined) {
@@ -149,6 +160,7 @@ export function createAdapter(env = {}, deps = {}) {
       sleep: ctx?.sleep ?? null,
       env: { GALAXY_API_KEY: apiKey }
     });
+    jobDiag(extra.diagLabel ?? "call", callStarted, attempts, response?.status ?? null);
     return { body: parsed, response, attempts };
   }
 
@@ -701,6 +713,7 @@ export function createAdapter(env = {}, deps = {}) {
     },
 
     async getJobStatus(request = {}, ctx = {}) {
+      const statusStarted = Date.now();
       const args = normalizeCallArgs(request, ctx);
       request = args.request;
       ctx = args.ctx;
@@ -710,21 +723,32 @@ export function createAdapter(env = {}, deps = {}) {
       try {
         let body;
         try {
-          body = (await call("GET", `/api/jobs/${encodeURIComponent(jobId)}`, undefined, ctx)).body;
+          body = (await call("GET", `/api/jobs/${encodeURIComponent(jobId)}`, undefined, ctx,
+            { diagLabel: "call /api/jobs" })).body;
         } catch (error) {
           if (Number(error?.status) !== 404) throw error;
+          jobDiag("job 404 fallback /api/invocations", Date.now(), null, 404);
           // Workflow invocations are not visible through /api/jobs.
-          body = (await call("GET", `/api/invocations/${encodeURIComponent(jobId)}`, undefined, ctx)).body;
+          body = (await call("GET", `/api/invocations/${encodeURIComponent(jobId)}`, undefined, ctx,
+            { diagLabel: "call /api/invocations" })).body;
         }
         const raw = asObject(body);
+        const resultStarted = Date.now();
         const result = jobResult(raw.id ?? jobId, raw.state, raw.history_id);
+        jobDiag("jobResult", resultStarted);
         result.output.structured.progress = finite(raw.progress) ?? null;
         // Job details commonly expose the real output HDA in `outputs` even
         // when /api/jobs/{id}/outputs does not. Read-only, keys only for logs.
         const detailHistoryId = safeString(raw.history_id, 200) || null;
+        const associationsStarted = Date.now();
         result.output.structured.output_associations = normalizeJobOutputAssociations(raw.outputs, detailHistoryId);
+        jobDiag("normalizeJobOutputAssociations", associationsStarted,
+          result.output.structured.output_associations.length);
+        const keysStarted = Date.now();
         result.output.structured.raw_output_keys = outputKeys(raw.outputs);
+        jobDiag("outputKeys", keysStarted, result.output.structured.raw_output_keys.length);
         result.at = at;
+        jobDiag("getJobStatus.total", statusStarted);
         return result;
       } catch (error) {
         return { ...failure(PROVIDER, error, at), provider_job_id: jobId, status: JOB_STATUS.UNKNOWN };
