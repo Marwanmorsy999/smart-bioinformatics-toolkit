@@ -115,6 +115,7 @@ export function buildMicrobiomePayload(schema, datasets = [], overrides = {}) {
 // and reads/barcodes are mapped by the input's own name/help/label text.
 
 const EMP_SINGLE_FORMAT = "SingleLanePerSampleSingleEndFastqDirFmt";
+const MAX_IMPORT_DEPTH = 8;
 
 function asInputs(value) {
   return Array.isArray(value) ? value : [];
@@ -125,48 +126,65 @@ function isData(input) {
 function isConditional(input) {
   return String(input?.model_class ?? "") === "Conditional";
 }
-function collectConditionals(inputs, prefix, out, depth) {
-  if (depth > 8) return;
+
+function caseExposesFormat(caseEntry, conditional, needle) {
+  const value = String(caseEntry?.value ?? "");
+  if (value.toLowerCase() === needle) return true;
+  const test = conditional?.test_param ?? {};
+  const options = [...asInputs(test.options), ...asInputs(test.select_options)];
+  const option = options.find((raw) => String(raw?.value ?? raw?.id ?? "") === value);
+  if (!option) return false;
+  const label = String(option?.label ?? option?.human_name ?? option?.name ?? "");
+  return value.toLowerCase() === needle || label.toLowerCase() === needle;
+}
+
+/**
+ * Recursively walk the LIVE schema, including nested Conditionals inside case
+ * inputs (useGalaxy groups formats under `import_root` cases such as `None`).
+ * Every selector value recorded here is read from an option/case in the schema;
+ * nothing is inferred from a tool name or a known QIIME 2 convention.
+ */
+function collectFormatPaths(inputs, prefix, selectors, depth, needle, out) {
+  if (depth > MAX_IMPORT_DEPTH) return;
   for (const raw of asInputs(inputs)) {
     const item = raw && typeof raw === "object" ? raw : {};
     const name = String(item.name ?? "");
-    const full = name ? `${prefix}${name}` : prefix;
-    if (isConditional(item) && name) {
-      out.push({ conditional: item, prefix, full });
-      // Cases are not walked here: each is examined only after its format is
-      // selected from the live schema.
+    if (!name) continue;
+    const full = `${prefix}${name}`;
+    if (isConditional(item)) {
+      const testName = String(item.test_param?.name ?? "");
+      const testKey = testName ? `${full}|${testName}` : null;
+      const casePrefix = `${full}|`;
+      for (const caseEntry of asInputs(item.cases)) {
+        const value = String(caseEntry?.value ?? "");
+        const nextSelectors = testKey ? [...selectors, { name: testKey, value }] : selectors;
+        if (caseExposesFormat(caseEntry, item, needle)) {
+          out.push({ selectors: nextSelectors, conditional: item, caseEntry, prefix: casePrefix,
+            formatValue: value });
+        }
+        collectFormatPaths(caseEntry.inputs, casePrefix, nextSelectors, depth + 1, needle, out);
+      }
       continue;
     }
-    if (String(item.model_class ?? "") === "Section" && name) {
-      collectConditionals(item.inputs, `${full}|`, out, depth + 1);
+    if (String(item.model_class ?? "") === "Section") {
+      collectFormatPaths(item.inputs, `${full}|`, selectors, depth + 1, needle, out);
     }
   }
 }
 
-/** Find the live format case for EMP single-end reads. Never invent a value. */
+/** Find the live EMP single-end format case and every selector leading to it. */
 export function findImportFormatCase(schema, formatHint = EMP_SINGLE_FORMAT) {
-  const conditionals = [];
-  collectConditionals(schema?.inputs, "", conditionals, 0);
   const needle = String(formatHint).toLowerCase();
-  for (const entry of conditionals) {
-    const test = entry.conditional.test_param ?? {};
-    const options = [...asInputs(test.options), ...asInputs(test.select_options)];
-    for (const raw of options) {
-      const value = String(raw?.value ?? raw?.id ?? "");
-      const label = String(raw?.label ?? raw?.human_name ?? raw?.name ?? "");
-      if (!`${value} ${label}`.toLowerCase().includes(needle)) continue;
-      const caseEntry = asInputs(entry.conditional.cases).find((item) => String(item?.value) === value);
-      if (caseEntry) return { formatValue: value, caseEntry, conditional: entry.conditional, prefix: entry.prefix };
-    }
-    // Some panels expose the format only as the case value itself.
-    for (const caseEntry of asInputs(entry.conditional.cases)) {
-      const value = String(caseEntry?.value ?? "");
-      if (value.toLowerCase().includes(needle)) {
-        return { formatValue: value, caseEntry, conditional: entry.conditional, prefix: entry.prefix };
-      }
-    }
-  }
-  return null;
+  const paths = [];
+  collectFormatPaths(schema?.inputs, "", [], 0, needle, paths);
+  if (!paths.length) return null;
+  // A generic group such as `None` is preferred over a format-specific group,
+  // when the schema exposes both. The value still comes from the live schema.
+  paths.sort((left, right) => {
+    const generic = (entry) => /^none$/i.test(String(entry.selectors[0]?.value ?? "")) ? 0 : 1;
+    return generic(left) - generic(right);
+  });
+  return paths[0];
 }
 
 function importRoleOf(input) {
@@ -188,32 +206,44 @@ function applySchemaValue(inputs, raw, full) {
   if (value !== undefined && value !== null && String(value) !== "") inputs[full] = value;
 }
 
+function collectCaseInputs(inputs, prefix, out, depth = 0) {
+  if (depth > MAX_IMPORT_DEPTH) return;
+  for (const raw of asInputs(inputs)) {
+    const item = raw && typeof raw === "object" ? raw : {};
+    const name = String(item.name ?? "");
+    if (!name || isConditional(item)) continue;
+    const full = `${prefix}${name}`;
+    if (String(item.model_class ?? "") === "Section") {
+      collectCaseInputs(item.inputs, `${full}|`, out, depth + 1);
+      continue;
+    }
+    out.push({ input: item, field: full,
+      text: `${name} ${item.help ?? ""} ${item.label ?? ""} ${item.description ?? ""}`.toLowerCase() });
+  }
+}
+
 /**
- * Build the import payload from a located format case. Reads/barcodes are
- * attached to the data inputs identified by their own text; names come from the
- * original filenames. Ambiguous mapping fails closed (no payload is submitted).
+ * Build the import payload from a located (possibly nested) format case. Every
+ * conditional selector on the path is set to the exact live-schema case value;
+ * reads/barcodes are attached to the inputs identified by their own text and
+ * names come from the original filenames. Ambiguous mapping fails closed.
  */
 export function buildImportPayload(schema, matched, { readsId, barcodesId, readsName, barcodesName } = {}) {
   const inputs = {};
-  const errors = [];
-  if (!matched?.caseEntry || !matched?.conditional) {
+  if (!matched?.caseEntry || !Array.isArray(matched.selectors) || !matched.selectors.length) {
     return { valid: false, errors: ["import_format_case_missing"], inputs };
   }
-  const conditional = matched.conditional;
-  const conditionalName = String(conditional.name ?? "");
-  if (!conditionalName) return { valid: false, errors: ["import_conditional_name_missing"], inputs };
-  const selectorName = `${matched.prefix}${conditionalName}|${String(conditional.test_param?.name ?? "")}`;
-  if (!String(conditional.test_param?.name ?? "")) {
-    return { valid: false, errors: ["import_selector_name_missing"], inputs };
+  for (const selector of matched.selectors) {
+    if (!selector?.name) return { valid: false, errors: ["import_selector_name_missing"], inputs };
+    inputs[selector.name] = selector.value;
   }
-  inputs[selectorName] = matched.formatValue;
   for (const raw of asInputs(schema?.inputs)) {
     if (isConditional(raw)) continue;
     applySchemaValue(inputs, raw, String(raw?.name ?? ""));
   }
-  const casePrefix = `${matched.prefix}${conditionalName}|`;
-  const caseInputs = asInputs(matched.caseEntry.inputs);
-  const dataInputs = caseInputs.filter(isData).map((input) => ({ input, role: importRoleOf(input) }));
+  const entries = [];
+  collectCaseInputs(matched.caseEntry.inputs, matched.prefix, entries);
+  const dataInputs = entries.filter((entry) => isData(entry.input)).map((entry) => ({ ...entry, role: importRoleOf(entry.input) }));
   const reads = dataInputs.filter((entry) => entry.role === "reads");
   const barcodes = dataInputs.filter((entry) => entry.role === "barcodes");
   if (reads.length !== 1 || barcodes.length !== 1
@@ -222,24 +252,24 @@ export function buildImportPayload(schema, matched, { readsId, barcodesId, reads
   }
   const datasetFields = {};
   for (const [role, entry, id] of [["reads", reads[0], readsId], ["barcodes", barcodes[0], barcodesId]]) {
-    const field = `${casePrefix}${String(entry.input.name)}`;
-    inputs[field] = { src: "hda", id: String(id ?? "") };
-    datasetFields[role] = field;
+    inputs[entry.field] = { src: "hda", id: String(id ?? "") };
+    datasetFields[role] = entry.field;
   }
-  for (const raw of caseInputs) {
-    if (isData(raw) || isConditional(raw)) continue;
-    const text = `${raw?.name ?? ""} ${raw?.help ?? ""} ${raw?.label ?? ""} ${raw?.description ?? ""}`.toLowerCase();
-    const full = `${casePrefix}${String(raw?.name ?? "")}`;
-    let value = valueOf(raw?.value) ?? valueOf(raw?.default_value);
-    if (/name/.test(text)) {
-      if (/barcode/.test(text)) value = barcodesName;
-      else if (/sequenc|reads/.test(text)) value = readsName;
+  for (const entry of entries) {
+    if (isData(entry.input)) continue;
+    let value = valueOf(entry.input.value) ?? valueOf(entry.input.default_value);
+    if (/name/.test(entry.text)) {
+      if (/barcode/.test(entry.text)) value = barcodesName;
+      else if (/sequenc|reads/.test(entry.text)) value = readsName;
     }
-    if (value !== undefined && value !== null && String(value) !== "") inputs[full] = value;
+    if (value !== undefined && value !== null && String(value) !== "") inputs[entry.field] = value;
   }
-  return { valid: true, errors: [], inputs, dataset_fields: datasetFields, selector: selectorName,
+  const formatSelector = matched.selectors[matched.selectors.length - 1];
+  return { valid: true, errors: [], inputs, dataset_fields: datasetFields, selector: formatSelector.name,
+    selectors: matched.selectors.map((entry) => ({ ...entry })),
     format_value: matched.formatValue,
-    applied: [{ name: selectorName, value: matched.formatValue, basis: "live_schema_format_case" }] };
+    applied: matched.selectors.map((entry) => ({ name: entry.name, value: entry.value,
+      basis: "live_schema_format_case" })) };
 }
 
 export { RAW_EXT, TABLE_EXT, FASTA_EXT, QZA_EXT, EMP_SINGLE_FORMAT };

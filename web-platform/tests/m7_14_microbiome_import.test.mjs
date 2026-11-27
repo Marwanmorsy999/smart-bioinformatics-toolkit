@@ -48,7 +48,41 @@ function json(body, status = 200) {
 function toolMeta(id) {
   return { id, name: id, version: "2026.1.0", available: true };
 }
-function schemaFor(toolId, { formatCase = true, ambiguous = false } = {}) {
+function nestedImportSchema(formatCase) {
+  const dataInputs = [
+    { model_class: "DataToolParameter", name: "sequences", help: "Sequences", extensions: ["fastq.gz"] },
+    { model_class: "DataToolParameter", name: "barcodes", help: "Barcodes", extensions: ["fastq.gz"] },
+    { model_class: "TextToolParameter", name: "sequences_name", help: "Name for sequences", value: "sequences" },
+    { model_class: "TextToolParameter", name: "barcodes_name", help: "Name for barcodes", value: "barcodes" }
+  ];
+  const formatConditional = (options, cases) => ({
+    model_class: "Conditional", name: "__q2galaxy__GUI__cond__format__",
+    test_param: { name: "format", options }, cases
+  });
+  const formatValue = formatCase ? FORMAT : "SomeOtherFormatFmt";
+  const formatOptions = formatCase
+    ? [{ value: "BLASTDBDirFmtV5", label: "BLASTDB" }, { value: FORMAT, label: "EMP single-end reads" }]
+    : [{ value: "BLASTDBDirFmtV5", label: "BLASTDB" }, { value: "SomeOtherFormatFmt", label: "Other" }];
+  return {
+    tool_id: IDS.importTool,
+    inputs: [{
+      model_class: "Conditional", name: "import_root",
+      test_param: { name: "group", options: [
+        { value: "BLASTDB", label: "BLAST database group" }, { value: "None", label: "No group" }
+      ] },
+      cases: [
+        { value: "BLASTDB", inputs: [formatConditional(
+          [{ value: "BLASTDBDirFmtV5", label: "BLASTDB" }],
+          [{ value: "BLASTDBDirFmtV5", inputs: [] }])] },
+        { value: "None", inputs: [formatConditional(formatOptions,
+          [{ value: "BLASTDBDirFmtV5", inputs: [] }, { value: formatValue, inputs: dataInputs }])] }
+      ]
+    }]
+  };
+}
+
+function schemaFor(toolId, { formatCase = true, ambiguous = false, nested = false } = {}) {
+  if (toolId === IDS.importTool && nested) return nestedImportSchema(formatCase);
   if (toolId === IDS.importTool) {
     const caseInputs = ambiguous
       ? [{ model_class: "DataToolParameter", name: "input", help: "Sequences and barcodes", extensions: ["fastq.gz"] }]
@@ -78,7 +112,8 @@ function schemaFor(toolId, { formatCase = true, ambiguous = false } = {}) {
   return { tool_id: toolId, inputs: [{ model_class: "DataToolParameter", name: "input" }] };
 }
 
-function makeStub({ formatCase = true, ambiguous = false, importDelayPolls = 0, importFails = false } = {}) {
+function makeStub({ formatCase = true, ambiguous = false, nested = false,
+  importDelayPolls = 0, importFails = false } = {}) {
   const calls = [];
   const importSubmissions = [];
   const demuxSubmissions = [];
@@ -135,7 +170,7 @@ function makeStub({ formatCase = true, ambiguous = false, importDelayPolls = 0, 
     if (url.includes("/api/tools/fetch")) return json({ outputs: [{ id: IDS.reads, history_id: HISTORY }], jobs: [{ id: "uploadjob" }] });
     if (url.includes("io_details=true")) return json(schemaFor(decodeURIComponent(url).includes(IDS.importTool)
       ? IDS.importTool : Object.keys(roleByTool).find((id) => decodeURIComponent(url).includes(id)) ?? IDS.demux,
-    { formatCase, ambiguous }));
+    { formatCase, ambiguous, nested }));
     if (method === "POST" && url.endsWith("/api/tools")) {
       const toolId = String(body?.tool_id ?? "");
       if (toolId === IDS.importTool) {
@@ -308,5 +343,45 @@ test("LABELLED STUB / pre-existing qza input skips import entirely", async () =>
     assert.deepEqual(Object.values(stub.demuxSubmissions[0]).filter((v) => v?.src === "hda").map((v) => v.id),
       [IDS.importedQza, IDS.metadata]);
     assert.equal(parseJson(d1.tables.microbiome_runs[0].state_json).import, null);
+  });
+});
+
+test("LABELLED STUB / nested two-level schema: both live selectors and the nested case are used", async () => {
+  const stub = makeStub({ nested: true });
+  const { db, state: d1 } = seededDb(stateAtDemux());
+  await withStub(stub, async () => {
+    const terminal = await drive(stub, envFor(db, stub));
+    assert.equal(terminal.status, "succeeded", JSON.stringify(terminal.errors));
+    assert.equal(stub.importSubmissions.length, 1);
+    const inputs = stub.importSubmissions[0];
+    // Outer group case and inner format case BOTH come from the live schema.
+    assert.equal(inputs["import_root|group"], "None");
+    assert.equal(inputs["import_root|__q2galaxy__GUI__cond__format__|format"], FORMAT);
+    const prefix = "import_root|__q2galaxy__GUI__cond__format__|";
+    assert.deepEqual(inputs[`${prefix}sequences`], { src: "hda", id: IDS.reads });
+    assert.deepEqual(inputs[`${prefix}barcodes`], { src: "hda", id: IDS.barcodes });
+    assert.equal(inputs[`${prefix}sequences_name`], "sequences.fastq.gz");
+    assert.equal(inputs[`${prefix}barcodes_name`], "barcodes.fastq.gz");
+    assert.deepEqual(Object.values(stub.demuxSubmissions[0]).filter((v) => v?.src === "hda").map((v) => v.id),
+      [IDS.importedQza, IDS.metadata]);
+    const stored = parseJson(d1.tables.microbiome_runs[0].state_json);
+    assert.deepEqual(stored.import.selectors, [
+      { name: "import_root|group", value: "None" },
+      { name: "import_root|__q2galaxy__GUI__cond__format__|format", value: FORMAT }
+    ]);
+    assert.equal(stored.import.format_value, FORMAT);
+  });
+});
+
+test("LABELLED STUB / nested schema without the EMP format: zero jobs, honest refusal", async () => {
+  const stub = makeStub({ nested: true, formatCase: false });
+  const { db, state: d1 } = seededDb(stateAtDemux());
+  await withStub(stub, async () => {
+    await drive(stub, envFor(db, stub), 3);
+    assert.equal(stub.importSubmissions.length, 0, "no format value was invented");
+    assert.equal(stub.demuxSubmissions.length, 0);
+    const stored = parseJson(d1.tables.microbiome_runs[0].state_json);
+    assert.equal(stored.steps.demux.status, "unavailable");
+    assert.match(stored.import.reason, /qza_import_format_case_missing/);
   });
 });
