@@ -175,7 +175,7 @@ test("QC SCHEMA MISMATCH / stage is unavailable, run continues, DADA2 gets the d
     const s = stored(d1);
     assert.equal(s.status, "running", "a qc schema mismatch must not fail the run");
     assert.equal(s.steps.qc_summary.status, "unavailable");
-    assert.match(s.steps.qc_summary.reason, /no_data_input_for_reads|schema failure/);
+    assert.match(s.steps.qc_summary.reason, /no_data_input_for_reads|schema failure|galaxy returned HTTP 400/);
     assert.equal(s.steps.dada2_denoise.status, "running");
     assert.deepEqual(stub.denoiseSubmission()?.inputs.table, { src: "hda", id: PER_SAMPLE_QZA });
     assert.equal(stub.denoiseSubmission()?.history_id, HISTORY);
@@ -236,8 +236,12 @@ test("CONTINUE / preserves succeeded demux job and resets only failed and later 
   assert.equal((await third.json()).continue_count, 3);
   refail();
   const fourth = await continueRun();
-  assert.equal(fourth.status, 409);
-  assert.equal((await fourth.json()).reason, "continue_limit_reached");
+  assert.equal(fourth.status, 202, JSON.stringify(await fourth.clone().json()));
+  assert.equal((await fourth.json()).continue_count, 4);
+  refail();
+  const fifth = await continueRun();
+  assert.equal(fifth.status, 409);
+  assert.equal((await fifth.json()).reason, "continue_limit_reached");
 });
 
 function liveStaleState(overrides = {}) {

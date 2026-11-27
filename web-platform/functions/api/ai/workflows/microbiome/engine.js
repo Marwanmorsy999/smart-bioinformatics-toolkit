@@ -480,18 +480,26 @@ function rolesFor(stepId, state) {
         { id: state.dataset_ids.metadata, role: "table", name: state.filenames.metadata }
       ];
     }
-    case "qc_summary": return [{ id: state.frontier?.demuxReadsId ?? state.dataset_ids.sequences, role: "reads", name: "demultiplexed reads" }];
-    case "dada2_denoise": return [{ id: state.frontier?.demuxReadsId ?? state.dataset_ids.sequences, role: "reads", name: "demultiplexed reads" }];
+    // Every downstream QIIME 2 input is a qza artifact, not raw reads/table.
+    case "qc_summary": return [{ id: state.frontier?.demuxReadsId ?? state.dataset_ids.sequences,
+      role: "artifact", name: "demultiplexed reads qza" }];
+    case "dada2_denoise": return [{ id: state.frontier?.demuxReadsId ?? state.dataset_ids.sequences,
+      role: "artifact", name: "demultiplexed reads qza" }];
     case "taxonomy": return [
-      { id: state.frontier?.repSeqsId, role: "fasta", name: "representative sequences" },
+      { id: state.frontier?.repSeqsId, role: "artifact", key: "reads",
+        name: "representative sequences qza", hint: "reads|sequences|rep|feature" },
       // The classifier is a REAL history qza prepared from the official URL.
-      // Both dataset fields are resolved from the live tool schema below.
+      // Hints keep it out of the representative-sequences field.
       ...(state.classifier_prep?.dataset_id ? [{ id: state.classifier_prep.dataset_id,
-        role: "classifier", name: state.classifier_prep.filename ?? QIIME_CLASSIFIER.filename }] : [])
+        role: "artifact", key: "classifier", name: state.classifier_prep.filename ?? QIIME_CLASSIFIER.filename,
+        hint: "classifier|referen|database|rrna|silva|taxonomy" }] : [])
     ];
-    case "alpha_diversity": return [{ id: state.frontier?.featureTableId, role: "table", name: "feature table" }];
-    case "beta_diversity": return [{ id: state.frontier?.featureTableId, role: "table", name: "feature table" }];
-    case "pcoa": return [{ id: state.frontier?.distanceMatrixId ?? state.frontier?.featureTableId, role: "table", name: "distance matrix" }];
+    case "alpha_diversity": return [{ id: state.frontier?.featureTableId,
+      role: "artifact", name: "feature table qza" }];
+    case "beta_diversity": return [{ id: state.frontier?.featureTableId,
+      role: "artifact", name: "feature table qza" }];
+    case "pcoa": return [{ id: state.frontier?.distanceMatrixId ?? state.frontier?.featureTableId,
+      role: "artifact", name: "distance matrix qza" }];
     default: return [];
   }
 }
@@ -1693,7 +1701,7 @@ export async function handleContinueStages(request, env, options = {}) {
   if (state.workflow_type !== "microbiome") return refuse("not_microbiome_run", "The referenced run is not a microbiome workflow.");
   // The cap is checked first: even a resumed (running) run must report the
   // exhausted continuation rather than a merely unexpected status.
-  if (Number(state.continue_count ?? 0) >= 3) return refuse("continue_limit_reached", "This run has reached the cap of three bounded stage continuations.");
+  if (Number(state.continue_count ?? 0) >= 4) return refuse("continue_limit_reached", "This run has reached the cap of four bounded stage continuations.");
   if (state.status !== "failed") return refuse("status_not_failed", `The stored run status is ${state.status}, not failed.`);
   if ((state.steps?.import_reads?.status ?? null) !== "succeeded") {
     return refuse("import_reads_not_succeeded", "The original upload import is not recorded as succeeded.");
