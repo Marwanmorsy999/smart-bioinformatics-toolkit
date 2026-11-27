@@ -198,6 +198,31 @@ function importRoleOf(input) {
   return "unknown";
 }
 
+// The live import case may describe its two files through a `name` text
+// parameter's help/regex (e.g. `barcodes.fastq.gz` vs `sequences.fastq.gz`)
+// rather than through the data input itself. Read that evidence verbatim.
+function nameParamEvidence(entry) {
+  const text = String(entry?.text ?? "");
+  const barcode = /barcodes?\.fastq(?:\.gz)?|barcode/i.test(text);
+  const sequence = /sequences?\.fastq(?:\.gz)?|sequenc/i.test(text);
+  if (barcode && sequence) return "conflict";
+  if (barcode) return "barcodes";
+  if (sequence) return "reads";
+  return null;
+}
+
+// Galaxy exposes the file-name text parameters in the same order as their data
+// inputs. Pair by ordinal within the case (works both for [data,data,name,name]
+// and the interleaved [data,name,data,name] layouts), never by text proximity.
+function nearestNameParam(entries, index) {
+  const dataIndices = entries.map((entry, position) => (isData(entry.input) ? position : -1))
+    .filter((position) => position >= 0);
+  const ordinal = dataIndices.indexOf(index);
+  if (ordinal < 0) return null;
+  const nameEntries = entries.filter((entry) => !isData(entry.input) && /name/.test(entry.text));
+  return nameEntries[ordinal] ? { entry: nameEntries[ordinal], position: ordinal } : null;
+}
+
 function applySchemaValue(inputs, raw, full) {
   const item = raw && typeof raw === "object" ? raw : {};
   const name = String(item.name ?? "");
@@ -243,23 +268,54 @@ export function buildImportPayload(schema, matched, { readsId, barcodesId, reads
   }
   const entries = [];
   collectCaseInputs(matched.caseEntry.inputs, matched.prefix, entries);
-  const dataInputs = entries.filter((entry) => isData(entry.input)).map((entry) => ({ ...entry, role: importRoleOf(entry.input) }));
-  const reads = dataInputs.filter((entry) => entry.role === "reads");
-  const barcodes = dataInputs.filter((entry) => entry.role === "barcodes");
-  if (reads.length !== 1 || barcodes.length !== 1
-      || dataInputs.some((entry) => entry.role === "ambiguous" || entry.role === "unknown")) {
-    return { valid: false, errors: ["import_input_mapping_ambiguous"], inputs };
+  const dataIndices = entries.map((entry, index) => (isData(entry.input) ? index : -1)).filter((index) => index >= 0);
+  const failMapping = (detail) => ({ valid: false, errors: ["import_input_mapping_ambiguous"],
+    inputs, detail: detail ?? null });
+  if (dataIndices.length !== 2) {
+    return failMapping(`The live case exposes ${dataIndices.length} data inputs; exactly two are required.`);
   }
+  const mapped = dataIndices.map((index) => {
+    const nameParam = nearestNameParam(entries, index);
+    const fromName = nameParam ? nameParamEvidence(nameParam.entry) : null;
+    const fromInput = importRoleOf(entries[index].input);
+    const conflict = fromName === "conflict" || fromInput === "ambiguous";
+    const role = conflict ? "conflict"
+      : (fromName && fromName !== "conflict" ? fromName : (fromInput === "unknown" ? null : fromInput));
+    return { entry: entries[index], nameParam, fromName, fromInput, role };
+  });
+  if (mapped.some((item) => item.role === "conflict")) return failMapping("Conflicting reads/barcodes evidence in the live schema.");
+
+  const reads = mapped.filter((item) => item.role === "reads");
+  const barcodes = mapped.filter((item) => item.role === "barcodes");
+  let pairs;
+  let mappingBasis;
+  if (reads.length === 1 && barcodes.length === 1) {
+    pairs = { reads: reads[0], barcodes: barcodes[0] };
+    mappingBasis = mapped.some((item) => item.fromName && item.fromName !== "conflict")
+      ? "name_text_help" : "input_text";
+  } else if (mapped.every((item) => item.role === null)) {
+    // Exactly two genuinely indistinguishable inputs: order is the only
+    // schema-backed signal. It is recorded, never presented as a discovered name.
+    pairs = { reads: mapped[0], barcodes: mapped[1] };
+    mappingBasis = "schema_order_two_inputs";
+  } else {
+    return failMapping("The live data inputs could not be mapped unambiguously.");
+  }
+
   const datasetFields = {};
-  for (const [role, entry, id] of [["reads", reads[0], readsId], ["barcodes", barcodes[0], barcodesId]]) {
-    inputs[entry.field] = { src: "hda", id: String(id ?? "") };
-    datasetFields[role] = entry.field;
+  for (const [role, id] of [["reads", readsId], ["barcodes", barcodesId]]) {
+    const field = pairs[role].entry.field;
+    inputs[field] = { src: "hda", id: String(id ?? "") };
+    datasetFields[role] = field;
   }
   for (const entry of entries) {
     if (isData(entry.input)) continue;
     let value = valueOf(entry.input.value) ?? valueOf(entry.input.default_value);
     if (/name/.test(entry.text)) {
-      if (/barcode/.test(entry.text)) value = barcodesName;
+      const paired = mapped.find((item) => item.nameParam?.entry === entry);
+      if (paired && paired === pairs.barcodes) value = barcodesName;
+      else if (paired && paired === pairs.reads) value = readsName;
+      else if (/barcode/.test(entry.text)) value = barcodesName;
       else if (/sequenc|reads/.test(entry.text)) value = readsName;
     }
     if (value !== undefined && value !== null && String(value) !== "") inputs[entry.field] = value;
@@ -268,8 +324,47 @@ export function buildImportPayload(schema, matched, { readsId, barcodesId, reads
   return { valid: true, errors: [], inputs, dataset_fields: datasetFields, selector: formatSelector.name,
     selectors: matched.selectors.map((entry) => ({ ...entry })),
     format_value: matched.formatValue,
+    mapping_basis: mappingBasis,
+    mapping: { reads: pairs.reads.entry.field, barcodes: pairs.barcodes.entry.field },
+    mapping_evidence: mapped.map((item) => ({ field: item.entry.field, from_name_param: item.fromName,
+      from_input: item.fromInput, resolved_role: item.role })),
     applied: matched.selectors.map((entry) => ({ name: entry.name, value: entry.value,
       basis: "live_schema_format_case" })) };
+}
+
+/**
+ * Read-only provenance view of the chosen live import case. Returns metadata
+ * ONLY: names, model classes, extensions and bounded help/label text. No
+ * credentials, dataset content, history data or provider responses are exposed.
+ */
+export function describeImportCase(schema, matched) {
+  if (!matched) {
+    return { available: false,
+      reason: `The live import schema does not expose the ${EMP_SINGLE_FORMAT} format case; no value was invented.`,
+      tool_id: String(schema?.tool_id ?? null), version: null };
+  }
+  const entries = [];
+  collectCaseInputs(matched.caseEntry.inputs, matched.prefix, entries);
+  const preview = (value) => String(value ?? "").slice(0, 300);
+  const inputs = entries.map((entry) => {
+    const nameParam = nearestNameParam(entries, entries.indexOf(entry));
+    return {
+      name: String(entry.input.name ?? ""),
+      model_class: String(entry.input.model_class ?? ""),
+      extensions: (Array.isArray(entry.input.extensions) ? entry.input.extensions : []).slice(0, 20).map((ext) => String(ext)),
+      help: preview(entry.input.help),
+      label: preview(entry.input.label),
+      name_param_evidence: isData(entry.input) && nameParam ? nameParamEvidence(nameParam.entry) : null
+    };
+  });
+  return {
+    available: true,
+    tool_id: String(schema?.tool_id ?? matched.tool_id ?? null),
+    discovered_format_value: matched.formatValue,
+    selector_path: matched.selectors.map((entry) => ({ name: entry.name, value: entry.value })),
+    inputs,
+    basis: "live_io_details_schema"
+  };
 }
 
 export { RAW_EXT, TABLE_EXT, FASTA_EXT, QZA_EXT, EMP_SINGLE_FORMAT };
