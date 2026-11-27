@@ -1111,6 +1111,51 @@ export async function handleImportSchema(request, env, options = {}) {
   }
 }
 
+// ------------------------------------------- /submission-failures (GET)
+
+const SUBMISSION_FAILURE_FIELDS = Object.freeze([
+  "step_id", "at", "tool_id", "tool_version", "field_names", "http_status",
+  "error_code", "error_message", "upstream_excerpt", "basis"
+]);
+
+// Read-only diagnostic. Every value is re-scrubbed and re-capped through the
+// SAME allowlist used when the failure was recorded; nothing is fetched live.
+export async function handleSubmissionFailures(request, env, options = {}) {
+  const rejected = requireMethod(request, "GET", "GET, OPTIONS");
+  if (rejected) return rejected;
+  const db = getDb(env);
+  if (!db) return errorResponse("AI database binding is unavailable.", 503, request);
+  const row = await getRunByReference(db, request);
+  if (!row) return errorResponse("No stored microbiome run matches this reference.", 404, request);
+  const state = parseJson(row.state_json);
+  if (!state) return errorResponse("The stored run has no state record.", 409, request);
+  const failures = (state.submission_failures ?? []).map((entry) => {
+    const out = {};
+    for (const key of SUBMISSION_FAILURE_FIELDS) {
+      if (entry && Object.hasOwn(entry, key) && entry[key] !== null) out[key] = entry[key];
+    }
+    for (const key of ["step_id", "tool_id", "tool_version", "error_code", "error_message",
+      "upstream_excerpt", "basis"]) {
+      if (typeof out[key] === "string") {
+        out[key] = scrubDiagnosticText(out[key], env).slice(0, key === "upstream_excerpt" ? 600 : 300);
+      }
+    }
+    if (Array.isArray(out.field_names)) {
+      out.field_names = out.field_names.slice(0, 50)
+        .map((name) => scrubDiagnosticText(name, env).slice(0, 200));
+    }
+    if (Object.hasOwn(out, "http_status")) out.http_status = Number(out.http_status) || null;
+    return out;
+  });
+  return jsonResponse({
+    workflow_type: "microbiome", run_id: state.run_id ?? row.public_id,
+    submission_failures: failures,
+    basis: "sanitized_failed_submission_request_summary",
+    note: "Allowlisted field names and bounded redacted provider error excerpts only; no payload values or credentials.",
+    execution_mode: envExecutionMode(env)
+  }, 200, request);
+}
+
 // ------------------------------------------------------- /resume-stages
 
 // A pre-submission failure reason may be retried after genuine discovery is
@@ -1143,8 +1188,8 @@ export async function handleResumeStages(request, env, options = {}) {
   if (state.status !== "failed") return refuse("status_not_failed", `The stored run status is ${state.status}, not failed.`);
   if (Number(state.retry_count ?? -1) !== 1) return refuse("retry_count_not_one",
     "Only a run resumed by exactly one bounded upload retry may resume stages.");
-  if (Number(state.stage_resume_count ?? 0) >= 7) return refuse("stage_resume_limit_reached",
-    "This run has reached the cap of seven bounded stage resumes.");
+  if (Number(state.stage_resume_count ?? 0) >= 8) return refuse("stage_resume_limit_reached",
+    "This run has reached the cap of eight bounded stage resumes.");
   if ((state.steps?.import_reads?.status ?? null) !== "succeeded") {
     return refuse("import_reads_not_succeeded", "The original upload import is not recorded as succeeded.");
   }
@@ -1852,6 +1897,10 @@ function recordSubmissionFailure(state, env, stepId, tool, payload, result, thro
     http_status: Number(error?.status) || null,
     error_code: safeString(error?.code, 80) || null,
     error_message: scrubDiagnosticText(error?.message ?? "", env).slice(0, 300),
+    // Allowlisted only: a bounded, redacted excerpt of the provider's own
+    // error text. Never the full response body, payload values or credentials.
+    upstream_excerpt: error?.upstream_excerpt
+      ? scrubDiagnosticText(error.upstream_excerpt, env).slice(0, 600) : null,
     basis: "sanitized_failed_submission_request_summary"
   };
   state.submission_failures = [...(state.submission_failures ?? []), entry].slice(-MAX_SUBMISSION_FAILURES);
@@ -2539,6 +2588,7 @@ export function microbiomeHandlers() {
       { fetchImpl: context.env?.FETCH_IMPL }),
     microbiomeImportSchema: (context) => handleImportSchema(context.request, context.env,
       { fetchImpl: context.env?.FETCH_IMPL }),
+    microbiomeSubmissionFailures: (context) => handleSubmissionFailures(context.request, context.env, {}),
     microbiomeStatus: (context) => handleStatus(context.request, context.env, {}),
     microbiomeResult: (context) => handleResult(context.request, context.env)
   };

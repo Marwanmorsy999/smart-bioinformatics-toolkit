@@ -377,9 +377,9 @@ test("RETRY / two failures cap further copies and never submit demux", async () 
   });
 });
 
-test("RESUME / eighth pre-job attempt is capped after the seventh", async () => {
+test("RESUME / ninth pre-job attempt is capped after the eighth", async () => {
   const live = state({
-    status: "failed", stage_resume_count: 7, retry_count: 1, current_step: "demux",
+    status: "failed", stage_resume_count: 8, retry_count: 1, current_step: "demux",
     import: { status: "succeeded", provider_job_id: IMPORT_JOB, output_dataset_id: ORIGINAL_QZA },
     steps: { import_reads: { status: "succeeded", provider_job_id: "uploadjob00000001" },
       demux: { status: "failed", reason: "demux submission failed: HTTP 400", provider_job_id: null } }

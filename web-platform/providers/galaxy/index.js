@@ -146,7 +146,8 @@ export function createAdapter(env = {}, deps = {}) {
       timeoutMs: Number(ctx?.timeoutMs) > 0 ? Number(ctx.timeoutMs) : defaultTimeout,
       signal: ctx?.signal ?? null,
       attempts: extra.attempts ?? 3,
-      sleep: ctx?.sleep ?? null
+      sleep: ctx?.sleep ?? null,
+      env: { GALAXY_API_KEY: apiKey }
     });
     return { body: parsed, response, attempts };
   }
@@ -166,7 +167,8 @@ export function createAdapter(env = {}, deps = {}) {
       timeoutMs: Number(ctx?.timeoutMs) > 0 ? Number(ctx.timeoutMs) : defaultTimeout,
       signal: ctx?.signal ?? null,
       attempts: 2,
-      sleep: ctx?.sleep ?? null
+      sleep: ctx?.sleep ?? null,
+      env: { GALAXY_API_KEY: apiKey }
     });
     return { body: parsed, response, attempts };
   }
