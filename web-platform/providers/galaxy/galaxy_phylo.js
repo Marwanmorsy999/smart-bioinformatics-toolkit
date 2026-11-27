@@ -14,6 +14,18 @@ function matchesAny(haystack, needles) {
 }
 export function findToolById(tools, criteria = {}) {
   const list = asArray(tools);
+  // Exact full names are tried IN ORDER when supplied. `strictExact` means a
+  // miss is an honest null: loose substring matching may never pull in an
+  // unrelated tool (e.g. cutadapt demux-paired for emp-single).
+  const exactNames = (criteria.exactNames ?? []).map(toLower).filter(Boolean);
+  if (exactNames.length) {
+    const normalized = list.map(asObject);
+    for (const wanted of exactNames) {
+      const found = normalized.find((tool) => toLower(tool.name ?? tool.label) === wanted);
+      if (found) return found;
+    }
+    if (criteria.strictExact === true) return null;
+  }
   const nameIncludes = (criteria.nameIncludes ?? []).map(toLower).filter(Boolean);
   const descriptionIncludes = (criteria.descriptionIncludes ?? []).map(toLower).filter(Boolean);
   const versionIncludes = (criteria.versionIncludes ?? []).map(toLower).filter(Boolean);
