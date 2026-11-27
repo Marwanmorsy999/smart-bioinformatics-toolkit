@@ -184,7 +184,7 @@ function datasetIdsIn(entry) {
     .map((value) => String(value.id));
 }
 
-async function driveToCompletion(stub, env, runId, limit = 30) {
+async function driveToCompletion(stub, env, runId, limit = 60) {
   let last = null;
   for (let index = 0; index < limit; index += 1) {
     last = await handleStatus(makeGetRequest(`/api/ai/workflows/microbiome/status?run_id=${runId}`), env,
