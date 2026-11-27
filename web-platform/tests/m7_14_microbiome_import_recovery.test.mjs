@@ -279,7 +279,7 @@ test("RESUME / an import preparation job id on demux is not a scientific stage",
   state.status = "failed";
   state.retry_count = 1;
   state.stage_resume_count = 2;
-  state.steps.demux = { status: "unavailable", reason: "qza_import_output_missing", provider_job_id: IMPORT_JOB };
+  state.steps.demux = { status: "failed", reason: "qza_import_output_missing", provider_job_id: IMPORT_JOB };
   const stub = makeStub();
   const { db, state: d1 } = seededDb(state);
   await withStub(stub, async () => {
