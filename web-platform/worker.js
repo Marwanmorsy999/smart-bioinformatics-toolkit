@@ -24,6 +24,7 @@ import { onRequest as onMicrobiomeImportSchema } from "./functions/api/ai/workfl
 import { onRequest as onMicrobiomeImportJob } from "./functions/api/ai/workflows/microbiome/import-job.js";
 import { onRequest as onMicrobiomeStatus } from "./functions/api/ai/workflows/microbiome/status.js";
 import { onRequest as onMicrobiomeResult } from "./functions/api/ai/workflows/microbiome/result.js";
+import { onRequest as onMicrobiomeSubmissionFailures } from "./functions/api/ai/workflows/microbiome/submission-failures.js";
 import {
   proteinHandlers as createProteinHandlers
 } from "./functions/api/protein/workflow.js";
@@ -100,6 +101,7 @@ export const handlers = {
   microbiomeImportJob: onMicrobiomeImportJob,
   microbiomeStatus: onMicrobiomeStatus,
   microbiomeResult: onMicrobiomeResult,
+  microbiomeSubmissionFailures: onMicrobiomeSubmissionFailures,
   proteinPlan: PROTEIN_HANDLERS.proteinPlan,
   proteinAnnotate: PROTEIN_HANDLERS.proteinAnnotate,
   proteinStatus: PROTEIN_HANDLERS.proteinStatus,
@@ -227,6 +229,7 @@ const ROUTES = [
   { key: "microbiomeImportJob", re: /^\/api\/ai\/workflows\/microbiome\/import-job\/?$/, names: [] },
   { key: "microbiomeStatus", re: /^\/api\/ai\/workflows\/microbiome\/status\/?$/, names: [] },
   { key: "microbiomeResult", re: /^\/api\/ai\/workflows\/microbiome\/result\/?$/, names: [] },
+  { key: "microbiomeSubmissionFailures", re: /^\/api\/ai\/workflows\/microbiome\/submission-failures\/?$/, names: [] },
   { key: "phyloTool", re: /^\/api\/ai\/workflows\/phylo\/tool\/?$/, names: [] },
   { key: "phyloStatus", re: /^\/api\/ai\/workflows\/phylo\/status\/?$/, names: [] },
   { key: "phyloRun", re: /^\/api\/ai\/workflows\/phylo\/run\/?$/, names: [] },

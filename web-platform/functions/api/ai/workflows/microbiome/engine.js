@@ -2595,6 +2595,70 @@ export async function handleResult(request, env) {
     recovery_url: `/api/ai/runs/${row.public_id}/recovery` }, 200, request);
 }
 
+// ------------------------------------------ /submission-failures (GET)
+
+// Read-only diagnostic: surface ONLY the bounded, sanitized summaries already
+// persisted by recordSubmissionFailure in state.submission_failures. It makes
+// no provider call, submits nothing, mutates no state and creates no run. Each
+// entry is re-checked against a strict allowlist and re-scrubbed at this
+// boundary, so a future state shape cannot leak a credential, a payload value
+// or a raw provider body through this view.
+function submissionFailureView(entry, env) {
+  const field = (value, cap = 200) => importDiagnosticField(value, env, cap);
+  const rawStatus = entry?.http_status;
+  return {
+    step_id: field(entry?.step_id, 80),
+    at: field(entry?.at, 80),
+    tool_id: field(entry?.tool_id, 300),
+    tool_version: field(entry?.tool_version, 100),
+    field_names: (Array.isArray(entry?.field_names) ? entry.field_names : [])
+      .slice(0, 50).map((name) => field(name, 200)),
+    http_status: rawStatus === null || rawStatus === undefined ? null
+      : (Number.isFinite(Number(rawStatus)) ? Number(rawStatus) : null),
+    error_code: field(entry?.error_code, 80),
+    error_message: field(entry?.error_message, 300),
+    basis: field(entry?.basis, 120)
+  };
+}
+
+export async function handleSubmissionFailures(request, env) {
+  try {
+    const rejected = requireMethod(request, "GET", "GET, OPTIONS");
+    if (rejected) return rejected;
+    const db = getDb(env);
+    if (!db) return errorResponse("AI database binding is unavailable.", 503, request);
+    let runId;
+    try {
+      runId = safeString(new URL(request.url).searchParams.get("run_id"), 100);
+    } catch {
+      return errorResponse("Invalid request URL.", 400, request);
+    }
+    if (!runId) {
+      return jsonResponse({ workflow_type: "microbiome", run_id: null, available: false,
+        reason: "run_id was not supplied.", execution_mode: envExecutionMode(env) }, 400, request);
+    }
+    const row = await getRow(db, SQL.getMicrobiomeRunByPublicId, [runId]);
+    if (!row) return errorResponse("No stored microbiome run matches this run_id.", 404, request);
+    const state = parseJson(row.state_json);
+    if (!state) return errorResponse("The stored run has no state record; nothing was reconstructed.", 409, request);
+    if (state.workflow_type !== "microbiome") {
+      return errorResponse("The referenced run is not a microbiome workflow.", 400, request);
+    }
+    const stored = Array.isArray(state.submission_failures) ? state.submission_failures : [];
+    const failures = stored.slice(-MAX_SUBMISSION_FAILURES).map((entry) => submissionFailureView(entry, env));
+    if (failures.length === 0) {
+      return jsonResponse({ workflow_type: "microbiome", run_id: row.public_id, available: false,
+        reason: "No failed provider submissions were recorded for this run.",
+        submission_failures: [], execution_mode: envExecutionMode(env) }, 200, request);
+    }
+    return jsonResponse({ workflow_type: "microbiome", run_id: row.public_id, available: true,
+      submission_failures: failures, execution_mode: envExecutionMode(env) }, 200, request);
+  } catch (caught) {
+    return jsonResponse({ workflow_type: "microbiome", available: false,
+      error: "submission_failures_handler_failed", detail: sanitizedErrorDetail(caught, env) }, 500, request);
+  }
+}
+
 export function microbiomeHandlers() {
   return {
     microbiomePlan: (context) => handlePlan(context.request, context.env, {}),
@@ -2609,6 +2673,7 @@ export function microbiomeHandlers() {
     microbiomeImportJob: (context) => handleImportJob(context.request, context.env,
       { fetchImpl: context.env?.FETCH_IMPL }),
     microbiomeStatus: (context) => handleStatus(context.request, context.env, {}),
-    microbiomeResult: (context) => handleResult(context.request, context.env)
+    microbiomeResult: (context) => handleResult(context.request, context.env),
+    microbiomeSubmissionFailures: (context) => handleSubmissionFailures(context.request, context.env)
   };
 }
