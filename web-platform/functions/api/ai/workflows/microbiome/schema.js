@@ -16,8 +16,13 @@ function extensionMatch(parameter, role) {
   const exts = (Array.isArray(parameter.extensions) ? parameter.extensions : [])
     .map((ext) => String(ext).toLowerCase().replace(/^\./, ""));
   if (!exts.length) return true; // an untyped data parameter is a candidate
+  // A QIIME 2 artifact role is qza-first, but historical wrappers describe the
+  // same data parameter with fastq/fasta/table extensions. It stays a generic
+  // dataset role so verified live schemas keep working; hints below decide
+  // which of several artifact datasets belongs in which field.
   const wanted = role === "table" ? TABLE_EXT : role === "fasta" ? FASTA_EXT
-    : (role === "artifact" || role === "classifier") ? QZA_EXT : RAW_EXT;
+    : role === "classifier" ? QZA_EXT
+      : role === "artifact" ? [...QZA_EXT, ...RAW_EXT, ...FASTA_EXT, ...TABLE_EXT] : RAW_EXT;
   return exts.some((ext) => wanted.includes(ext) || wanted.some((wantedExt) => ext.includes(wantedExt)));
 }
 
@@ -59,7 +64,13 @@ export function buildMicrobiomePayload(schema, datasets = [], overrides = {}) {
   const appliedOverrides = [];
   const pending = datasets
     .filter((entry) => entry && /^[0-9a-f]+$/i.test(String(entry.id ?? "")))
-    .map((entry) => ({ id: String(entry.id), role: String(entry.role ?? "reads"), name: String(entry.name ?? ""), placed: false }));
+    .map((entry) => ({ id: String(entry.id), role: String(entry.role ?? "reads"),
+      key: String(entry.key ?? entry.role ?? "reads"), name: String(entry.name ?? ""),
+      hint: entry.hint ? String(entry.hint) : null, placed: false }));
+  const hintMatches = (entry, text) => {
+    if (!entry.hint) return false;
+    try { return new RegExp(entry.hint, "i").test(text); } catch { return false; }
+  };
 
   (function walk(inputsList, prefix, depth) {
     if (depth > 8) return;
@@ -81,10 +92,17 @@ export function buildMicrobiomePayload(schema, datasets = [], overrides = {}) {
       }
       if (kind === "Repeat") { walk(item.inputs, `${full}_0|`, depth + 1); continue; }
       if (kind.includes("DataToolParameter")) {
-        const candidate = pending.find((entry) => !entry.placed && extensionMatch(item, entry.role));
+        const text = `${full} ${item.help ?? ""} ${item.label ?? ""} ${item.description ?? ""}`.toLowerCase();
+        // A hinted artifact (e.g. classifier vs representative sequences) is
+        // preferred for its own field; fall back only to unhinted candidates
+        // so two qza datasets cannot be silently swapped.
+        const candidate = pending.find((entry) => !entry.placed && entry.hint
+          && extensionMatch(item, entry.role) && hintMatches(entry, text))
+          ?? pending.find((entry) => !entry.placed && !entry.hint && extensionMatch(item, entry.role))
+          ?? pending.find((entry) => !entry.placed && extensionMatch(item, entry.role));
         if (candidate) {
           inputs[full] = { src: "hda", id: candidate.id };
-          datasetFields[candidate.role] = full;
+          datasetFields[candidate.key] = full;
           candidate.placed = true;
         } else {
           // Only verified defaults may be applied to an unmatched data input.
