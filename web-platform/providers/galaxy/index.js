@@ -1020,6 +1020,29 @@ export function createAdapter(env = {}, deps = {}) {
       });
     },
 
+    // READ-ONLY tool search for the diagnostic endpoint. One GET /api/tools?q=
+    // through the configured key; only identity fields leave this boundary.
+    async searchTools(request = {}, ctx = {}) {
+      const args = normalizeCallArgs(request, ctx);
+      request = args.request;
+      ctx = args.ctx;
+      const at = makeNow(ctx);
+      const empty = { provider: PROVIDER, tools: [], ok: false, at };
+      if (!enabled || !configured) return { ...empty, reason: availability() };
+      const query = safeString(request?.query, 120).trim();
+      if (!query) return { ...empty, reason: "query_required" };
+      try {
+        const { body } = await call("GET", `/api/tools?q=${encodeURIComponent(query)}&limit=50`, undefined, ctx);
+        const tools = flattenToolPanel(body).map(normalizeTool)
+          .filter((tool) => tool.id && tool.available)
+          .slice(0, 50)
+          .map((tool) => ({ id: tool.id, name: tool.name, version: tool.version ?? null }));
+        return { provider: PROVIDER, tools, ok: true, at };
+      } catch (error) {
+        return { ...empty, error: normalizeProviderError(PROVIDER, error, { at }) };
+      }
+    },
+
     // Bounded URL import into the caller's EXISTING history. Off the advertised
     // operation list: it is a platform primitive, not a scientific capability.
     async importUrlIntoHistory(request = {}, ctx = {}) {
