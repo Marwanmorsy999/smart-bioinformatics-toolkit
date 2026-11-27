@@ -2341,13 +2341,30 @@ async function prepareClassifier(adapter, env, db, row, state, ctx, options = {}
     return finish();
   }
   if (matched.verified) {
-    prep.status = "reused";
-    prep.source = "read_only_inventory_reuse";
     prep.dataset_id = matched.verified.dataset_id;
     prep.history_id = matched.verified.history_id;
     prep.job_id = null;
     prep.computed_sha256 = matched.verified.checksum_exposed;
+    // Same identity rule as the advance path: checksum AND byte size must both
+    // come from the provider and match the official descriptor.
+    const size = verifiedClassifierSize(inventory.datasets, matched.verified);
+    if (!Number.isFinite(size)) {
+      prep.status = "unavailable";
+      prep.usable = false;
+      prep.reason = `size_not_exposed: provider did not report a byte size for dataset ${prep.dataset_id}; no classifier was claimed verified`;
+      return finish();
+    }
+    if (size !== descriptor.expected_bytes) {
+      prep.status = "unavailable";
+      prep.usable = false;
+      prep.reason = `size_mismatch: provider reported ${size} bytes; expected ${descriptor.expected_bytes} bytes; no classifier was claimed verified`;
+      return finish();
+    }
+    prep.status = "reused";
+    prep.source = "read_only_inventory_reuse";
     prep.usable = true;
+    prep.verified_size = size;
+    prep.size_status = "verified";
     prep.reason = null;
     return finish();
   }
@@ -3458,10 +3475,25 @@ function normalizeProviderChecksum(value) {
   return safeString(value, 200).replace(/^sha256\$/i, "").trim().toLowerCase() || null;
 }
 
+// The provider's byte size is a second identity check. inspectClassifierInventory
+// only knows checksums, so supplement its verified candidate with the size the
+// provider actually reported. A missing size is NEVER treated as a match.
+function verifiedClassifierSize(datasets, verified) {
+  const source = (datasets ?? []).find((item) =>
+    String(item?.id ?? item?.dataset_id) === String(verified?.dataset_id));
+  const raw = source?.size ?? source?.file_size ?? null;
+  return Number.isFinite(raw) ? raw : null;
+}
+
 function classifierFromArtifacts(artifacts, state, descriptor) {
-  const inventory = { ok: artifacts?.ok !== false,
-    datasets: (artifacts?.artifacts ?? []).map((item) => ({ ...item, checksum: item.checksum ?? null })) };
-  return inspectClassifierInventory(inventory, state.history_id, descriptor);
+  const datasets = (artifacts?.artifacts ?? []).map((item) => ({ ...item, checksum: item.checksum ?? null }));
+  const inventory = { ok: artifacts?.ok !== false, datasets };
+  const result = inspectClassifierInventory(inventory, state.history_id, descriptor);
+  if (result.verified) {
+    result.verified = { ...result.verified,
+      size: verifiedClassifierSize(datasets, result.verified) };
+  }
+  return result;
 }
 
 function verifyClassifierDetail(detail, descriptor, expectedHistoryId) {
@@ -3473,7 +3505,11 @@ function verifyClassifierDetail(detail, descriptor, expectedHistoryId) {
     return { ok: false, checksum,
       reason: `checksum_mismatch: provider reported ${checksum}; expected ${normalizeProviderChecksum(descriptor.expected_sha256)}; no classifier was claimed verified` };
   }
-  if (Number.isFinite(detail.size) && detail.size !== descriptor.expected_bytes) {
+  if (!Number.isFinite(detail.size)) {
+    return { ok: false, checksum,
+      reason: `size_not_exposed: provider did not report a byte size for dataset ${detail.dataset_id}; no classifier was claimed verified` };
+  }
+  if (detail.size !== descriptor.expected_bytes) {
     return { ok: false, checksum,
       reason: `size_mismatch: provider reported ${detail.size} bytes; expected ${descriptor.expected_bytes} bytes; no classifier was claimed verified` };
   }
@@ -3481,8 +3517,7 @@ function verifyClassifierDetail(detail, descriptor, expectedHistoryId) {
     return { ok: false, checksum,
       reason: `different_history: provider reported history ${detail.history_id}; run history ${expectedHistoryId}; no classifier was claimed verified` };
   }
-  return { ok: true, checksum, size: detail.size ?? null,
-    size_status: Number.isFinite(detail.size) ? "verified" : "not_exposed",
+  return { ok: true, checksum, size: detail.size, size_status: "verified",
     state: detail.state ?? null };
 }
 
@@ -3602,12 +3637,27 @@ async function runAdvanceOperation(operation, adapter, db, row, state, env, ctx,
     fresh.inventory_match = { verified: Boolean(matched.verified), candidates: matched.candidates,
       basis: matched.basis, reason: matched.reason };
     if (matched.verified) {
-      fresh.status = "reused";
-      fresh.source = "read_only_inventory_reuse";
       fresh.dataset_id = matched.verified.dataset_id;
       fresh.history_id = matched.verified.history_id ?? state.history_id;
       fresh.computed_sha256 = matched.verified.checksum_exposed;
+      const size = matched.verified.size;
+      if (!Number.isFinite(size)) {
+        fresh.status = "unavailable";
+        fresh.usable = false;
+        fresh.reason = `size_not_exposed: provider did not report a byte size for dataset ${fresh.dataset_id}; no classifier was claimed verified`;
+        return setCursor(state, "submit_stage");
+      }
+      if (size !== descriptor.expected_bytes) {
+        fresh.status = "unavailable";
+        fresh.usable = false;
+        fresh.reason = `size_mismatch: provider reported ${size} bytes; expected ${descriptor.expected_bytes} bytes; no classifier was claimed verified`;
+        return setCursor(state, "submit_stage");
+      }
+      fresh.status = "reused";
+      fresh.source = "read_only_inventory_reuse";
       fresh.usable = true;
+      fresh.verified_size = size;
+      fresh.size_status = "verified";
       fresh.reason = null;
       return setCursor(state, "submit_stage");
     }

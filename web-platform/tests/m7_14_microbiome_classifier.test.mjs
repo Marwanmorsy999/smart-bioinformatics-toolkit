@@ -263,7 +263,8 @@ test("PROVENANCE / official descriptor is exact and names no other SILVA release
 
 test("INVENTORY REUSE / verified qza is reused with no URL fetch and no upload", async () => {
   const dataset = { id: CLASSIFIER_DS, name: DESCRIPTOR.filename, extension: "qza", state: "ok",
-    history_id: HISTORY, checksum: `sha256$${DESCRIPTOR.expected_sha256}` };
+    history_id: HISTORY, checksum: `sha256$${DESCRIPTOR.expected_sha256}`,
+    file_size: DESCRIPTOR.expected_bytes };
   const stub = makeStub({ inventoryDatasets: [dataset] });
   const { env, d1 } = seededEnv(stateAtTaxonomy(), stub);
   await status(env, stub);

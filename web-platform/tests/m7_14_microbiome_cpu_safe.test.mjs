@@ -111,7 +111,9 @@ function makeStub(options = {}) {
       state: "ok", history_id: HISTORY, creating_job: "some-other-job" }] : []),
     ...(options.noClassifier ? [] : [{ id: CLASSIFIER_DS, name: QIIME_CLASSIFIER.filename,
       extension: "qza", state: "ok", history_id: HISTORY,
-      checksum: `sha256$${QIIME_CLASSIFIER.expected_sha256}`, file_size: QIIME_CLASSIFIER.expected_bytes }]),
+      checksum: `sha256$${QIIME_CLASSIFIER.expected_sha256}`,
+      ...(options.classifierSize === null ? {}
+        : { file_size: options.classifierSize ?? QIIME_CLASSIFIER.expected_bytes }) }]),
     { id: TABLE_TEXT_DS, name: "exported-table.biom", extension: "biom", state: "ok", history_id: HISTORY }
   ];
   const fetchImpl = async (input, init = {}) => {
@@ -144,7 +146,8 @@ function makeStub(options = {}) {
       if (options.noChecksum) return json({ id: requestedId, name: QIIME_CLASSIFIER.filename,
         state: "ok", size: QIIME_CLASSIFIER.expected_bytes, history_id: owner, checksums: [] });
       return json({ id: requestedId, name: QIIME_CLASSIFIER.filename, state: "ok",
-        file_size: QIIME_CLASSIFIER.expected_bytes, extension: "qza", semantic_type: "FeatureData[Sequence]",
+        ...(options.noSize ? {} : { file_size: options.detailSize ?? QIIME_CLASSIFIER.expected_bytes }),
+        extension: "qza", semantic_type: "FeatureData[Sequence]",
         checksums: [{ hash_function: "sha256", checksum: QIIME_CLASSIFIER.expected_sha256 }],
         history_id: owner, creating_job: "url-job-0001" });
     }
@@ -318,6 +321,57 @@ test("ADVANCE / classifier_verify marks usable only for a matching provider chec
   assert.equal(storedPrep.usable, true);
   assert.equal(storedPrep.computed_sha256, QIIME_CLASSIFIER.expected_sha256);
   assert.equal(storedPrep.size_status, "verified");
+});
+
+test("ADVANCE / matching SHA-256 with NO reported size keeps classifier unusable; taxonomy is not submitted", async () => {
+  const prep = { ...QIIME_CLASSIFIER, status: "uploaded", usable: false, dataset_id: CLASSIFIER_DS };
+  const s = state({ advance_op: "classifier_verify", classifier_prep: prep, steps: {
+    ...state().steps, taxonomy: {} } });
+  const { db, d1 } = seed(s);
+  const stub = makeStub({ noSize: true });
+  const env = envFor(db, stub.fetchImpl);
+  const body = await (await advance(db, env, stub.fetchImpl)).json();
+  assert.equal(body.next_operation, "submit_stage");
+  const storedPrep = stored(d1).classifier_prep;
+  assert.equal(storedPrep.status, "unavailable");
+  assert.equal(storedPrep.usable, false);
+  assert.equal(storedPrep.computed_sha256, QIIME_CLASSIFIER.expected_sha256,
+    "the checksum DID match; size is the failing identity check");
+  assert.match(storedPrep.reason, /^size_not_exposed: provider did not report a byte size for dataset /);
+  // The next advance runs submit_stage with no usable classifier and no live
+  // option, so taxonomy must be refused rather than submitted.
+  await advance(db, env, stub.fetchImpl);
+  assert.equal(stored(d1).steps.taxonomy.status, "unavailable");
+  assert.equal(stub.posts().length, 0, "no classifier or taxonomy job was submitted");
+});
+
+test("ADVANCE / matching SHA-256 with a MISMATCHED size keeps classifier unusable", async () => {
+  const prep = { ...QIIME_CLASSIFIER, status: "uploaded", usable: false, dataset_id: CLASSIFIER_DS };
+  const s = state({ advance_op: "classifier_verify", classifier_prep: prep });
+  const { db, d1 } = seed(s);
+  const stub = makeStub({ detailSize: QIIME_CLASSIFIER.expected_bytes - 1 });
+  await advance(db, envFor(db, stub.fetchImpl), stub.fetchImpl);
+  const storedPrep = stored(d1).classifier_prep;
+  assert.equal(storedPrep.usable, false);
+  assert.match(storedPrep.reason, /^size_mismatch: provider reported \d+ bytes; expected 218245868 bytes/);
+});
+
+test("ADVANCE / inventory reuse with a WRONG size is refused; taxonomy is not submitted", async () => {
+  const s = state({ advance_op: "classifier_inventory", steps: { ...state().steps, taxonomy: {} } });
+  const { db, d1 } = seed(s);
+  const stub = makeStub({ classifierSize: QIIME_CLASSIFIER.expected_bytes + 1 });
+  const env = envFor(db, stub.fetchImpl);
+  const body = await (await advance(db, env, stub.fetchImpl)).json();
+  assert.equal(body.next_operation, "submit_stage");
+  const storedPrep = stored(d1).classifier_prep;
+  assert.equal(storedPrep.status, "unavailable");
+  assert.equal(storedPrep.usable, false);
+  assert.equal(storedPrep.dataset_id, CLASSIFIER_DS);
+  assert.equal(storedPrep.computed_sha256, QIIME_CLASSIFIER.expected_sha256);
+  assert.match(storedPrep.reason, /^size_mismatch: provider reported \d+ bytes; expected 218245868 bytes/);
+  await advance(db, env, stub.fetchImpl);
+  assert.equal(stored(d1).steps.taxonomy.status, "unavailable");
+  assert.equal(stub.posts().length, 0, "no taxonomy submission without a verified classifier");
 });
 
 test("REGRESSION / intendedExportKind routes the real DADA2 ': table.qza' name", () => {
