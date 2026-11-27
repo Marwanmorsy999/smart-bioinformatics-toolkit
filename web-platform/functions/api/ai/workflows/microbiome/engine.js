@@ -58,7 +58,9 @@ export const LIMITS = Object.freeze({
 
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 function ctxFor(env, options = {}) {
-  return { fetch: options.fetchImpl ?? env?.FETCH_IMPL ?? globalThis.fetch };
+  return { fetch: options.fetchImpl ?? env?.FETCH_IMPL ?? globalThis.fetch,
+    // Injectable so offline retries never wait on real provider backoff.
+    sleep: options.sleep ?? null };
 }
 
 // -------------------------------------------------------------- input bytes
@@ -602,7 +604,9 @@ export async function handleRun(request, env, options = {}) {
       : { raw: inspection.rawQc, observed_quality: inspection.truncation.observed },
     dataset_ids: { sequences: null, barcodes: null, metadata: null },
     filenames: { reads: resolved.reads_filename, barcodes: resolved.barcodes_filename, metadata: resolved.metadata_filename },
-    frontier: {}, steps: {}, results: {}, artifacts: [], errors: [], poll_count: 0
+    frontier: {}, steps: {}, results: {}, artifacts: [], errors: [], poll_count: 0,
+    // Bounded qza text-export phase: provenance per source dataset and in-flight jobs.
+    exports: {}, pending_exports: []
   };
 
   try {
@@ -677,6 +681,320 @@ export async function handleRun(request, env, options = {}) {
     deduped: false, execution_mode: envExecutionMode(env) }, state.status === "failed" ? 502 : 202, request);
 }
 
+// ------------------------------------------------------------------ /retry
+//
+// One bounded recovery for a run that failed ONLY during the initial upload.
+// It never creates a new run, never submits an analysis job, and never uploads
+// twice. A read-only Galaxy inventory runs first so an upload that actually
+// landed can be reused instead of duplicated.
+
+const RETRY_SOURCE_KEY = "moving-pictures-2026.10";
+const RETRY_FILENAMES = Object.freeze({
+  reads: "sequences.fastq.gz", barcodes: "barcodes.fastq.gz", metadata: "sample-metadata.tsv"
+});
+const RETRY_ROLE_BY_FILENAME = Object.freeze({
+  [RETRY_FILENAMES.reads]: "sequences", [RETRY_FILENAMES.barcodes]: "barcodes",
+  [RETRY_FILENAMES.metadata]: "metadata"
+});
+const REQUEST_ID_HEADERS = Object.freeze(["x-request-id", "x-amzn-requestid", "cf-ray"]);
+
+function errorText(error) {
+  if (typeof error === "string") return error;
+  try { return JSON.stringify(error) ?? ""; } catch { return String(error); }
+}
+
+function headerRequestId(headers) {
+  for (const name of REQUEST_ID_HEADERS) {
+    const value = headers?.get?.(name) ?? null;
+    if (value) return safeString(value, 200);
+  }
+  return "";
+}
+
+function requestIdOf(error, captured = {}) {
+  const direct = error?.request_id ?? error?.requestId ?? null;
+  const fromHeaders = headerRequestId(error?.headers) || headerRequestId(error?.response?.headers);
+  return safeString(direct || fromHeaders || captured.request_id || "", 200) || null;
+}
+
+function normalizeChecksum(value) {
+  return safeString(value, 200).replace(/^sha256\$/i, "").trim().toLowerCase() || null;
+}
+
+// Capture the real upstream HTTP status / request id from the exact fetch the
+// adapter performs. No key, URL or body is captured or logged.
+function captureFetch(baseFetch, captured) {
+  return async (...args) => {
+    const response = await baseFetch(...args);
+    if (response && response.ok === false) {
+      captured.status = Number(response.status) || captured.status;
+      captured.request_id = headerRequestId(response.headers) || captured.request_id;
+    }
+    return response;
+  };
+}
+
+export async function handleRetry(request, env, options = {}) {
+  const rejected = requireMethod(request, "POST", "POST, OPTIONS");
+  if (rejected) return rejected;
+  const { payload, error } = await readJsonBody(request);
+  if (error) return errorResponse(error, 400, request);
+  const db = getDb(env);
+  if (!db) return errorResponse("AI database binding is unavailable.", 503, request);
+
+  const runId = safeString(payload?.run_id, 100);
+  let currentRetryCount = null;
+  const refuse = (reason, detail, extra = {}) => jsonResponse({
+    workflow_type: "microbiome", run_id: runId || null, retried: false,
+    reason, error: `retry_refused: ${reason}`, detail,
+    retry_count: currentRetryCount, execution_mode: envExecutionMode(env), ...extra
+  }, 409, request);
+
+  if (!runId) return refuse("run_missing", "run_id was not supplied.");
+  const row = await getRow(db, SQL.getMicrobiomeRunByPublicId, [runId]);
+  if (!row) return refuse("run_missing", "No stored run matches this run_id.");
+  const state = parseJson(row.state_json);
+  if (!state) return refuse("state_missing", "The stored run has no state record.");
+  if (state.workflow_type !== "microbiome") return refuse("not_microbiome_run", "The referenced run is not a microbiome workflow.");
+  // Single-use is checked first: even a recovered (running) run must report the
+  // exhausted retry rather than a merely unexpected status.
+  const retryCount = Number(state.retry_count ?? 0) || 0;
+  currentRetryCount = retryCount;
+  if (retryCount >= 1) return refuse("retry_limit_reached", "This run has already used its single bounded retry.", { retry_count: retryCount });
+  if (state.status !== "failed") return refuse("status_not_failed", `The stored run status is ${state.status}, not failed.`);
+  if (!(state.errors ?? []).some((entry) => errorText(entry).includes("upload_failed"))) {
+    return refuse("not_upload_failure", "The recorded failure is not an upload failure (no upload_failed error was stored).");
+  }
+  const jobSteps = Object.entries(state.steps ?? {})
+    .filter(([, step]) => Boolean(safeString(step?.provider_job_id, 200)))
+    .map(([stepId]) => stepId);
+  if (jobSteps.length) return refuse("provider_job_exists", `Steps already hold provider job ids: ${jobSteps.join(", ")}.`);
+  if (safeString(state.history_id, 200)) return refuse("history_id_present", "The failed run already has a Galaxy history id; its state is not upload-only.");
+  if ((state.artifacts ?? []).length) return refuse("artifacts_present", "The failed run already has retrieved artifacts.");
+
+  // The only resumable input is the original verified public dataset. Identity
+  // is proven by the exact three URLs, three SHA-256 checksums, three filenames
+  // and the stored hashes. `input.public_dataset` is OPTIONAL context: handleRun
+  // never stores it, so its absence must not block a genuine run, while a key
+  // that IS present must name the same original dataset.
+  const descriptor = PUBLIC_DATASETS[RETRY_SOURCE_KEY];
+  const input = state.input ?? {};
+  const source = input.source ?? {};
+  const checksums = source.checksums ?? {};
+  const urls = source.urls ?? {};
+  const filenames = state.filenames ?? input.filenames ?? {};
+  const declaredKey = safeString(input.public_dataset, 80);
+  const sourceMatches = Boolean(descriptor) && input.mode === "public"
+    && (!declaredKey || declaredKey === RETRY_SOURCE_KEY)
+    && urls.metadata === descriptor.metadata_url && urls.reads === descriptor.reads_url
+    && urls.barcodes === descriptor.barcodes_url
+    && checksums.metadata_sha256 === descriptor.expected_metadata_sha256
+    && checksums.reads_sha256 === descriptor.expected_reads_sha256
+    && checksums.barcodes_sha256 === descriptor.expected_barcodes_sha256
+    && filenames.reads === RETRY_FILENAMES.reads && filenames.barcodes === RETRY_FILENAMES.barcodes
+    && filenames.metadata === RETRY_FILENAMES.metadata;
+  if (!sourceMatches) return refuse("not_original_public_source",
+    "The stored input is not the verified public Moving Pictures source with its original filenames and checksums.");
+  const expectedInputSha = await hashInput(`${descriptor.expected_reads_sha256}:${descriptor.expected_barcodes_sha256}`);
+  if (state.input_sha256 !== expectedInputSha || state.metadata_sha256 !== descriptor.expected_metadata_sha256) {
+    return refuse("input_hash_mismatch", "The stored input/metadata hashes do not match the verified public source checksums.");
+  }
+
+  // READ-ONLY inventory before ANY upload. Without a readable inventory we
+  // cannot prove an upload did not already land, so we refuse instead of
+  // creating a duplicate.
+  const ctx = ctxFor(env, options);
+  const adapter = createAdapter(env);
+  const inventory = await adapter.inventoryDatasets({}, ctx);
+  state.inventory_scan = {
+    at: nowIso(), ok: Boolean(inventory.ok), histories: inventory.histories ?? [],
+    datasets_found: (inventory.datasets ?? []).length,
+    reason: inventory.reason ?? null, error: inventory.error ?? null
+  };
+  if (!inventory.ok) {
+    state.upload_retry = { at: nowIso(), outcome: "inventory_unavailable",
+      http_status_or_error: errorText(inventory.error) || "galaxy_inventory_unavailable",
+      request_id_if_supplied: requestIdOf(inventory.error) };
+    state.errors.push("upload_retry_blocked: Galaxy inventory was unreadable; no upload was attempted.");
+    await persistState(db, row, state);
+    return jsonResponse({ workflow_type: "microbiome", run_id: row.public_id, retried: false,
+      reason: "inventory_unavailable",
+      error: "Galaxy dataset inventory could not be read; no upload was attempted.",
+      detail: inventory.error ?? null, upload_retry: state.upload_retry,
+      execution_mode: envExecutionMode(env) }, 409, request);
+  }
+
+  const expectedByRole = { sequences: checksums.reads_sha256, barcodes: checksums.barcodes_sha256,
+    metadata: checksums.metadata_sha256 };
+  const roles = Object.keys(expectedByRole);
+  const matchedByHistory = new Map();
+  const issues = [];
+  for (const dataset of inventory.datasets ?? []) {
+    const role = RETRY_ROLE_BY_FILENAME[dataset.name];
+    if (!role) continue;
+    const historyId = safeString(dataset.history_id, 200) || null;
+    const exposed = normalizeChecksum(dataset.checksum);
+    const checksumStatus = exposed === null ? "not_exposed" : exposed === expectedByRole[role] ? "verified" : "mismatch";
+    const common = { name: dataset.name, dataset_id: dataset.id, history_id: historyId,
+      state: dataset.state, checksum_status: checksumStatus };
+    if (!["ok", "success"].includes(String(dataset.state ?? "").toLowerCase())) {
+      issues.push({ ...common, reason: "dataset_not_ready" });
+      continue;
+    }
+    if (checksumStatus === "mismatch") {
+      issues.push({ ...common, reason: "checksum_mismatch" });
+      continue;
+    }
+    const found = matchedByHistory.get(historyId) ?? {};
+    if (found[role] && found[role].dataset_id !== dataset.id) {
+      issues.push({ ...common, reason: "ambiguous_duplicate" });
+      continue;
+    }
+    found[role] = { dataset_id: dataset.id, history_id: historyId, name: dataset.name,
+      checksum_status: checksumStatus, checksum_exposed: exposed };
+    matchedByHistory.set(historyId, found);
+  }
+  const complete = [...matchedByHistory.entries()].filter(([, found]) => roles.every((role) => Boolean(found[role])));
+
+  const finish = async (provenance, note) => {
+    let discoveryError = null;
+    try {
+      const discovery = await discover(env, ctx);
+      state.discovery = { tools: discovery.toolVersions, classifier: discovery.classifier,
+        discovery_mode: discovery.discoveryMode, discovered_at: discovery.discoveredAt };
+    } catch (caught) {
+      discoveryError = safeString(caught?.message ?? caught, 500) || String(caught);
+      state.errors.push(`discovery_refresh_failed: ${discoveryError}`);
+    }
+    // Remove ONLY the original upload failure; every other recorded error stays.
+    state.errors = (state.errors ?? []).filter((entry) => !errorText(entry).includes("upload_failed"));
+    const importStatus = provenance === "reuse_existing_upload" ? "succeeded" : "running";
+    state.steps.import_reads = { ...(state.steps.import_reads ?? {}), status: importStatus,
+      provenance, note, upload_retry_at: nowIso(),
+      finished_at: importStatus === "succeeded" ? nowIso() : null,
+      dataset_ids: importStatus === "succeeded" ? { ...state.dataset_ids } : null };
+    state.status = "running";
+    state.current_step = "import_reads";
+    state.retry_count = retryCount + 1;
+    try {
+      await recordStep(db, state, "import_reads", importStatus, {
+        providerJobId: state.steps.import_reads.provider_job_id ?? null,
+        details: { provenance, note, tool_id: state.steps.import_reads.tool_id ?? null }
+      });
+    } catch (caught) {
+      state.errors.push(`import_read_job_record_failed: ${safeString(caught?.message ?? caught, 300)}`);
+    }
+    await persistState(db, row, state);
+    await audit(db, { actor: "microbiome-worker", action: "microbiome_upload_retry", target: row.public_id,
+      detail: { provenance, retry_count: state.retry_count, history_id: state.history_id }, timestamp: nowIso() });
+    return jsonResponse({
+      workflow_type: "microbiome", run_id: row.public_id, status: state.status,
+      current_step: state.current_step, retried: true, retry_count: state.retry_count,
+      recovery_path: provenance, history_id: state.history_id, dataset_ids: state.dataset_ids,
+      upload_retry: state.upload_retry, tool_versions: state.discovery.tools,
+      classifier: state.discovery.classifier, discovery_mode: state.discovery.discovery_mode,
+      discovered_at: state.discovery.discovered_at, discovery_error: discoveryError,
+      status_url: `/api/ai/workflows/microbiome/status?run_id=${encodeURIComponent(row.public_id)}`,
+      result_url: `/api/ai/workflows/microbiome/result?run_id=${encodeURIComponent(row.public_id)}`,
+      recovery_url: `/api/ai/runs/${encodeURIComponent(row.public_id)}/recovery`,
+      poll_after_ms: LIMITS.pollAfterMs, execution_mode: envExecutionMode(env)
+    }, 202, request);
+  };
+
+  if (complete.length === 1) {
+    const reused = complete[0][1];
+    state.dataset_ids = Object.fromEntries(roles.map((role) => [role, reused[role]?.dataset_id ?? null]));
+    state.history_id = reused.sequences?.history_id ?? reused.barcodes?.history_id ?? reused.metadata?.history_id ?? null;
+    const note = "reuse_existing_upload: all three original input datasets were already present in Galaxy with matching source checksums; no upload was attempted.";
+    state.upload_retry = { at: nowIso(), outcome: "reuse_existing_upload", http_status_or_error: null,
+      request_id_if_supplied: null, reused_datasets: state.dataset_ids, history_id: state.history_id };
+    return finish("reuse_existing_upload", note);
+  }
+
+  if (complete.length > 1 || matchedByHistory.size || issues.length) {
+    const visible = [...matchedByHistory.entries()].map(([historyId, found]) => ({ history_id: historyId,
+      matched_roles: Object.keys(found), missing_roles: roles.filter((role) => !found[role]) }));
+    const outcome = complete.length > 1 ? "ambiguous_existing_upload" : "partial_existing_upload";
+    state.upload_retry = { at: nowIso(), outcome, http_status_or_error: outcome,
+      request_id_if_supplied: null, matched: visible, issues,
+      note: "Partial or ambiguous Galaxy inventory; no upload was attempted and no dataset was guessed." };
+    state.errors.push(`upload_retry_blocked: ${outcome}; no upload was attempted.`);
+    await persistState(db, row, state);
+    return jsonResponse({ workflow_type: "microbiome", run_id: row.public_id, retried: false,
+      reason: outcome, error: `retry_refused: ${outcome}`,
+      detail: state.upload_retry, upload_retry: state.upload_retry,
+      execution_mode: envExecutionMode(env) }, 409, request);
+  }
+
+  // No datasets exist: re-fetch the SAME verified bytes and perform exactly ONE
+  // upload with the same three-file payload as the original run.
+  // Production always uses the verified public resolver. The optional seam lets
+  // offline tests inject the same three-file payload without touching the network.
+  const resolveRetriedInputs = options.resolvePublicImpl
+    ?? ((source, fetchImpl) => resolvePublicDataset({ ...source, key: RETRY_SOURCE_KEY }, fetchImpl, { sampleBytes: 0 }));
+  let resolved;
+  try {
+    resolved = await resolveRetriedInputs(descriptor, ctx.fetch);
+  } catch (caught) {
+    const message = safeString(caught?.message ?? caught, 500) || String(caught);
+    state.upload_retry = { at: nowIso(), outcome: "input_refetch_failed", http_status_or_error: message,
+      request_id_if_supplied: null };
+    state.errors.push(`upload_retry_failed: ${message}`);
+    state.retry_count = retryCount + 1;
+    await persistState(db, row, state);
+    return jsonResponse({ workflow_type: "microbiome", run_id: row.public_id, retried: false,
+      reason: "input_refetch_failed", error: message, upload_retry: state.upload_retry,
+      retry_count: state.retry_count, execution_mode: envExecutionMode(env) }, 502, request);
+  }
+
+  const captured = { status: null, request_id: null };
+  const uploadCtx = { ...ctx, fetch: captureFetch(ctx.fetch, captured) };
+  let upload;
+  try {
+    upload = await adapter.submitJob({
+      operation: "submit_job", tool_id: "upload1",
+      inputs: {
+        [resolved.reads_filename]: { filename: resolved.reads_filename, extension: "fastq.gz",
+          content: new Blob([resolved.reads_bytes], { type: "application/gzip" }) },
+        [resolved.barcodes_filename]: { filename: resolved.barcodes_filename, extension: "fastq.gz",
+          content: new Blob([resolved.barcodes_bytes], { type: "application/gzip" }) },
+        [resolved.metadata_filename]: { filename: resolved.metadata_filename, extension: "tsv",
+          content: resolved.metadata_text }
+      }
+    }, uploadCtx);
+  } catch (caught) {
+    upload = { error: { status: caught?.status ?? captured.status, code: caught?.code ?? null,
+      message: safeString(caught?.message ?? caught, 500) || String(caught) } };
+  }
+
+  if (upload.error) {
+    const upstream = upload.error;
+    const status = Number(upstream.status ?? captured.status ?? 0) || 0;
+    const code = safeString(upstream.code, 120);
+    const message = safeString(upstream.message, 500) || code || "Galaxy upload failed";
+    const codeDetail = code && code !== `http_${status}` ? ` (${code})` : "";
+    const reported = status ? `HTTP ${status}: ${message}${codeDetail}` : `${message}${codeDetail}`;
+    state.upload_retry = { at: nowIso(), outcome: "upload_failed", http_status_or_error: reported,
+      request_id_if_supplied: requestIdOf(upstream, captured), error_status: status || null,
+      error_code: code || null, error_message: message };
+    state.errors.push(`upload_retry_failed: ${reported}`);
+    state.retry_count = retryCount + 1;
+    state.status = "failed";
+    await persistState(db, row, state);
+    return jsonResponse({ workflow_type: "microbiome", run_id: row.public_id, retried: false,
+      reason: "upload_failed", error: reported, upload_retry: state.upload_retry,
+      retry_count: state.retry_count, execution_mode: envExecutionMode(env) }, 502, request);
+  }
+
+  state.history_id = upload.output?.structured?.history_id ?? null;
+  state.steps.import_reads = { status: "running", provider_job_id: upload.provider_job_id ?? null,
+    output_ids: upload.output?.structured?.outputs ?? [], tool_id: "upload1",
+    retried_at: nowIso() };
+  state.upload_retry = { at: nowIso(), outcome: "upload_succeeded", http_status_or_error: null,
+    request_id_if_supplied: captured.request_id ?? null };
+  return finish("upload_retry", "upload_retry: the single bounded re-upload succeeded; no analysis stage has run yet.");
+}
+
 // ----------------------------------------------------------------- /status
 
 async function finalizeImport(adapter, state, ctx) {
@@ -728,7 +1046,8 @@ async function collectDenoise(state, collected, downloaded) {
   const { parsed: table } = bestParsed(downloaded.artifacts, "feature_table");
   const { parsed: repSeqs } = bestParsed(downloaded.artifacts, "rep_seqs");
   const denoiseStats = bestParsed(downloaded.artifacts, "qc");
-  state.frontier.featureTable = table.available ? downloaded.artifacts.find((artifact) => artifact.kind === "feature_table")?.id ?? null : null;
+  // Single canonical key: rolesFor() reads featureTableId for alpha/beta/pcoa.
+  state.frontier.featureTableId = table.available ? downloaded.artifacts.find((artifact) => artifact.kind === "feature_table")?.id ?? null : null;
   state.frontier.repSeqsId = repSeqs.available ? downloaded.artifacts.find((artifact) => artifact.kind === "rep_seqs")?.id ?? null : null;
   state.results.asv = {
     available: table.available,
@@ -745,12 +1064,137 @@ async function collectDenoise(state, collected, downloaded) {
   return { table, repSeqs };
 }
 
-async function finalizeStage(adapter, env, db, row, state, stepId, jobId, ctx) {
+// ---------------------------------------------------------- qza text export
+//
+// Several real QIIME 2 2026.1 tools return .qza (binary) datasets. They cannot
+// be parsed by /get_content_as_text, so a genuinely DISCOVERED export tool must
+// derive text first. This is a derivation of an already-executed tool output,
+// never a new scientific analysis. No tool id, parameter or release is invented.
+
+const EXPORTABLE_KINDS = Object.freeze([
+  "feature_table", "rep_seqs", "taxonomy", "alpha", "distance_matrix", "pcoa", "qc"
+]);
+const EXPORT_KINDS_BY_STEP = Object.freeze({
+  demux: ["qc"], qc_summary: ["qc"], dada2_denoise: ["feature_table", "rep_seqs", "qc"],
+  taxonomy: ["taxonomy"], alpha_diversity: ["alpha"], beta_diversity: ["distance_matrix"], pcoa: ["pcoa"]
+});
+const MAX_EXPORTS_PER_STAGE = 3;
+
+// Infer the intended artifact kind from the provider's own output name. This is
+// a routing hint for the export only; the parsed result still comes from real
+// exported text, never from the name itself.
+function intendedExportKind(name) {
+  const text = String(name ?? "").toLowerCase().replace(/\.qza$/, "");
+  if (/feature.?table|(?:^|_)table$|^table$/.test(text)) return "feature_table";
+  if (/rep(?:resentative)?[_-]?seq|repseq/.test(text)) return "rep_seqs";
+  if (/taxonomy|classif/.test(text)) return "taxonomy";
+  if (/(?:^|_)alpha|alpha[_-]/.test(text)) return "alpha";
+  if (/distance|bray|jaccard|unifrac/.test(text)) return "distance_matrix";
+  if (/pcoa|ordination|emperor|coordinates/.test(text)) return "pcoa";
+  if (/stats|summary|quality|(?:^|_)qc(?:_|$)/.test(text)) return "qc";
+  return null;
+}
+
+function exportFailure(state, stepId, reason, datasetId = null) {
+  state.errors.push({ step: stepId, reason, ...(datasetId ? { dataset_id: datasetId } : {}) });
+}
+
+async function submitNeededExports(adapter, env, state, stepId, jobId, collected, ctx) {
+  const needed = EXPORT_KINDS_BY_STEP[stepId] ?? [];
+  const present = new Set(collected.selected.map((artifact) => artifact.kind));
+  const missing = needed.filter((kind) => !present.has(kind) && EXPORTABLE_KINDS.includes(kind));
+  if (!missing.length) return [];
+  const alreadyExported = new Set(Object.keys(state.exports ?? {}));
+  const candidates = [];
+  for (const artifact of collected.selected) {
+    if (artifact.kind !== "qza_artifact" || alreadyExported.has(String(artifact.id))) continue;
+    const kind = intendedExportKind(artifact.name);
+    if (!kind || !missing.includes(kind)) continue;
+    if (candidates.some((candidate) => candidate.kind === kind)) continue;
+    candidates.push({ kind, artifact });
+    if (candidates.length >= MAX_EXPORTS_PER_STAGE) break;
+  }
+  if (!candidates.length) return [];
+
+  const tool = state.discovery?.tools?.exportTool;
+  if (!tool?.id) {
+    exportFailure(state, stepId, "qza_export_unavailable: no genuine export tool was discovered; no tool id was invented.");
+    return [];
+  }
+  const submitted = [];
+  for (const { kind, artifact } of candidates) {
+    try {
+      const schema = await fetchToolSchema(env, tool.id, tool.version);
+      const payload = buildMicrobiomePayload(schema, [{ id: artifact.id, role: "artifact" }], {});
+      if (!payload.valid) {
+        exportFailure(state, stepId, `qza_export_payload_invalid: ${payload.errors.join(", ")}`, artifact.id);
+        continue;
+      }
+      const result = await adapter.submitJob({ operation: "submit_job", tool_id: tool.id, inputs: payload.inputs }, ctx);
+      if (result.error) {
+        exportFailure(state, stepId, `qza_export_submission_failed: ${result.error.message ?? result.error.code}`, artifact.id);
+        continue;
+      }
+      const entry = {
+        step_id: stepId, source_job_id: jobId, source_dataset_id: artifact.id, expected_kind: kind,
+        provider_job_id: result.provider_job_id ?? null, tool_id: tool.id, tool_version: tool.version ?? null,
+        submitted_at: nowIso()
+      };
+      submitted.push(entry);
+      state.exports = { ...(state.exports ?? {}), [String(artifact.id)]: { ...entry, status: "running" } };
+    } catch (caught) {
+      exportFailure(state, stepId, `qza_export_failed: ${caught?.message ?? caught}`, artifact.id);
+    }
+  }
+  return submitted;
+}
+
+async function pollPendingExports(adapter, state, stepId, ctx) {
+  const entries = (state.pending_exports ?? []).filter((entry) => entry.step_id === stepId);
+  if (!entries.length) return { done: true, artifacts: [], errors: [] };
+  const artifacts = [];
+  const errors = [];
+  for (const entry of entries) {
+    const datasetKey = String(entry.source_dataset_id);
+    if (!entry.provider_job_id) {
+      exportFailure(state, stepId, "qza_export_job_id_missing", entry.source_dataset_id);
+      if (state.exports?.[datasetKey]) state.exports[datasetKey].status = "failed";
+      continue;
+    }
+    const status = await adapter.getJobStatus({ job_id: entry.provider_job_id }, ctx);
+    const observed = status.output?.structured?.state ?? status.status;
+    const classified = classifyJobState(observed);
+    if (classified === "running" || classified === "unknown") return { done: false, artifacts: [], errors: [] };
+    if (classified === "failed") {
+      exportFailure(state, stepId, `qza_export_job_failed: provider job ${entry.provider_job_id} ended in state ${observed}`, entry.source_dataset_id);
+      if (state.exports?.[datasetKey]) state.exports[datasetKey].status = "failed";
+      continue;
+    }
+    const collected = await collectOutputs(adapter, entry.provider_job_id, state.history_id, ctx);
+    const downloaded = await downloadSelected(adapter, collected.selected, stepId, ctx,
+      { toolVersion: entry.tool_version });
+    for (const artifact of downloaded.artifacts) {
+      artifacts.push({ ...artifact, kind: entry.expected_kind, export_of: entry.source_dataset_id,
+        export_tool_id: entry.tool_id, export_tool_version: entry.tool_version });
+    }
+    for (const error of downloaded.errors) errors.push({ step: stepId, ...error, export_of: entry.source_dataset_id });
+    if (state.exports?.[datasetKey]) {
+      state.exports[datasetKey] = { ...state.exports[datasetKey], status: "succeeded",
+        exported_dataset_ids: downloaded.artifacts.map((artifact) => artifact.id) };
+    }
+  }
+  state.pending_exports = (state.pending_exports ?? []).filter((entry) => entry.step_id !== stepId);
+  return { done: true, artifacts, errors };
+}
+
+async function finalizeStage(adapter, env, db, row, state, stepId, jobId, ctx, options = {}) {
   const toolMeta = state.steps[stepId]?.tool_id ? { id: state.steps[stepId].tool_id, version: state.steps[stepId].tool_version } : null;
   let collected = { selected: [], errors: [] };
   let downloaded = { artifacts: [], errors: [] };
-  if (jobId) {
-    collected = await collectOutputs(adapter, jobId, state.history_id, ctx);
+  if (options.prefetched) {
+    downloaded = { artifacts: options.prefetched, errors: options.prefetchedErrors ?? [] };
+  } else if (jobId) {
+    collected = options.collected ?? await collectOutputs(adapter, jobId, state.history_id, ctx);
     downloaded = await downloadSelected(adapter, collected.selected, stepId, ctx, { toolVersion: toolMeta?.version ?? null });
   }
   for (const artifact of downloaded.artifacts) {
@@ -789,9 +1233,15 @@ async function finalizeStage(adapter, env, db, row, state, stepId, jobId, ctx) {
     state.results.pcoa = pcoa.parsed.available ? pcoa.parsed : computePcoa(state.results.beta);
     if (pcoa.artifact) state.frontier.pcoaId = pcoa.artifact.id;
   }
+  const exportProvenance = downloaded.artifacts.filter((artifact) => artifact.export_of).map((artifact) => ({
+    source_dataset_id: artifact.export_of, exported_dataset_id: artifact.id, kind: artifact.kind,
+    tool_id: artifact.export_tool_id ?? null, tool_version: artifact.export_tool_version ?? null,
+    basis: "derived_from_executed_tool_output"
+  }));
   state.steps[stepId] = { ...(state.steps[stepId] ?? {}), status: "succeeded", finished_at: nowIso(),
     output_artifacts: downloaded.artifacts.map((artifact) => ({ name: artifact.name, kind: artifact.kind,
-      dataset_id: artifact.id, checksum: artifact.checksum })) };
+      dataset_id: artifact.id, checksum: artifact.checksum })),
+    ...(exportProvenance.length ? { exports: exportProvenance } : {}) };
   await recordStep(db, state, stepId, "succeeded", { details: state.steps[stepId] });
 }
 
@@ -1009,7 +1459,31 @@ async function advanceOneStage(db, row, state, env, ctx) {
       await recordStep(db, state, stepId, "failed", { details: { reason: state.errors.at(-1).reason } });
       return;
     }
-    await finalizeStage(adapter, env, db, row, state, stepId, step.provider_job_id, ctx);
+
+    // Export jobs already in flight belong to this stage. Poll them before
+    // finalizing; the original job's outputs are re-collected (read-only) for
+    // merging with the exported text.
+    if ((state.pending_exports ?? []).some((entry) => entry.step_id === stepId)) {
+      const pending = await pollPendingExports(adapter, state, stepId, ctx);
+      if (!pending.done) return;
+      const original = await collectOutputs(adapter, step.provider_job_id, state.history_id, ctx);
+      const originalDownloaded = await downloadSelected(adapter, original.selected, stepId, ctx,
+        { toolVersion: state.steps[stepId]?.tool_version ?? null });
+      await finalizeStage(adapter, env, db, row, state, stepId, step.provider_job_id, ctx, {
+        prefetched: [...originalDownloaded.artifacts, ...pending.artifacts],
+        prefetchedErrors: [...originalDownloaded.errors, ...pending.errors]
+      });
+      return;
+    }
+
+    const collected = await collectOutputs(adapter, step.provider_job_id, state.history_id, ctx);
+    const submitted = await submitNeededExports(adapter, env, state, stepId, step.provider_job_id, collected, ctx);
+    if (submitted.length) {
+      state.pending_exports = [...(state.pending_exports ?? []), ...submitted];
+      await persistState(db, row, state);
+      return; // bounded: later polls finish the exports before finalizing
+    }
+    await finalizeStage(adapter, env, db, row, state, stepId, step.provider_job_id, ctx, { collected });
     return;
   }
 
@@ -1110,6 +1584,7 @@ export function microbiomeHandlers() {
   return {
     microbiomePlan: (context) => handlePlan(context.request, context.env, {}),
     microbiomeRun: (context) => handleRun(context.request, context.env, {}),
+    microbiomeRetry: (context) => handleRetry(context.request, context.env, { fetchImpl: context.env?.FETCH_IMPL }),
     microbiomeStatus: (context) => handleStatus(context.request, context.env, {}),
     microbiomeResult: (context) => handleResult(context.request, context.env)
   };
