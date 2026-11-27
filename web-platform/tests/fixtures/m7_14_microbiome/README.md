@@ -3,7 +3,9 @@
 All files in this directory are **tiny labelled subsets** created only to test
 parsers. They reproduce the SHAPE of official Moving Pictures 2026.10 outputs;
 they are NOT the real tutorial result and must never be presented as a real
-analysis. The live demonstration uses the verified official files:
+analysis. In particular `sample-metadata-q2-types.tsv` reproduces the QIIME 2
+`#q2:types` directive row and 34 sample rows with synthetic barcode strings.
+The live demonstration uses the verified official files:
 
 - `sample-metadata.tsv` (34 samples, 2,096 B, SHA-256 `245f8e389ddf3dd05a95d870d214de918a06d03c5ce17750860446e09f9a7cc6`)
 - `emp-single-end-sequences.zip` (29,096,655 B, SHA-256 `992740724f9a8000e5d81bc23a6c2bb74e4aed4cc3542768a220a36bae22d373`)

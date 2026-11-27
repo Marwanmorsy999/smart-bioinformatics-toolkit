@@ -135,11 +135,21 @@ export function chooseTruncation(qualityByPosition, { maxLength = null, dropAfte
 
 export function parseMetadataTsv(text) {
   const source = norm(text);
-  const rows = source.split("\n").filter((line) => line.trim());
+  // QIIME 2 metadata files may carry directive rows such as
+  // `#q2:types\tcategorical\tcategorical...` between the header and the data.
+  // They are metadata instructions, never samples. Keep the ORIGINAL line
+  // number with each row so reported errors still point at the right line.
+  const rows = [];
+  source.split("\n").forEach((line, index) => {
+    if (!line.trim()) return;
+    const firstCell = splitDelimited(line)[0]?.trim() ?? "";
+    if (firstCell.startsWith("#")) return;
+    rows.push({ text: line, row: index + 1 });
+  });
   if (!rows.length) {
     return { valid: false, columns: [], samples: [], errors: ["metadata is empty"], duplicates: [], invalid: [] };
   }
-  const header = splitDelimited(rows[0]);
+  const header = splitDelimited(rows[0].text);
   const sampleIndex = headerIndex(header, ["sample-id", "sample id", "sampleid", "sample_id"]);
   const barcodeIndex = headerIndex(header, ["barcode-sequence", "barcode sequence", "barcode"]);
   const errors = [];
@@ -149,18 +159,19 @@ export function parseMetadataTsv(text) {
   const duplicates = [];
   const invalid = [];
   for (let offset = 1; offset < rows.length; offset += 1) {
-    const cells = splitDelimited(rows[offset]);
+    const { text: rowText, row } = rows[offset];
+    const cells = splitDelimited(rowText);
     const sampleId = sampleIndex >= 0 ? clean(cells[sampleIndex], 200) : "";
     const barcode = barcodeIndex >= 0 ? clean(cells[barcodeIndex], 200) : "";
     if (!sampleId || !/^[A-Za-z0-9._-]+$/.test(sampleId)) {
-      invalid.push({ row: offset + 1, sample_id: sampleId || null, reason: "missing_or_invalid_sample_id" });
+      invalid.push({ row, sample_id: sampleId || null, reason: "missing_or_invalid_sample_id" });
       continue;
     }
     if (seen.has(sampleId)) {
-      duplicates.push({ row: offset + 1, sample_id: sampleId, first_row: seen.get(sampleId) });
+      duplicates.push({ row, sample_id: sampleId, first_row: seen.get(sampleId) });
       continue;
     }
-    seen.set(sampleId, offset + 1);
+    seen.set(sampleId, row);
     const record = { sample_id: sampleId, barcode_sequence: barcode || null };
     header.forEach((column, index) => {
       if (index === sampleIndex) return;

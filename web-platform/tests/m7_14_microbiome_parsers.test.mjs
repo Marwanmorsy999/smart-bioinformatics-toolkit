@@ -65,6 +65,32 @@ test("FIXTURE: metadata parser reports missing, duplicate and invalid sample ids
   assert.match(noColumn.errors.join(" "), /no sample-id column/);
 });
 
+test("FIXTURE: QIIME 2 #q2:types directive is skipped and 34 samples parse", () => {
+  const source = fixture("sample-metadata-q2-types.tsv");
+  assert.match(source, /^sample-id\tbarcode-sequence/m);
+  assert.match(source, /^#q2:types\tcategorical/m);
+  const metadata = parseMetadataTsv(source);
+  assert.equal(metadata.valid, true);
+  assert.equal(metadata.invalid.length, 0);
+  assert.equal(metadata.duplicates.length, 0);
+  assert.equal(metadata.samples.length, 34);
+  assert.equal(metadata.sample_ids.length, 34);
+  assert.equal(metadata.sample_ids[0], "sample001");
+  assert.equal(metadata.sample_ids.at(-1), "sample034");
+  assert.ok(metadata.columns.includes("barcode-sequence"));
+  assert.equal(metadata.samples[0].barcode_sequence, "ACGT0001");
+  assert.equal(metadata.samples[33].barcode_sequence, "ACGT0034");
+  assert.equal(new Set(metadata.samples.map((item) => item.barcode_sequence)).size, 34);
+  // Original file line numbers are preserved: header=1, directive=2, first
+  // sample=3, last sample=36.
+  const withBadRow = parseMetadataTsv(source.replace("sample020\tACGT0020", "bad id\tACGT0020"));
+  assert.equal(withBadRow.valid, false);
+  assert.equal(withBadRow.invalid[0].row, 22);
+  // Missing/duplicate tests from the basic fixture remain intact.
+  assert.equal(parseMetadataTsv(METADATA + "sampleA\tAAA\tgut\t2026\t10\t1\tsubject-01\tno\t0\n").duplicates.length, 1);
+  assert.equal(parseMetadataTsv("sample-id\tbarcode-sequence\nsampleA\tAAA\nbad id\tBBB\n").valid, false);
+});
+
 test("FIXTURE: metadata-to-reads correspondence is strict and honest", () => {
   const { reads, barcodes, metadata } = parsed();
   const ok = validateSampleCorrespondence(metadata, reads, barcodes);
