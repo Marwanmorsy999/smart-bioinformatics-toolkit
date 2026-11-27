@@ -23,8 +23,8 @@ import {
 import { fetchToolSchema } from "../../../../../providers/galaxy/galaxy_schema.js";
 import { classifyJobState } from "../../../../../providers/galaxy/galaxy_ids.js";
 import {
-  buildImportPayload, buildMicrobiomePayload, describeImportCase, describeLiveParameters,
-  findImportFormatCase
+  buildImportPayload, buildMicrobiomePayload, describeAllImportCases, describeImportCase,
+  describeLiveParameters, findImportFormatCase
 } from "./schema.js";
 import {
   aggregateByRank, chooseTruncation, computeAlphaFromTable, computeBrayCurtis,
@@ -1034,9 +1034,16 @@ export async function handleImportSchema(request, env, options = {}) {
       tool_id: tool.id, version: tool.version ?? null }, 200, request);
   }
   const detail = describeImportCase(schema, findImportFormatCase(schema));
-  return jsonResponse({ ...detail, version: tool.version ?? null,
+  const body = { ...detail, version: tool.version ?? null,
     discovery_mode: discovery.discoveryMode, discovered_at: discovery.discoveredAt,
-    execution_mode: envExecutionMode(env) }, 200, request);
+    execution_mode: envExecutionMode(env) };
+  // Optional candidate list for independent review. The default response stays
+  // the single selected EMP directory case; this view is still GET-only and
+  // contains metadata only (no dataset ids, credentials or provider responses).
+  if (String(new URL(request.url).searchParams.get("format") ?? "").toLowerCase() === "all") {
+    body.candidates = describeAllImportCases(schema);
+  }
+  return jsonResponse(body, 200, request);
 }
 
 // ------------------------------------------------------- /resume-stages
@@ -1324,7 +1331,7 @@ async function prepareDemuxImport(adapter, env, db, row, state, ctx) {
   const matched = findImportFormatCase(importSchema);
   if (!matched) {
     await markUnavailable("qza_import_format_case_missing",
-      "The live import schema does not expose the SingleLanePerSampleSingleEndFastqDirFmt format case; no value was invented.");
+      "The live import schema does not expose the EMPSingleEndSequences + EMP Single End Directory Format EMP case; no value was invented.");
     return { handled: true };
   }
   const payload = buildImportPayload(importSchema, matched, { readsId, barcodesId, readsName, barcodesName });
@@ -1347,13 +1354,19 @@ async function prepareDemuxImport(adapter, env, db, row, state, ctx) {
   }
   state.import = {
     tool_id: importTool.id, tool_version: importTool.version ?? null,
+    tool_name: importTool.name ?? null,
     provider_job_id: submission.provider_job_id ?? null,
     source_dataset_ids: { reads: readsId, barcodes: barcodesId },
     source_filenames: { reads: readsName, barcodes: barcodesName },
-    format_value: matched.formatValue, selector: payload.selector,
-    selectors: payload.selectors ?? [],
+    format_value: matched.formatValue, type_value: payload.type_value ?? null,
+    selector: payload.selector, selectors: payload.selectors ?? [],
+    selection_basis: payload.selection_basis ?? null,
+    case_evidence: payload.case_evidence ?? null,
+    manifest_yaml_branch_excluded: matched.manifestYamlCase === false,
     mapping_basis: payload.mapping_basis ?? null, mapping: payload.mapping ?? null,
+    mapping_evidence: payload.mapping_evidence ?? null,
     dataset_fields: payload.dataset_fields, submitted_at: nowIso(), status: "running",
+    schema_source: "Galaxy io_details=true (full nested schema)",
     basis: "preparation_of_stored_inputs"
   };
   state.errors.push({ step: "demux", reason: "qza_import_submitted",
