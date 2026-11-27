@@ -590,7 +590,9 @@ function rolesFor(stepId, state) {
     case "dada2_denoise": return [{ id: state.frontier?.demuxReadsId ?? state.dataset_ids.sequences,
       role: "artifact", name: "demultiplexed reads qza" }];
     case "taxonomy": return [
-      { id: state.frontier?.repSeqsId, role: "artifact", key: "reads",
+      // The genuine rep-seqs QIIME 2 artifact is required by the live tool.
+      // A previously exported FASTA (repSeqsId) is text, not a qza input.
+      { id: state.frontier?.repSeqsQzaId ?? state.frontier?.repSeqsId, role: "artifact", key: "reads",
         name: "representative sequences qza", hint: "reads|sequences|rep|feature" },
       // The classifier is a REAL history qza prepared from the official URL.
       // Hints keep it out of the representative-sequences field.
@@ -3765,11 +3767,33 @@ function classifierFromArtifacts(artifacts, state, descriptor) {
   return result;
 }
 
-function verifyClassifierDetail(detail, descriptor, expectedHistoryId) {
+function verifyClassifierDetail(detail, descriptor, expectedHistoryId, state) {
   if (!detail?.ok) return { ok: false, reason: `dataset_detail_unavailable: ${detail?.error?.message ?? detail?.error?.code ?? "unreadable"}` };
   const checksum = normalizeProviderChecksum(detail.checksums?.sha256);
-  if (!checksum) return { ok: false, checksum: null,
-    reason: `checksum_not_exposed: provider did not report a SHA-256 for dataset ${detail.dataset_id}; no classifier was claimed verified` };
+  if (!checksum) {
+    // Honest fallback: the 218 MB artifact was streamed and SHA-256 verified
+    // OUTSIDE the Worker. Galaxy need not expose SHA-256; an MD5 it does expose
+    // can corroborate that SAME verified bytes landed in the run's history.
+    // No checksum is invented and the provider SHA-256 is never claimed.
+    const local = state?.local_classifier_verification ?? {};
+    const providerMd5 = normalizeProviderChecksum(detail.checksums?.md5);
+    const localMd5 = safeString(local.md5, 200).trim().toLowerCase() || null;
+    const localSha = normalizeProviderChecksum(local.sha256);
+    const sameHistory = Boolean(expectedHistoryId) && Boolean(detail.history_id)
+      && String(detail.history_id) === String(expectedHistoryId);
+    if (local.match === true && localSha === normalizeProviderChecksum(descriptor.expected_sha256)
+        && providerMd5 && localMd5 && providerMd5 === localMd5
+        && Number.isFinite(detail.size) && detail.size === descriptor.expected_bytes
+        && sameHistory) {
+      return { ok: true, checksum: normalizeProviderChecksum(descriptor.expected_sha256),
+        size: detail.size, size_status: "verified",
+        verification_basis: "local_sha256_plus_provider_md5_and_size",
+        provider_sha256_exposed: false, provider_md5: providerMd5,
+        state: detail.state ?? null, fallback: true };
+    }
+    return { ok: false, checksum: null,
+      reason: `checksum_not_exposed: provider did not report a SHA-256 for dataset ${detail.dataset_id}; no classifier was claimed verified` };
+  }
   if (checksum !== normalizeProviderChecksum(descriptor.expected_sha256)) {
     return { ok: false, checksum,
       reason: `checksum_mismatch: provider reported ${checksum}; expected ${normalizeProviderChecksum(descriptor.expected_sha256)}; no classifier was claimed verified` };
@@ -3787,7 +3811,8 @@ function verifyClassifierDetail(detail, descriptor, expectedHistoryId) {
       reason: `different_history: provider reported history ${detail.history_id}; run history ${expectedHistoryId}; no classifier was claimed verified` };
   }
   return { ok: true, checksum, size: detail.size, size_status: "verified",
-    state: detail.state ?? null };
+    verification_basis: "provider_sha256_and_size", provider_sha256_exposed: true,
+    provider_md5: null, state: detail.state ?? null };
 }
 
 function tableQzaOf(state) {
@@ -4138,9 +4163,10 @@ async function runAdvanceOperation(operation, adapter, db, row, state, env, ctx,
     const prep = state.classifier_prep ?? {};
     if (prep.usable === true) return setCursor(state, "submit_stage");
     if (!prep.dataset_id) return setCursor(state, "classifier_inventory");
-    // ONE dataset-detail GET. The provider's checksum is the only identity.
+    // ONE dataset-detail GET. Provider SHA-256 is preferred; a locally
+    // verified SHA-256 plus provider MD5/size is the explicit fallback.
     const detail = await adapter.getDatasetDetail({ dataset_id: prep.dataset_id }, ctx);
-    const verified = verifyClassifierDetail(detail, QIIME_CLASSIFIER, state.history_id);
+    const verified = verifyClassifierDetail(detail, QIIME_CLASSIFIER, state.history_id, state);
     if (!verified.ok) {
       state.classifier_prep = { ...prep, status: "unavailable", usable: false,
         computed_sha256: verified.checksum ?? null, detail_state: detail?.state ?? null,
@@ -4153,7 +4179,13 @@ async function runAdvanceOperation(operation, adapter, db, row, state, env, ctx,
         detail_state: detail.state ?? null, reason: `classifier_dataset_not_ready: state ${detail.state ?? "unknown"}` };
       return setCursor(state, "classifier_verify");
     }
-    state.classifier_prep = { ...prep, status: "verified", source: "provider_dataset_detail_verified",
+    state.classifier_prep = { ...prep, status: "verified",
+      source: verified.fallback ? "local_sha256_plus_provider_md5_and_size" : "provider_dataset_detail_verified",
+      verification_basis: verified.verification_basis,
+      provider_sha256_exposed: verified.provider_sha256_exposed,
+      provider_md5: verified.provider_md5 ?? null,
+      official_url: prep.official_url ?? QIIME_CLASSIFIER.url,
+      source_url: prep.official_url ?? QIIME_CLASSIFIER.url,
       usable: true, computed_sha256: verified.checksum, verified_size: verified.size,
       size_status: verified.size_status, detail_state: detail.state, checked_at: nowIso(), reason: null };
     return setCursor(state, "submit_stage");
