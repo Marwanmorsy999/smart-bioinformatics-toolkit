@@ -86,7 +86,7 @@ export function buildReportHtml({ job, plan, artifacts, validation, explanation,
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
 <meta name="referrer" content="no-referrer">
-<title>Analysis report - ${e(job?.id)}</title>
+<title>Analysis report - ${e(job?.public_id ?? job?.id)}</title>
 <style>
   body{font:15px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:#1b2d3d;background:#f4f8fa;margin:0;padding:24px}
   main{max-width:960px;margin:0 auto;background:#fff;border:1px solid #d8e3e8;border-radius:12px;padding:28px}
@@ -100,7 +100,7 @@ export function buildReportHtml({ job, plan, artifacts, validation, explanation,
 <body>
 <main>
   <h1>Smart Bioinformatics Toolkit - Analysis Report</h1>
-  <p class="note">Generated ${e(createdAt)} &middot; Job <code>${e(job?.id)}</code> &middot; Plan <code>${e(job?.plan_id)}</code></p>
+  <p class="note">Generated ${e(createdAt)} &middot; Job <code>${e(job?.public_id ?? job?.id)}</code> &middot; Plan <code>${e(job?.plan_id)}</code></p>
   <p><span class="badge${mode === "mock" ? " mock" : ""}">Execution mode: ${e(mode)}</span></p>
   <p class="note">Research use only. Outputs are screening evidence, not proof of identity and not a clinical diagnosis. Interpretation remains the user's responsibility.</p>
 

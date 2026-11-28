@@ -14,7 +14,13 @@ export const MAX_REQUEST_BODY_CHARS = 128 * 1024;
 export const MAX_RESULT_BODY_CHARS = 2 * 1024 * 1024;
 export const MIN_CONFIDENCE = 0.5;
 
-const PUBLIC_ID_PATTERN = /^(req|ds|plan|job|art|apr|run|proj|ref)_[0-9a-f]{16}$/;
+// M7 adds pcon (provider consent), pjob (provider job), xfer (transfer),
+// rsv (reservation) and gal (governor alert) identifiers. They share the same
+// random 16-hex form and are validated by the same whitelist.
+// M7.4 adds prov (provenance record) and reserves rpt for report identifiers
+// if a dedicated reports table is ever needed. Additive: previously valid ids
+// remain valid.
+const PUBLIC_ID_PATTERN = /^(req|ds|plan|job|art|apr|run|proj|ref|pcon|pjob|xfer|rsv|gal|prov|rpt)_[0-9a-f]{16}$/;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 
 // SQL is centralised so the fake D1 in tests can assert exactly what runs.
@@ -27,6 +33,9 @@ export const SQL = {
   insertApproval: "INSERT INTO approvals (public_id, plan_id, step_id, approved_by, consents_json, approved_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
   insertJob: "INSERT INTO jobs (public_id, plan_id, step_id, status, tool_id, params_json, inputs_json, consent_json, backend, agent_id, attempts, timeout_s, execution_mode, created_at, started_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   getJob: "SELECT * FROM jobs WHERE public_id = ?",
+  // M7.13: finalise the two step rows whose state was pending while an
+  // executed protein job was running.
+  updateJobByPlanStep: "UPDATE jobs SET status = ?, finished_at = ? WHERE plan_id = ? AND step_id = ?",
   listQueuedJobs: "SELECT * FROM jobs WHERE status = ? ORDER BY created_at ASC LIMIT ?",
   claimJob: "UPDATE jobs SET status = ?, agent_id = ?, started_at = ?, attempts = attempts + 1 WHERE public_id = ? AND status = ?",
   finishJob: "UPDATE jobs SET status = ?, finished_at = ? WHERE public_id = ?",
@@ -44,7 +53,48 @@ export const SQL = {
   insertReference: "INSERT INTO evidence_references (public_id, key, title, url, doi, license, verified_by, verified_at, notes, verified) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   insertReportRun: "INSERT INTO report_runs (public_id, plan_id, job_id, report_ref, explanation_ref, validation_ref, report_html, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
   getReportRun: "SELECT * FROM report_runs WHERE job_id = ?",
-  insertAudit: "INSERT INTO audit_events (public_id, actor, action, target, detail_json, timestamp) VALUES (?, ?, ?, ?, ?, ?)"
+  insertAudit: "INSERT INTO audit_events (public_id, actor, action, target, detail_json, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
+
+  // M7.4 unified workspace. Additive only; see migrations/0011_workspace.sql.
+  // Every workspace statement pins owner with an equality predicate so the
+  // metadata-driven fake D1 and real D1 enforce the same authorization filter.
+  insertWorkspaceProject: "INSERT INTO projects (public_id, name, owner, settings_json, created_at, description, scientific_objective, status, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  getWorkspaceProject: "SELECT * FROM projects WHERE public_id = ? AND owner = ?",
+  listProjectsByOwner: "SELECT * FROM projects WHERE owner = ?",
+  updateProjectMetadata: "UPDATE projects SET name = ?, description = ?, scientific_objective = ?, status = ?, updated_at = ? WHERE public_id = ? AND owner = ?",
+  setProjectStatus: "UPDATE projects SET status = ?, updated_at = ? WHERE public_id = ? AND owner = ?",
+  insertWorkspaceDataset: "INSERT INTO datasets (public_id, project_id, filename, sha256, size_bytes, mime, storage_ref, fasta_text, created_at, file_format, source, validation_state, provider_history_ref, uploaded_at, owner, is_demo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  listDatasetsForProject: "SELECT * FROM datasets WHERE project_id = ? AND owner = ?",
+  listDatasetsByOwner: "SELECT * FROM datasets WHERE owner = ?",
+  insertWorkspaceRun: "INSERT INTO workspace_runs (public_id, project_id, workflow_id, workflow_version, objective, input_datasets_json, params_json, execution_provider, execution_mode, state, created_at, completed_at, steps_json, artifact_refs_json, validation_json, provenance_json, error_json, owner, is_demo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  getWorkspaceRun: "SELECT * FROM workspace_runs WHERE public_id = ? AND owner = ?",
+  listRunsForProject: "SELECT * FROM workspace_runs WHERE project_id = ? AND owner = ?",
+  listRunsByOwner: "SELECT * FROM workspace_runs WHERE owner = ?",
+  updateWorkspaceRun: "UPDATE workspace_runs SET state = ?, completed_at = ?, steps_json = ?, artifact_refs_json = ?, validation_json = ?, provenance_json = ?, error_json = ? WHERE public_id = ? AND owner = ?",
+  insertProvenanceRecord: "INSERT INTO provenance_records (public_id, run_id, record_json, created_at, owner) VALUES (?, ?, ?, ?, ?)",
+  getProvenanceRecord: "SELECT * FROM provenance_records WHERE run_id = ? AND owner = ?",
+
+  // M7.13 protein annotation. Additive: a small index keyed by the EBI-style
+  // protein MD5 so a browser refresh returns the stored run instead of
+  // re-submitting to EBI/UniProt. The AI jobs/artifacts tables remain the
+  // source of truth for /api/ai/runs/:id and /recovery.
+  insertProteinRun: "INSERT INTO protein_runs (public_id, md5, route, provider_job_id, state, result_json, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+  getProteinRunByMd5: "SELECT * FROM protein_runs WHERE md5 = ? ORDER BY created_at ASC",
+  // M7.13 fix: the dedupe key is (sequence MD5, route), never MD5 alone. A
+  // precomputed reference run and an executed job are distinct workflows;
+  // one must never be returned in place of the other.
+  getProteinRunsByMd5AndRoute: "SELECT * FROM protein_runs WHERE md5 = ? AND route = ? ORDER BY created_at ASC",
+  getProteinRunByPublicId: "SELECT * FROM protein_runs WHERE public_id = ?",
+  getProteinRunByJobId: "SELECT * FROM protein_runs WHERE provider_job_id = ?",
+  updateProteinRun: "UPDATE protein_runs SET state = ?, provider_job_id = ?, result_json = ?, completed_at = ? WHERE public_id = ?",
+
+  // M7.14 microbiome workflow. Additive: one index table keyed by the exact
+  // input/metadata hashes so a browser refresh never resubmits a completed
+  // stage. The AI jobs/artifacts tables stay the authoritative run record.
+  insertMicrobiomeRun: "INSERT INTO microbiome_runs (public_id, input_sha256, metadata_sha256, state, plan_id, run_id, state_json, result_json, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  getMicrobiomeRunByPublicId: "SELECT * FROM microbiome_runs WHERE public_id = ?",
+  getMicrobiomeRunsByInput: "SELECT * FROM microbiome_runs WHERE input_sha256 = ? AND metadata_sha256 = ? ORDER BY created_at ASC",
+  updateMicrobiomeRun: "UPDATE microbiome_runs SET state = ?, state_json = ?, result_json = ?, completed_at = ? WHERE public_id = ?"
 };
 
 export const SQL_META = {
@@ -56,6 +106,7 @@ export const SQL_META = {
   [SQL.insertApproval]: { op: "insert", table: "approvals", columns: ["public_id", "plan_id", "step_id", "approved_by", "consents_json", "approved_at", "expires_at"] },
   [SQL.insertJob]: { op: "insert", table: "jobs", columns: ["public_id", "plan_id", "step_id", "status", "tool_id", "params_json", "inputs_json", "consent_json", "backend", "agent_id", "attempts", "timeout_s", "execution_mode", "created_at", "started_at", "finished_at"] },
   [SQL.getJob]: { op: "select", table: "jobs", where: ["public_id"] },
+  [SQL.updateJobByPlanStep]: { op: "update", table: "jobs", where: ["plan_id", "step_id"], assignments: { status: 0, finished_at: 1 } },
   [SQL.listQueuedJobs]: { op: "select", table: "jobs", where: ["status"], orderBy: "created_at", limit: true },
   [SQL.claimJob]: { op: "claim", table: "jobs", where: ["public_id", "status"], assignments: { status: 0, agent_id: 1, started_at: 2 }, increment: "attempts" },
   [SQL.finishJob]: { op: "update", table: "jobs", where: ["public_id"], assignments: { status: 0, finished_at: 1 } },
@@ -70,6 +121,33 @@ export const SQL_META = {
   [SQL.insertReportRun]: { op: "insert", table: "report_runs", columns: ["public_id", "plan_id", "job_id", "report_ref", "explanation_ref", "validation_ref", "report_html", "created_at"] },
   [SQL.getReportRun]: { op: "select", table: "report_runs", where: ["job_id"] },
   [SQL.insertAudit]: { op: "insert", table: "audit_events", columns: ["public_id", "actor", "action", "target", "detail_json", "timestamp"] },
+  // M7.4 workspace metadata (additive). Where columns are always the trailing
+  // bind values, matching the fake D1's update/select contract.
+  [SQL.insertWorkspaceProject]: { op: "insert", table: "projects", columns: ["public_id", "name", "owner", "settings_json", "created_at", "description", "scientific_objective", "status", "updated_at"] },
+  [SQL.getWorkspaceProject]: { op: "select", table: "projects", where: ["public_id", "owner"] },
+  [SQL.listProjectsByOwner]: { op: "select", table: "projects", where: ["owner"] },
+  [SQL.updateProjectMetadata]: { op: "update", table: "projects", where: ["public_id", "owner"], assignments: { name: 0, description: 1, scientific_objective: 2, status: 3, updated_at: 4 } },
+  [SQL.setProjectStatus]: { op: "update", table: "projects", where: ["public_id", "owner"], assignments: { status: 0, updated_at: 1 } },
+  [SQL.insertWorkspaceDataset]: { op: "insert", table: "datasets", columns: ["public_id", "project_id", "filename", "sha256", "size_bytes", "mime", "storage_ref", "fasta_text", "created_at", "file_format", "source", "validation_state", "provider_history_ref", "uploaded_at", "owner", "is_demo"] },
+  [SQL.listDatasetsForProject]: { op: "select", table: "datasets", where: ["project_id", "owner"] },
+  [SQL.listDatasetsByOwner]: { op: "select", table: "datasets", where: ["owner"] },
+  [SQL.insertWorkspaceRun]: { op: "insert", table: "workspace_runs", columns: ["public_id", "project_id", "workflow_id", "workflow_version", "objective", "input_datasets_json", "params_json", "execution_provider", "execution_mode", "state", "created_at", "completed_at", "steps_json", "artifact_refs_json", "validation_json", "provenance_json", "error_json", "owner", "is_demo"] },
+  [SQL.getWorkspaceRun]: { op: "select", table: "workspace_runs", where: ["public_id", "owner"] },
+  [SQL.listRunsForProject]: { op: "select", table: "workspace_runs", where: ["project_id", "owner"] },
+  [SQL.listRunsByOwner]: { op: "select", table: "workspace_runs", where: ["owner"] },
+  [SQL.updateWorkspaceRun]: { op: "update", table: "workspace_runs", where: ["public_id", "owner"], assignments: { state: 0, completed_at: 1, steps_json: 2, artifact_refs_json: 3, validation_json: 4, provenance_json: 5, error_json: 6 } },
+  [SQL.insertProvenanceRecord]: { op: "insert", table: "provenance_records", columns: ["public_id", "run_id", "record_json", "created_at", "owner"] },
+  [SQL.getProvenanceRecord]: { op: "select", table: "provenance_records", where: ["run_id", "owner"] },
+  [SQL.insertProteinRun]: { op: "insert", table: "protein_runs", columns: ["public_id", "md5", "route", "provider_job_id", "state", "result_json", "created_at", "completed_at"] },
+  [SQL.getProteinRunByMd5]: { op: "select", table: "protein_runs", where: ["md5"], orderBy: "created_at" },
+  [SQL.getProteinRunsByMd5AndRoute]: { op: "select", table: "protein_runs", where: ["md5", "route"], orderBy: "created_at" },
+  [SQL.getProteinRunByPublicId]: { op: "select", table: "protein_runs", where: ["public_id"] },
+  [SQL.getProteinRunByJobId]: { op: "select", table: "protein_runs", where: ["provider_job_id"] },
+  [SQL.updateProteinRun]: { op: "update", table: "protein_runs", where: ["public_id"], assignments: { state: 0, provider_job_id: 1, result_json: 2, completed_at: 3 } },
+  [SQL.insertMicrobiomeRun]: { op: "insert", table: "microbiome_runs", columns: ["public_id", "input_sha256", "metadata_sha256", "state", "plan_id", "run_id", "state_json", "result_json", "created_at", "completed_at"] },
+  [SQL.getMicrobiomeRunByPublicId]: { op: "select", table: "microbiome_runs", where: ["public_id"] },
+  [SQL.getMicrobiomeRunsByInput]: { op: "select", table: "microbiome_runs", where: ["input_sha256", "metadata_sha256"], orderBy: "created_at" },
+  [SQL.updateMicrobiomeRun]: { op: "update", table: "microbiome_runs", where: ["public_id"], assignments: { state: 0, state_json: 1, result_json: 2, completed_at: 3 } },
   // The approval gate issues a legacy BLAST consent token on the same D1
   // binding, so the fake D1 must understand these statements too. The real SQL
   // also checks expiry/grant/used_at inside the UPDATE; the generic fake models

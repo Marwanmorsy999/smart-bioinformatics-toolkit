@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#F5F7F6">
+  <meta name="description" content="Real protein functional annotation from UniProt and InterPro evidence: validated protein input, precomputed matches or an executed InterProScan 6 job, an interactive domain viewer, a ten-section report and genuine exports. Research use only.">
+  <title>Protein annotation — Smart Bioinformatics AI</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/main.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/app-views.css">
+  <link rel="stylesheet" href="css/phylo.css">
+  <link rel="stylesheet" href="css/protein.css">
+</head>
+<body>
+  <a class="skip-link" href="#protein-main">Skip to main content</a>
+    <header class="topbar app-header">
+    <a class="brand" href="index.html" aria-label="Smart Bioinformatics AI home">
+      <img class="brand-logo" src="brand/sbio-logo-primary.svg" alt="Smart Bioinformatics AI" width="245" height="28">
+    </a>
+    <button class="nav-toggle" type="button" aria-label="Open navigation" aria-controls="primary-nav" aria-expanded="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+    <nav id="primary-nav" class="top-nav" aria-label="Main navigation">
+      <a href="index.html#tools">Tools</a>
+      <a href="workspace.html">Research workspace</a>
+      <a href="phylo.html">Phylogenetics</a>
+      <a href="protein.html" aria-current="location">Protein annotation</a>
+      <a href="16s.html">16S</a>
+      <a href="microbiome.html">Microbiome</a>
+      <a href="assistant.html">Assistant</a>
+      <a href="history.html">Research history</a>
+      <a href="index.html#about">About</a>
+    </nav>
+    <a class="nav-start-action" href="16s.html" tabindex="-1">Start an analysis</a>
+    <span class="local-badge"><span class="status-dot" aria-hidden="true"></span> EBI / UniProt evidence</span>
+  </header>
+
+  <main id="protein-main" class="app-main protein-view" tabindex="-1">
+    <header class="view-head">
+      <div>
+        <h1>Protein functional annotation</h1>
+        <p class="section-kicker">Enter a UniProt accession, one protein FASTA or a small multi-FASTA. Evidence comes from genuine UniProt and InterPro responses; every route, release and missing field is labelled honestly.</p>
+      </div>
+      <div class="research-strip" role="note">
+        <span class="privacy-icon" aria-hidden="true">i</span>
+        <p><strong>Research use only.</strong> Signature matches are database evidence, not proof of biochemical function. Executed jobs require a configured server-side contact email; no address is invented.</p>
+      </div>
+      <p id="protein-status" class="ws-status-line" role="status" aria-live="polite"></p>
+    </header>
+
+    <ol class="stage-rail" aria-label="Workflow sequence (not status)">
+      <li><span class="rail-index">01</span> Input</li>
+      <li><span class="rail-index">02</span> Validate &amp; plan</li>
+      <li><span class="rail-index">03</span> Annotate</li>
+      <li><span class="rail-index">04</span> Explore evidence</li>
+      <li><span class="rail-index">05</span> Report &amp; exports</li>
+    </ol>
+
+    <div class="app-shell">
+      <aside class="app-rail" aria-label="Protein input and route">
+        <section id="protein-input" class="panel" aria-labelledby="protein-input-title">
+          <div class="panel-head"><h2 id="protein-input-title">1. Provide a protein</h2></div>
+          <p class="panel-note">Accepted alphabet: the 20 standard amino acids plus documented ambiguous residues B, J, Z, X, U and O. Nucleotide input is rejected; no translation is performed.</p>
+          <div class="field-group">
+            <label for="protein-mode">Input mode</label>
+            <select id="protein-mode">
+              <option value="accession">UniProt accession (e.g. P04637)</option>
+              <option value="single" selected>Single protein FASTA / raw sequence</option>
+              <option value="multi">Small multi-FASTA (up to 20)</option>
+            </select>
+          </div>
+          <div class="field-group" id="protein-accession-group" hidden>
+            <label for="protein-accession">Accession</label>
+            <input id="protein-accession" type="text" maxlength="40" placeholder="P04637" autocomplete="off">
+          </div>
+          <div class="field-group" id="protein-file-group">
+            <label for="protein-file">FASTA file (.fasta / .fa / .txt)</label>
+            <input id="protein-file" type="file" accept=".fasta,.fa,.fas,.fna,.txt">
+          </div>
+          <div class="field-group" id="protein-text-group">
+            <label for="protein-fasta-text">Or paste FASTA / raw protein sequence</label>
+            <textarea id="protein-fasta-text" rows="9" spellcheck="false" placeholder=">protein_1&#10;MEEPQSDPSVEPPLSQETFSDLWKLLPENN..."></textarea>
+          </div>
+          <div id="protein-validation" class="protein-validation" role="status" aria-live="polite">No input loaded yet.</div>
+          <div class="field-group">
+            <label for="protein-objective">Research objective (optional)</label>
+            <textarea id="protein-objective" rows="2" maxlength="1000" placeholder="e.g. Identify conserved domains and GO evidence"></textarea>
+          </div>
+          <button id="protein-plan" type="button" class="primary-link" disabled>Validate &amp; inspect plan</button>
+
+          <fieldset id="protein-route-fieldset" hidden>
+            <legend>Annotation route</legend>
+            <label><input type="radio" name="protein-route" value="precomputed" checked> Route A — precomputed InterPro reference annotation</label>
+            <label><input type="radio" name="protein-route" value="iprscan6"> Route B — executed InterProScan 6 analysis</label>
+            <p id="protein-route-note" class="panel-note"></p>
+            <label id="protein-route-confirm-group" hidden><input id="protein-route-confirm" type="checkbox"> I understand that Route B submits my sequence to EBI InterProScan 6 and will not be resubmitted on refresh.</label>
+          </fieldset>
+          <button id="protein-annotate" type="button" class="primary-link" disabled>Run annotation</button>
+        </section>
+
+        <section id="protein-progress" class="panel" aria-live="polite" hidden>
+          <div class="panel-head"><h2>2. Execution state</h2></div>
+          <ul id="protein-job-list" class="data-list"></ul>
+          <p id="protein-poll-note" class="panel-note"></p>
+        </section>
+      </aside>
+
+      <div class="app-detail protein-detail-host">
+        <section id="protein-evidence" class="panel" aria-live="polite" hidden>
+          <div class="panel-head"><h2>3. Genuine annotation evidence</h2></div>
+          <p id="protein-evidence-status" class="info-card" role="status" aria-live="polite"></p>
+
+          <h3>Validated input</h3>
+          <table id="protein-sequences" class="protein-table"><tbody></tbody></table>
+
+          <h3>Architecture viewer</h3>
+          <p class="panel-note" id="protein-viewer-note">Drawn only from source-reported residue coordinates. Overlapping matches occupy separate lanes; no interval is merged or invented.</p>
+          <figure class="protein-figure">
+            <div id="protein-viewer" aria-label="Interactive protein architecture viewer"></div>
+            <figcaption>Full-length residue scale from 1 to the reported sequence length. Select a feature for its source, coordinates, score and evidence links.</figcaption>
+          </figure>
+
+          <h3>Selection details</h3>
+          <div id="protein-detail" class="protein-detail" aria-live="polite">Select a feature in the viewer or the table.</div>
+
+          <h3>Annotation table</h3>
+          <div class="protein-table-wrap">
+            <table id="protein-annotations" class="protein-table">
+              <thead><tr><th scope="col">Residues</th><th scope="col">Category</th><th scope="col">Signature</th><th scope="col">Source</th><th scope="col">Entry</th><th scope="col">Score / E-value</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+
+          <h3>Deterministic interpretation</h3>
+          <p id="protein-interpretation"></p>
+          <p id="protein-ai-status" class="protein-ai-note">AI-generated phrasing: not requested. The deterministic interpretation above is always shown.</p>
+          <p><button id="protein-ai-optin" type="button" class="primary-link" hidden>Request optional AI phrasing (S Bio Assistant)</button></p>
+          <p id="protein-ai-phrasing" class="protein-ai-note" hidden></p>
+
+          <h3>Scientific report (sections 1–10)</h3>
+          <div id="protein-report"></div>
+
+          <h3>Exports</h3>
+          <ul id="protein-downloads" class="protein-downloads"></ul>
+          <ul id="protein-checksums" class="data-list" aria-live="polite"></ul>
+
+          <h3>Reopen this analysis</h3>
+          <p id="protein-reopen-detail">Run records are available after a genuine annotation.</p>
+          <details>
+            <summary>Full provenance from the stored run</summary>
+            <pre id="protein-provenance"></pre>
+          </details>
+        </section>
+
+        <div class="empty-state panel protein-empty">
+          <span class="empty-state-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM4 10h16M9 10v9"/></svg>
+          </span>
+          <div>
+            <h3>No annotation has been run</h3>
+            <p>Provide a validated protein input, inspect the plan, then choose a route. Results, viewer coordinates and exports appear here only after a genuine provider response.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+    <footer class="site-footer app-footer">
+    <div class="footer-grid">
+      <div>
+        <div class="footer-brand">
+          <img class="footer-logo" src="brand/sbio-logo-dark.svg" alt="Smart Bioinformatics AI" width="245" height="28">
+        </div>
+        <p>A precise, research-grade workspace for scientific analysis. Inspect the inputs, keep the outputs, and read the caveats.</p>
+      </div>
+      <div>
+        <h2 class="footer-heading">Analyze</h2>
+        <ul class="footer-links">
+          <li><a href="16s.html">16S identification</a></li>
+          <li><a href="phylo.html">Phylogenetics</a></li>
+          <li><a href="protein.html">Protein annotation</a></li>
+          <li><a href="microbiome.html">Microbiome</a></li>
+          <li><a href="index.html#tools">Sequence analysis &amp; statistics</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2 class="footer-heading">Research</h2>
+        <ul class="footer-links">
+          <li><a href="assistant.html">AI assistant</a></li>
+          <li><a href="workspace.html">Research workspace</a></li>
+          <li><a href="history.html">Research history</a></li>
+          <li><a href="ai.html">AI research workspace</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2 class="footer-heading">About</h2>
+        <ul class="footer-links">
+          <li><a href="index.html#about">About</a></li>
+          <li><a href="benchmark.html#bench-limits-title">Known limitations</a></li>
+          <li><a href="research-use.html">Research-use policy</a></li>
+          <li><a href="blast.html">BLAST results</a></li>
+          <li><a href="taxonomy.html">Taxonomy</a></li>
+        </ul>
+      </div>
+    </div>
+    <p class="footer-disclaimer">Research and educational use only. Results require independent scientific interpretation. <a href="research-use.html">Full research-use statement</a>.</p>
+    <div class="footer-bottom"><span>Smart Bioinformatics AI</span></div>
+  </footer>
+  <script src="js/nav.js"></script>
+  <script type="module" src="js/protein.js"></script>
+</body>
+</html>

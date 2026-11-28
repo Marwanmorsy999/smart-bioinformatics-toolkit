@@ -1,0 +1,12 @@
+{
+  "dataset": "phylo_reference/reference.fasta",
+  "description": "Curated 5-taxon DNA dataset: two close pairs and a distant outgroup. Expected clades are derived from the construction (near-identical pairs), not from the workflow under test.",
+  "expected_taxa": ["Human", "Chimp", "Mouse", "Rat", "Fish"],
+  "expected_clades": [["Human", "Chimp"], ["Mouse", "Rat"]],
+  "outgroup": "Fish",
+  "example_newick": "(((Human:0.01,Chimp:0.01):0.2,(Mouse:0.01,Rat:0.01):0.2):0.3,Fish:0.5);",
+  "limitations": [
+    "Synthetic sequences: the expected topology is known by construction, not from an external phylogenetic benchmark.",
+    "No substitution model, branch-length calibration or bootstrap support is asserted."
+  ]
+}

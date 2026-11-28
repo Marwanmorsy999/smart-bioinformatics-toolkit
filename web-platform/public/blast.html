@@ -4,27 +4,40 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Analyze a BLAST tabular result file locally in your browser. Research use only.">
-  <meta name="theme-color" content="#0f2740">
-  <title>BLAST Results Analyzer · Smart Bioinformatics Toolkit</title>
+  <meta name="theme-color" content="#F5F7F6">
+  <title>BLAST Results Analyzer · Smart Bioinformatics AI</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="css/tokens.css">
   <link rel="stylesheet" href="css/main.css">
+  <link rel="stylesheet" href="css/tool-views.css">
 </head>
 <body>
   <a class="skip-link" href="#main-content">Skip to main content</a>
 
-  <header class="topbar">
-    <a class="brand" href="index.html" aria-label="S Bio Smart Bioinformatics Toolkit home">
-      <span class="brand-mark" aria-hidden="true">S<span>Bio</span></span>
-      <span class="brand-name">Smart Bioinformatics <span>Toolkit</span></span>
+    <header class="topbar app-header">
+    <a class="brand" href="index.html" aria-label="Smart Bioinformatics AI home">
+      <img class="brand-logo" src="brand/sbio-logo-primary.svg" alt="Smart Bioinformatics AI" width="245" height="28">
     </a>
-    <nav class="top-nav" aria-label="Main navigation">
+    <button class="nav-toggle" type="button" aria-label="Open navigation" aria-controls="primary-nav" aria-expanded="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+    <nav id="primary-nav" class="top-nav" aria-label="Main navigation">
       <a href="index.html#tools">Tools</a>
-      <a href="index.html#workflow">How it works</a>
+      <a href="workspace.html">Research workspace</a>
+      <a href="phylo.html">Phylogenetics</a>
+      <a href="protein.html">Protein annotation</a>
+      <a href="16s.html">16S</a>
+      <a href="microbiome.html">Microbiome</a>
+      <a href="assistant.html">Assistant</a>
+      <a href="history.html">Research history</a>
       <a href="index.html#about">About</a>
     </nav>
+    <a class="nav-start-action" href="16s.html" tabindex="-1">Start an analysis</a>
     <span class="local-badge"><span class="status-dot" aria-hidden="true"></span> Browser processing</span>
   </header>
 
-  <main id="main-content" tabindex="-1">
+  <main id="main-content" class="tool-view tool-blast" tabindex="-1">
+    <p id="project-context" class="info-card" hidden></p>
     <section class="section-block">
       <div class="section-heading">
         <div><p class="eyebrow">Independent tool</p><h1>BLAST Results Analyzer</h1></div>
@@ -36,80 +49,165 @@
         <p><strong>Research-use tool.</strong> Similarity hits are screening evidence, not proof of species identity and not a clinical diagnosis.</p>
       </div>
 
-      <div class="workspace">
+      <div class="tool-workspace">
         <div class="workspace-header">
           <div><p class="eyebrow">TOOL 03</p><h2>BLAST TSV import and analysis</h2><p>Validate schema, filter and rank hits, preserve ties, and export CSV/JSON.</p></div>
           <span class="standalone-tag">Independent tool</span>
         </div>
 
-        <div class="input-grid">
-          <div class="field-group">
-            <label for="blast-schema">BLAST schema</label>
-            <select id="blast-schema" aria-describedby="blast-schema-help">
-              <option value="auto">Auto-infer (only when unambiguous)</option>
-              <option value="standard">Standard 12-column outfmt 6</option>
-              <option value="extended">Extended 11-column (with qlen/taxonomy)</option>
-            </select>
-            <small id="blast-schema-help">Auto-inference uses column count only. Mixed counts require an explicit choice.</small>
-          </div>
-          <div class="field-group">
-            <label for="blast-file">Upload BLAST TSV</label>
-            <input id="blast-file" type="file" accept=".tsv,.txt,text/plain,text/tab-separated-values" aria-describedby="blast-file-help">
-            <small id="blast-file-help">Maximum file size: 5 MB for this browser MVP.</small>
-          </div>
+        <div class="tool-columns">
+          <section class="input-panel" aria-labelledby="blast-input-title">
+            <div class="panel-head">
+              <p class="eyebrow">Step 01 / Input</p>
+              <h2 id="blast-input-title">Input and filters</h2>
+              <p class="panel-hint">All parsing and filtering happens in this browser. Nothing is uploaded.</p>
+            </div>
+
+            <fieldset class="input-group source-group">
+              <legend><span class="group-index">01</span> Source and schema</legend>
+              <div class="input-grid">
+                <div class="field-group">
+                  <label for="blast-schema">BLAST schema</label>
+                  <select id="blast-schema" aria-describedby="blast-schema-help">
+                    <option value="auto">Auto-infer (only when unambiguous)</option>
+                    <option value="standard">Standard 12-column outfmt 6</option>
+                    <option value="extended">Extended 11-column (with qlen/taxonomy)</option>
+                  </select>
+                  <small id="blast-schema-help">Auto-inference uses column count only. Mixed counts require an explicit choice.</small>
+                </div>
+                <div class="field-group">
+                  <label for="blast-file">Upload BLAST TSV</label>
+                  <input id="blast-file" type="file" accept=".tsv,.txt,text/plain,text/tab-separated-values" aria-describedby="blast-file-help">
+                  <small id="blast-file-help">Maximum file size: 5 MB for this browser MVP.</small>
+                </div>
+              </div>
+            </fieldset>
+
+            <fieldset class="input-group">
+              <legend><span class="group-index">02</span> Tabular input</legend>
+              <div class="field-group sequence-input-group">
+                <div class="label-row"><label for="blast-text">Or paste your BLAST tabular output</label><button id="load-blast-example" class="text-button" type="button">Load example (synthetic)</button></div>
+                <textarea id="blast-text" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="qseqid&#9;sseqid&#9;pident&#9;length&#9;..." aria-describedby="blast-text-help"></textarea>
+                <div class="textarea-footer"><small id="blast-text-help">Tab-separated. Standard 12 columns or extended 11 columns. Lines starting with # are ignored.</small><span id="blast-char-count">0 characters</span></div>
+              </div>
+            </fieldset>
+
+            <details class="advanced">
+              <summary>Thresholds and options</summary>
+              <fieldset class="input-group">
+                <legend><span class="group-index">03</span> Hit thresholds</legend>
+                <div class="input-grid">
+                  <div class="field-group"><label for="min-identity">Minimum identity (%)</label><input id="min-identity" type="number" min="0" max="100" step="0.1" value="0"></div>
+                  <div class="field-group"><label for="min-coverage">Minimum query coverage (%)</label><input id="min-coverage" type="number" min="0" max="100" step="0.1" value="0"></div>
+                  <div class="field-group"><label for="max-evalue">Maximum E-value</label><input id="max-evalue" type="text" value=""></div>
+                  <div class="field-group"><label for="max-hits">Maximum displayed hits per query (0 = all)</label><input id="max-hits" type="number" min="0" step="1" value="0"></div>
+                </div>
+              </fieldset>
+              <fieldset class="input-group">
+                <legend><span class="group-index">04</span> Query context (optional)</legend>
+                <div class="field-group sequence-input-group">
+                  <label for="query-lengths">Query lengths (optional, one per line: id length)</label>
+                  <textarea id="query-lengths" spellcheck="false" placeholder="q1 100" aria-describedby="query-lengths-help"></textarea>
+                  <small id="query-lengths-help">Used to calculate query coverage for standard 12-column input, which has no qlen column.</small>
+                </div>
+                <div class="field-group sequence-input-group">
+                  <label for="query-fasta">Query FASTA (optional, derives lengths and no-hit list)</label>
+                  <textarea id="query-fasta" spellcheck="false" placeholder=">q1&#10;ACGT..."></textarea>
+                </div>
+                <div class="field-group sequence-input-group">
+                  <label for="query-list">Query ID list (optional, one per line)</label>
+                  <textarea id="query-list" spellcheck="false" placeholder="q1"></textarea>
+                </div>
+              </fieldset>
+            </details>
+
+            <div class="action-row">
+              <button id="run-blast" class="primary-button" type="button">Analyze BLAST TSV <span aria-hidden="true">→</span></button>
+              <button id="clear-blast" class="quiet-button" type="button">Clear</button>
+            </div>
+            <p id="blast-error" class="input-error" role="alert" hidden></p>
+          </section>
+
+          <section class="output-panel" aria-labelledby="blast-output-title">
+            <div class="panel-head">
+              <p class="eyebrow">Step 02 / Output</p>
+              <h2 id="blast-output-title">Analysis output</h2>
+              <p class="panel-hint">Rows are filtered and ranked locally. Exports use the currently displayed result.</p>
+            </div>
+
+            <section id="blast-results" class="results-panel" aria-live="polite" aria-labelledby="blast-results-title" hidden>
+              <div class="results-header"><div><p class="eyebrow">ANALYSIS OUTPUT</p><h3 id="blast-results-title">BLAST analysis</h3></div><span id="blast-result-status" class="result-status" aria-live="polite"></span></div>
+              <div class="export-row" id="blast-export-actions">
+                <button id="blast-download-json" class="secondary-button small-button" type="button">Download JSON</button>
+                <button id="blast-download-csv" class="secondary-button small-button" type="button">Download filtered CSV</button>
+              </div>
+              <div id="blast-summary" class="summary-grid"></div>
+              <div class="note-region" role="note">
+                <p class="note-label">Interpretation and caveats</p>
+                <div id="blast-note" class="results-note"></div>
+              </div>
+              <div class="table-wrap"><table id="blast-table"><thead></thead><tbody></tbody></table></div>
+              <div id="blast-file-errors" class="message-list"></div>
+            </section>
+
+            <div class="empty-state">
+              <span class="empty-state-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="1"/><path d="M3 9h18M9 9v11M15 9v11"/></svg>
+              </span>
+              <div>
+                <h3>No analysis yet</h3>
+                <p>Load an example or paste BLAST tabular output on the left, then choose <strong>Analyze BLAST TSV</strong>. The validated hit table, summary counts and export actions will appear here.</p>
+              </div>
+            </div>
+          </section>
         </div>
-
-        <div class="field-group sequence-input-group">
-          <div class="label-row"><label for="blast-text">Or paste your BLAST tabular output</label><button id="load-blast-example" class="text-button" type="button">Load example (synthetic)</button></div>
-          <textarea id="blast-text" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="qseqid&#9;sseqid&#9;pident&#9;length&#9;..." aria-describedby="blast-text-help"></textarea>
-          <div class="textarea-footer"><small id="blast-text-help">Tab-separated. Standard 12 columns or extended 11 columns. Lines starting with # are ignored.</small><span id="blast-char-count">0 characters</span></div>
-        </div>
-
-        <details class="advanced">
-          <summary>Thresholds and options</summary>
-          <div class="input-grid">
-            <div class="field-group"><label for="min-identity">Minimum identity (%)</label><input id="min-identity" type="number" min="0" max="100" step="0.1" value="0"></div>
-            <div class="field-group"><label for="min-coverage">Minimum query coverage (%)</label><input id="min-coverage" type="number" min="0" max="100" step="0.1" value="0"></div>
-            <div class="field-group"><label for="max-evalue">Maximum E-value</label><input id="max-evalue" type="text" value=""></div>
-            <div class="field-group"><label for="max-hits">Maximum displayed hits per query (0 = all)</label><input id="max-hits" type="number" min="0" step="1" value="0"></div>
-          </div>
-          <div class="field-group sequence-input-group">
-            <label for="query-lengths">Query lengths (optional, one per line: id length)</label>
-            <textarea id="query-lengths" spellcheck="false" placeholder="q1 100" aria-describedby="query-lengths-help"></textarea>
-            <small id="query-lengths-help">Used to calculate query coverage for standard 12-column input, which has no qlen column.</small>
-          </div>
-          <div class="field-group sequence-input-group">
-            <label for="query-fasta">Query FASTA (optional, derives lengths and no-hit list)</label>
-            <textarea id="query-fasta" spellcheck="false" placeholder=">q1&#10;ACGT..."></textarea>
-          </div>
-          <div class="field-group sequence-input-group">
-            <label for="query-list">Query ID list (optional, one per line)</label>
-            <textarea id="query-list" spellcheck="false" placeholder="q1"></textarea>
-          </div>
-        </details>
-
-        <div class="action-row">
-          <button id="run-blast" class="primary-button" type="button">Analyze BLAST TSV <span aria-hidden="true">→</span></button>
-          <button id="clear-blast" class="quiet-button" type="button">Clear</button>
-        </div>
-        <p id="blast-error" class="input-error" role="alert" hidden></p>
-
-        <section id="blast-results" class="results-panel" aria-live="polite" aria-labelledby="blast-results-title" hidden>
-          <div class="results-header"><div><p class="eyebrow">ANALYSIS OUTPUT</p><h3 id="blast-results-title">BLAST analysis</h3></div><span id="blast-result-status" class="result-status" aria-live="polite"></span></div>
-          <div id="blast-summary" class="summary-grid"></div>
-          <div id="blast-note" class="results-note"></div>
-          <div class="table-wrap"><table id="blast-table"><thead></thead><tbody></tbody></table></div>
-          <div id="blast-file-errors" class="message-list"></div>
-          <div class="export-row" id="blast-export-actions">
-            <button id="blast-download-json" class="secondary-button small-button" type="button">Download JSON</button>
-            <button id="blast-download-csv" class="secondary-button small-button" type="button">Download filtered CSV</button>
-          </div>
-        </section>
       </div>
     </section>
   </main>
 
-  <footer class="footer"><span>Smart Bioinformatics Toolkit <span class="footer-muted">· Milestone 0.1.0</span></span><span>Research use only · Not for clinical diagnosis</span></footer>
+    <footer class="site-footer app-footer">
+    <div class="footer-grid">
+      <div>
+        <div class="footer-brand">
+          <img class="footer-logo" src="brand/sbio-logo-dark.svg" alt="Smart Bioinformatics AI" width="245" height="28">
+        </div>
+        <p>A precise, research-grade workspace for scientific analysis. Inspect the inputs, keep the outputs, and read the caveats.</p>
+      </div>
+      <div>
+        <h2 class="footer-heading">Analyze</h2>
+        <ul class="footer-links">
+          <li><a href="16s.html">16S identification</a></li>
+          <li><a href="phylo.html">Phylogenetics</a></li>
+          <li><a href="protein.html">Protein annotation</a></li>
+          <li><a href="microbiome.html">Microbiome</a></li>
+          <li><a href="index.html#tools">Sequence analysis &amp; statistics</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2 class="footer-heading">Research</h2>
+        <ul class="footer-links">
+          <li><a href="assistant.html">AI assistant</a></li>
+          <li><a href="workspace.html">Research workspace</a></li>
+          <li><a href="history.html">Research history</a></li>
+          <li><a href="ai.html">AI research workspace</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2 class="footer-heading">About</h2>
+        <ul class="footer-links">
+          <li><a href="index.html#about">About</a></li>
+          <li><a href="benchmark.html#bench-limits-title">Known limitations</a></li>
+          <li><a href="research-use.html">Research-use policy</a></li>
+          <li><a href="blast.html">BLAST results</a></li>
+          <li><a href="taxonomy.html">Taxonomy</a></li>
+        </ul>
+      </div>
+    </div>
+    <p class="footer-disclaimer">Research and educational use only. Results require independent scientific interpretation. <a href="research-use.html">Full research-use statement</a>.</p>
+    <div class="footer-bottom"><span>Smart Bioinformatics AI</span></div>
+  </footer>
+  <script src="js/nav.js"></script>
+  <script type="module" src="js/project-context.js"></script>
   <script type="module" src="js/blast-app.js"></script>
 </body>
 </html>

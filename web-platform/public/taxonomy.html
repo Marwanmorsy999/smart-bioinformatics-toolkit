@@ -4,27 +4,39 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Taxonomic consensus analysis of BLAST results, locally in your browser. Research use only.">
-  <meta name="theme-color" content="#0f2740">
-  <title>Taxonomy Analyzer · Smart Bioinformatics Toolkit</title>
+  <meta name="theme-color" content="#F5F7F6">
+  <title>Taxonomy Analyzer · Smart Bioinformatics AI</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="css/tokens.css">
   <link rel="stylesheet" href="css/main.css">
+  <link rel="stylesheet" href="css/tool-views.css">
 </head>
 <body>
   <a class="skip-link" href="#main-content">Skip to main content</a>
 
-  <header class="topbar">
-    <a class="brand" href="index.html" aria-label="S Bio Smart Bioinformatics Toolkit home">
-      <span class="brand-mark" aria-hidden="true">S<span>Bio</span></span>
-      <span class="brand-name">Smart Bioinformatics <span>Toolkit</span></span>
+    <header class="topbar app-header">
+    <a class="brand" href="index.html" aria-label="Smart Bioinformatics AI home">
+      <img class="brand-logo" src="brand/sbio-logo-primary.svg" alt="Smart Bioinformatics AI" width="245" height="28">
     </a>
-    <nav class="top-nav" aria-label="Main navigation">
+    <button class="nav-toggle" type="button" aria-label="Open navigation" aria-controls="primary-nav" aria-expanded="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+    <nav id="primary-nav" class="top-nav" aria-label="Main navigation">
       <a href="index.html#tools">Tools</a>
-      <a href="index.html#workflow">How it works</a>
+      <a href="workspace.html">Research workspace</a>
+      <a href="phylo.html">Phylogenetics</a>
+      <a href="protein.html">Protein annotation</a>
+      <a href="16s.html">16S</a>
+      <a href="microbiome.html">Microbiome</a>
+      <a href="assistant.html">Assistant</a>
+      <a href="history.html">Research history</a>
       <a href="index.html#about">About</a>
     </nav>
+    <a class="nav-start-action" href="16s.html" tabindex="-1">Start an analysis</a>
     <span class="local-badge"><span class="status-dot" aria-hidden="true"></span> Browser processing</span>
   </header>
 
-  <main id="main-content" tabindex="-1">
+  <main id="main-content" class="tool-view tool-taxonomy" tabindex="-1">
     <section class="section-block">
       <div class="section-heading">
         <div><p class="eyebrow">Independent tool</p><h1>Taxonomy Analyzer</h1></div>
@@ -33,87 +45,178 @@
 
       <div class="research-strip" role="note">
         <span class="privacy-icon" aria-hidden="true">i</span>
-        <p><strong>Research-use tool.</strong> Consensus support is an evidence fraction, not a probability of correct identification and not a clinical diagnosis. Difficult-group literature notes are references for review, not validated identification rules.</p>
+        <p><strong>Research-use tool.</strong> Consensus support is an evidence fraction, not a probability of correct identification and not a clinical diagnosis. Difficult-group literature notes are references for review, not validated identification rules. <a href="research-use.html">Full statement</a>.</p>
       </div>
 
-      <div class="workspace">
+      <div class="tool-workspace">
         <div class="workspace-header">
           <div><p class="eyebrow">TOOL 04</p><h2>Taxonomic consensus</h2><p>Compare competing BLAST candidates, resolve lineages, and report consensus with uncertainty.</p></div>
           <span class="standalone-tag">Independent tool</span>
         </div>
 
-        <div class="input-grid">
-          <div class="field-group">
-            <label for="taxonomy-schema">BLAST schema</label>
-            <select id="taxonomy-schema" aria-describedby="taxonomy-schema-help">
-              <option value="auto">Auto-infer (only when unambiguous)</option>
-              <option value="blastn_local_v1">Local BLAST+ runner (blastn_local_v1)</option>
-              <option value="extended">Extended 11-column (with qlen/taxonomy)</option>
-              <option value="standard">Standard 12-column outfmt 6</option>
-            </select>
-            <small id="taxonomy-schema-help">Local BLAST+ output uses blastn_local_v1. Auto-inference uses column count only.</small>
-          </div>
-          <div class="field-group">
-            <label for="taxonomy-blast-file">Upload BLAST TSV</label>
-            <input id="taxonomy-blast-file" type="file" accept=".tsv,.txt,text/plain,text/tab-separated-values" aria-describedby="taxonomy-blast-file-help">
-            <small id="taxonomy-blast-file-help">Maximum file size: 5 MB for this browser MVP.</small>
-          </div>
+        <div class="tool-columns">
+          <section class="input-panel" aria-labelledby="taxonomy-input-title">
+            <div class="panel-head">
+              <p class="eyebrow">Step 01 / Input</p>
+              <h2 id="taxonomy-input-title">Input and filters</h2>
+              <p class="panel-hint">All parsing and consensus analysis happens in this browser. Nothing is uploaded.</p>
+            </div>
+
+            <fieldset class="input-group source-group">
+              <legend><span class="group-index">01</span> Source and schema</legend>
+              <div class="input-grid">
+                <div class="field-group">
+                  <label for="taxonomy-schema">BLAST schema</label>
+                  <select id="taxonomy-schema" aria-describedby="taxonomy-schema-help">
+                    <option value="auto">Auto-infer (only when unambiguous)</option>
+                    <option value="blastn_local_v1">Local BLAST+ runner (blastn_local_v1)</option>
+                    <option value="extended">Extended 11-column (with qlen/taxonomy)</option>
+                    <option value="standard">Standard 12-column outfmt 6</option>
+                  </select>
+                  <small id="taxonomy-schema-help">Local BLAST+ output uses blastn_local_v1. Auto-inference uses column count only.</small>
+                </div>
+                <div class="field-group">
+                  <label for="taxonomy-blast-file">Upload BLAST TSV</label>
+                  <input id="taxonomy-blast-file" type="file" accept=".tsv,.txt,text/plain,text/tab-separated-values" aria-describedby="taxonomy-blast-file-help">
+                  <small id="taxonomy-blast-file-help">Maximum file size: 5 MB for this browser MVP.</small>
+                </div>
+              </div>
+            </fieldset>
+
+            <fieldset class="input-group">
+              <legend><span class="group-index">02</span> Tabular input</legend>
+              <div class="field-group sequence-input-group">
+                <div class="label-row"><label for="taxonomy-blast-text">Or paste your BLAST tabular output</label><button id="load-taxonomy-example" class="text-button" type="button">Load example (synthetic)</button></div>
+                <textarea id="taxonomy-blast-text" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="qseqid&#9;sacc&#9;staxids&#9;sscinames&#9;..." aria-describedby="taxonomy-blast-text-help"></textarea>
+                <div class="textarea-footer"><small id="taxonomy-blast-text-help">Tab-separated BLAST outfmt 6 output.</small><span id="taxonomy-char-count">0 characters</span></div>
+              </div>
+              <div class="field-group sequence-input-group">
+                <label for="taxonomy-query-list">Query IDs (optional, one per line)</label>
+                <textarea id="taxonomy-query-list" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="q1&#10;q2&#10;q3" aria-describedby="taxonomy-query-list-help"></textarea>
+                <small id="taxonomy-query-list-help">If supplied, queries that return no BLAST hits are reported as insufficient evidence.</small>
+              </div>
+            </fieldset>
+
+            <fieldset class="input-group">
+              <legend><span class="group-index">03</span> Lineage mapping (optional)</legend>
+              <div class="field-group">
+                <label for="taxonomy-map-file">Optional taxonomy mapping TSV</label>
+                <input id="taxonomy-map-file" type="file" accept=".tsv,.txt,text/plain" aria-describedby="taxonomy-map-file-help">
+                <small id="taxonomy-map-file-help">Columns: taxid, scientific_name, rank, parent_taxid, full_lineage. Without it, taxa are reported as unresolved.</small>
+              </div>
+            </fieldset>
+
+            <details class="advanced">
+              <summary>Thresholds and options</summary>
+              <fieldset class="input-group">
+                <legend><span class="group-index">04</span> Consensus settings</legend>
+                <div class="input-grid">
+                  <div class="field-group"><label for="taxonomy-top-n">Top-N candidates per query</label><input id="taxonomy-top-n" type="number" min="1" step="1" value="10"></div>
+                  <div class="field-group"><label for="taxonomy-min-consensus">Minimum consensus (0&ndash;1)</label><input id="taxonomy-min-consensus" type="number" min="0" max="1" step="0.05" value="0.8"></div>
+                  <div class="field-group"><label for="taxonomy-species-threshold">Species screening identity (%)</label><input id="taxonomy-species-threshold" type="number" min="90" max="100" step="0.01" value="98.65" aria-describedby="taxonomy-species-threshold-help"><small id="taxonomy-species-threshold-help">Screening reference, not a universal species boundary.</small></div>
+                  <div class="field-group"><label for="taxonomy-min-query-length">Warn if query shorter than (nt)</label><input id="taxonomy-min-query-length" type="number" min="0" step="50" value="500"></div>
+                </div>
+              </fieldset>
+              <fieldset class="input-group">
+                <legend><span class="group-index">05</span> Hit thresholds</legend>
+                <div class="input-grid">
+                  <div class="field-group"><label for="taxonomy-min-identity">Minimum identity (%)</label><input id="taxonomy-min-identity" type="number" min="0" max="100" step="0.1" value="0"></div>
+                  <div class="field-group"><label for="taxonomy-min-coverage">Minimum query coverage (%)</label><input id="taxonomy-min-coverage" type="number" min="0" max="100" step="0.1" value="0"></div>
+                  <div class="field-group"><label for="taxonomy-max-evalue">Maximum E-value</label><input id="taxonomy-max-evalue" type="text" value=""></div>
+                </div>
+              </fieldset>
+            </details>
+
+            <div class="action-row">
+              <button id="run-taxonomy" class="primary-button" type="button">Analyze taxonomy <span aria-hidden="true">→</span></button>
+              <button id="clear-taxonomy" class="quiet-button" type="button">Clear</button>
+            </div>
+            <p id="taxonomy-error" class="input-error" role="alert" hidden></p>
+          </section>
+
+          <section class="output-panel" aria-labelledby="taxonomy-output-title">
+            <div class="panel-head">
+              <p class="eyebrow">Step 02 / Output</p>
+              <h2 id="taxonomy-output-title">Consensus output</h2>
+              <p class="panel-hint">Per-query verdicts, evidence support and caveats are reported together. Exports use the last completed analysis.</p>
+            </div>
+
+            <section id="taxonomy-results" class="results-panel" aria-live="polite" aria-labelledby="taxonomy-results-title" hidden>
+              <div class="results-header"><div><p class="eyebrow">ANALYSIS OUTPUT</p><h3 id="taxonomy-results-title">Taxonomic consensus</h3></div><span id="taxonomy-result-status" class="result-status" aria-live="polite"></span></div>
+              <div class="export-row" id="taxonomy-export-actions">
+                <button id="taxonomy-download-json" class="secondary-button small-button" type="button">Download JSON</button>
+                <button id="taxonomy-download-csv" class="secondary-button small-button" type="button">Download summary CSV</button>
+                <button id="taxonomy-print-report" class="secondary-button small-button" type="button">Print report (PDF)</button>
+              </div>
+              <div id="taxonomy-summary" class="summary-grid"></div>
+              <div class="flag-region" role="note">
+                <p class="flag-label">Analysis flags</p>
+                <div id="taxonomy-flags" class="message-list" aria-live="polite"></div>
+              </div>
+              <div class="note-region" role="note">
+                <p class="note-label">Interpretation and caveats</p>
+                <div id="taxonomy-note" class="results-note"></div>
+              </div>
+              <div id="taxonomy-query-view"></div>
+            </section>
+
+            <div class="empty-state">
+              <span class="empty-state-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M12 15l-4-4M12 15l4-4M4 19h16"/></svg>
+              </span>
+              <div>
+                <h3>No analysis yet</h3>
+                <p>Load the synthetic example or paste BLAST tabular output on the left, then choose <strong>Analyze taxonomy</strong>. Per-query verdicts, support fractions and caveats will appear here.</p>
+              </div>
+            </div>
+          </section>
         </div>
-
-        <div class="field-group sequence-input-group">
-          <div class="label-row"><label for="taxonomy-blast-text">Or paste your BLAST tabular output</label><button id="load-taxonomy-example" class="text-button" type="button">Load example (synthetic)</button></div>
-          <textarea id="taxonomy-blast-text" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="qseqid&#9;sacc&#9;staxids&#9;sscinames&#9;..." aria-describedby="taxonomy-blast-text-help"></textarea>
-          <div class="textarea-footer"><small id="taxonomy-blast-text-help">Tab-separated BLAST outfmt 6 output.</small><span id="taxonomy-char-count">0 characters</span></div>
-        </div>
-
-        <div class="field-group sequence-input-group">
-          <label for="taxonomy-query-list">Query IDs (optional, one per line)</label>
-          <textarea id="taxonomy-query-list" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="q1&#10;q2&#10;q3" aria-describedby="taxonomy-query-list-help"></textarea>
-          <small id="taxonomy-query-list-help">If supplied, queries that return no BLAST hits are reported as insufficient evidence.</small>
-        </div>
-
-        <div class="field-group">
-          <label for="taxonomy-map-file">Optional taxonomy mapping TSV</label>
-          <input id="taxonomy-map-file" type="file" accept=".tsv,.txt,text/plain" aria-describedby="taxonomy-map-file-help">
-          <small id="taxonomy-map-file-help">Columns: taxid, scientific_name, rank, parent_taxid, full_lineage. Without it, taxa are reported as unresolved.</small>
-        </div>
-
-        <details class="advanced">
-          <summary>Thresholds and options</summary>
-          <div class="input-grid">
-            <div class="field-group"><label for="taxonomy-top-n">Top-N candidates per query</label><input id="taxonomy-top-n" type="number" min="1" step="1" value="10"></div>
-            <div class="field-group"><label for="taxonomy-min-consensus">Minimum consensus (0&ndash;1)</label><input id="taxonomy-min-consensus" type="number" min="0" max="1" step="0.05" value="0.8"></div>
-            <div class="field-group"><label for="taxonomy-min-identity">Minimum identity (%)</label><input id="taxonomy-min-identity" type="number" min="0" max="100" step="0.1" value="0"></div>
-            <div class="field-group"><label for="taxonomy-min-coverage">Minimum query coverage (%)</label><input id="taxonomy-min-coverage" type="number" min="0" max="100" step="0.1" value="0"></div>
-            <div class="field-group"><label for="taxonomy-max-evalue">Maximum E-value</label><input id="taxonomy-max-evalue" type="text" value=""></div>
-            <div class="field-group"><label for="taxonomy-species-threshold">Species screening identity (%)</label><input id="taxonomy-species-threshold" type="number" min="90" max="100" step="0.01" value="98.65" aria-describedby="taxonomy-species-threshold-help"><small id="taxonomy-species-threshold-help">Screening reference, not a universal species boundary.</small></div>
-            <div class="field-group"><label for="taxonomy-min-query-length">Warn if query shorter than (nt)</label><input id="taxonomy-min-query-length" type="number" min="0" step="50" value="500"></div>
-          </div>
-        </details>
-
-        <div class="action-row">
-          <button id="run-taxonomy" class="primary-button" type="button">Analyze taxonomy <span aria-hidden="true">→</span></button>
-          <button id="clear-taxonomy" class="quiet-button" type="button">Clear</button>
-        </div>
-        <p id="taxonomy-error" class="input-error" role="alert" hidden></p>
-
-        <section id="taxonomy-results" class="results-panel" aria-live="polite" aria-labelledby="taxonomy-results-title" hidden>
-          <div class="results-header"><div><p class="eyebrow">ANALYSIS OUTPUT</p><h3 id="taxonomy-results-title">Taxonomic consensus</h3></div><span id="taxonomy-result-status" class="result-status" aria-live="polite"></span></div>
-          <div id="taxonomy-summary" class="summary-grid"></div>
-          <div id="taxonomy-flags" class="message-list" aria-live="polite"></div>
-          <div id="taxonomy-note" class="results-note"></div>
-          <div id="taxonomy-query-view"></div>
-          <div class="export-row" id="taxonomy-export-actions">
-            <button id="taxonomy-download-json" class="secondary-button small-button" type="button">Download JSON</button>
-            <button id="taxonomy-download-csv" class="secondary-button small-button" type="button">Download summary CSV</button>
-            <button id="taxonomy-print-report" class="secondary-button small-button" type="button">Print report (PDF)</button>
-          </div>
-        </section>
       </div>
     </section>
   </main>
 
-  <footer class="footer"><span>Smart Bioinformatics Toolkit <span class="footer-muted">· Milestone 0.1.0</span></span><span>Research use only · Not for clinical diagnosis</span></footer>
+    <footer class="site-footer app-footer">
+    <div class="footer-grid">
+      <div>
+        <div class="footer-brand">
+          <img class="footer-logo" src="brand/sbio-logo-dark.svg" alt="Smart Bioinformatics AI" width="245" height="28">
+        </div>
+        <p>A precise, research-grade workspace for scientific analysis. Inspect the inputs, keep the outputs, and read the caveats.</p>
+      </div>
+      <div>
+        <h2 class="footer-heading">Analyze</h2>
+        <ul class="footer-links">
+          <li><a href="16s.html">16S identification</a></li>
+          <li><a href="phylo.html">Phylogenetics</a></li>
+          <li><a href="protein.html">Protein annotation</a></li>
+          <li><a href="microbiome.html">Microbiome</a></li>
+          <li><a href="index.html#tools">Sequence analysis &amp; statistics</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2 class="footer-heading">Research</h2>
+        <ul class="footer-links">
+          <li><a href="assistant.html">AI assistant</a></li>
+          <li><a href="workspace.html">Research workspace</a></li>
+          <li><a href="history.html">Research history</a></li>
+          <li><a href="ai.html">AI research workspace</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2 class="footer-heading">About</h2>
+        <ul class="footer-links">
+          <li><a href="index.html#about">About</a></li>
+          <li><a href="benchmark.html#bench-limits-title">Known limitations</a></li>
+          <li><a href="research-use.html">Research-use policy</a></li>
+          <li><a href="blast.html">BLAST results</a></li>
+          <li><a href="taxonomy.html">Taxonomy</a></li>
+        </ul>
+      </div>
+    </div>
+    <p class="footer-disclaimer">Research and educational use only. Results require independent scientific interpretation. <a href="research-use.html">Full research-use statement</a>.</p>
+    <div class="footer-bottom"><span>Smart Bioinformatics AI</span></div>
+  </footer>
+  <script src="js/nav.js"></script>
   <script type="module" src="js/taxonomy-app.js"></script>
 </body>
 </html>

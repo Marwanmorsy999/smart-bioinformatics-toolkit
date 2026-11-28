@@ -105,6 +105,17 @@ export function createFakeD1(initialRows = []) {
               results: state.consents.filter((row) => row.token === token).map((row) => ({ ...row }))
             };
           }
+          if (sql === SQL.selectBlastRetrieval) {
+            const [action, target, limit] = statement.values;
+            const rows = state.auditEvents
+              .filter((row) => row.action === action && row.target === target)
+              .sort((a, b) => String(a.timestamp).localeCompare(String(b.timestamp)))
+              .slice(0, Number(limit) || 1)
+              .map((row) => ({
+                public_id: row.public_id, detail_json: row.detail_json, timestamp: row.timestamp
+              }));
+            return { success: true, results: rows };
+          }
           throw new Error(`Unexpected all SQL: ${sql}`);
         }
       };
@@ -138,7 +149,7 @@ export function makeGetRequest(path, headers = {}) {
 
 export const VALID_PAYLOAD = {
   fasta: ">seq1 16S mock\nACGTACGTNRYSWKMBDHV\n>seq2\nTTTTacgt\n",
-  database: "16S_ribosomal_RNA",
+  database: "rRNA_typestrains/16S_ribosomal_RNA",
   program: "blastn"
 };
 
@@ -229,5 +240,8 @@ export function createFakeD1AI(initialRows = {}) {
 }
 
 export function mockAIEnv(db, token = "test-agent-token") {
-  return { AI_DB: db, AI_AGENT_TOKEN: token };
+  // Offline seam: the existing focused suite drives the stage machine through
+  // /status. Production never sets this flag; there status is strictly
+  // read-only and progress is driven by POST /advance.
+  return { AI_DB: db, AI_AGENT_TOKEN: token, MICROBIOME_TEST_ADVANCE: true };
 }

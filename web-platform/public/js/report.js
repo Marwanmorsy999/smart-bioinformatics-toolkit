@@ -19,7 +19,7 @@ export async function buildReportHtml(analysis, options = {}) {
   const generatedAt = new Date().toISOString();
   const inputHash = await sha256Text(options.inputText || "");
   const metadata = {
-    tool: "Smart Bioinformatics Toolkit",
+    tool: "Smart Bioinformatics AI",
     tool_version: "0.1.0",
     generated_at: generatedAt,
     input_file: options.inputFileName || null,
@@ -36,7 +36,7 @@ export async function buildReportHtml(analysis, options = {}) {
 
   const parts = [];
   parts.push("<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\">");
-  parts.push("<title>Smart Bioinformatics Toolkit — Taxonomy report</title>");
+  parts.push("<title>Smart Bioinformatics AI — Taxonomy report</title>");
   parts.push("<style>body{font-family:Arial,Helvetica,sans-serif;margin:24px;color:#111}h1,h2,h3{margin:.6em 0 .3em}table{border-collapse:collapse;width:100%;margin:.5em 0}th,td{border:1px solid #ccc;padding:6px;text-align:left;font-size:12px}th{background:#f2f2f2}.verdict{padding:8px;margin:8px 0;border-left:4px solid #888;background:#fafafa}.caution{color:#8a6d00}.disclaimer{font-size:12px;color:#555;margin-top:12px}@media print{body{margin:12px}}</style>");
   parts.push("</head><body>");
   parts.push("<h1>Taxonomy analysis report</h1>");

@@ -5,6 +5,7 @@
 
 import { validateFasta, makeId, nowIso, MIN_CONFIDENCE } from "./_lib.js";
 import { getTool } from "./registry.js";
+import { ALLOWED_DATABASE, ALLOWED_PROGRAM } from "../blast/_lib.js";
 
 const KEYWORDS = {
   validate_and_profile: ["validate", "validation", "check", "profile", "stats", "statistic", "statistics", "gc", "composition", "n50", "length"],
@@ -16,7 +17,10 @@ const KEYWORDS = {
 // id here must be registered and available before it can appear in a plan.
 const TOOL_BY_INTENT = {
   validate_and_profile: "sequence-stats.profile",
-  identify_taxa: "sequence-stats.profile",
+  // Real 16S identification needs BLAST evidence. A profiling-only step could
+  // never produce taxa calls, so the handoff goes to the consent-gated Worker
+  // BLAST capability instead.
+  identify_taxa: "ncbi.blastn",
   phylogenetics: "phylogenetics.workflow"
 };
 
@@ -83,14 +87,20 @@ function stepFor(intent, datasetId) {
   // in a plan. The intent never chooses a tool from free-form user text.
   const tool = getTool(TOOL_BY_INTENT[intent]);
   if (!tool || tool.available !== true) return null;
+  const egress = intent === "identify_taxa";
   return {
     id: "step_1",
     tool_id: tool.id,
     backend: tool.backend,
-    params: { sequence_type: "dna" },
+    // The database/program values are the exact constants the consent token
+    // is bound to by approve.js and the BLAST endpoints. They are never taken
+    // from free text.
+    params: egress
+      ? { database: ALLOWED_DATABASE, program: ALLOWED_PROGRAM }
+      : { sequence_type: "dna" },
     inputs: [`dataset:${datasetId}`],
-    external_egress: false,
-    consent_required: false,
+    external_egress: egress,
+    consent_required: egress,
     estimated_seconds: tool.estimated_seconds
   };
 }
@@ -132,12 +142,16 @@ export function buildPlan({ text, datasetId, requestId, planId, createdAt, now, 
   };
 
   if (intent === "identify_taxa") {
-    // Real BLAST needs a local database. The plan never claims a taxonomic
-    // result from FASTA alone, and no mock data is presented as real.
-    plan.requires = ["local_database"];
+    // Real BLAST evidence comes from NCBI, not FASTA alone. The plan declares
+    // the egress and its consent requirement but never grants either.
+    plan.external_services = ["NCBI BLAST (https://blast.ncbi.nlm.nih.gov/Blast.cgi)"];
+    plan.consents_required = ["external-blast"];
+    plan.requires = ["approval", "consent", "ncbi_blast"];
     plan.limitations.push(
-      "Taxonomic identification requires BLAST hits from a locally configured database; this MVP performs sequence profiling only and returns no taxa calls.",
-      "No external service is contacted and no consent is required for this plan."
+      "Taxonomic identification requires real BLAST evidence; this plan does not execute anything until the existing approval and consent flow is completed.",
+      "The approved FASTA text is transmitted to NCBI under a single-use consent token bound to the input hash, database and program.",
+      "NCBI limits apply: at most one submission per 10 seconds and no more than one status check per minute.",
+      "A mock RID or synthetic TSV from MOCK_NCBI is not a real NCBI result and must never be reported as one."
     );
   }
   if (intent === "phylogenetics") {

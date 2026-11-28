@@ -4,6 +4,7 @@ __pycache__/
 .venv/
 venv/
 .env
+.dev.vars
 .DS_Store
 Thumbs.db
 python-engine/output/
@@ -13,6 +14,16 @@ benchmark_runs/
 .coverage
 htmlcov/
 
+# Wrangler local state (D1 local DBs, deploy cache) — never commit
+web-platform/.wrangler/
+
 # Local BLAST+ installer (not source)
 ncbi-blast-2.17.0+-win64.exe
 
+
+.env.local
+.dev.vars.local
+wrangler.local.toml
+# local secrets variants (never commit); keep examples like .env.example
+
+.wrangler/

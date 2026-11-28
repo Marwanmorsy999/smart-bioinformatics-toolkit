@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#F5F7F6">
+  <meta name="description" content="Browser-local index of analysis references with recovery of genuine outputs from the server-side AI-run record. Research use only.">
+  <title>Research history — Smart Bioinformatics AI</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/main.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/app-views.css">
+  <link rel="stylesheet" href="css/phylo.css">
+  <link rel="stylesheet" href="css/microbiome.css">
+  <link rel="stylesheet" href="css/history.css">
+</head>
+<body>
+  <a class="skip-link" href="#history-main">Skip to main content</a>
+    <header class="topbar app-header">
+    <a class="brand" href="index.html" aria-label="Smart Bioinformatics AI home">
+      <img class="brand-logo" src="brand/sbio-logo-primary.svg" alt="Smart Bioinformatics AI" width="245" height="28">
+    </a>
+    <button class="nav-toggle" type="button" aria-label="Open navigation" aria-controls="primary-nav" aria-expanded="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+    <nav id="primary-nav" class="top-nav" aria-label="Main navigation">
+      <a href="index.html#tools">Tools</a>
+      <a href="workspace.html">Research workspace</a>
+      <a href="phylo.html">Phylogenetics</a>
+      <a href="protein.html">Protein annotation</a>
+      <a href="16s.html">16S</a>
+      <a href="microbiome.html">Microbiome</a>
+      <a href="assistant.html">Assistant</a>
+      <a href="history.html" aria-current="location">Research history</a>
+      <a href="index.html#about">About</a>
+    </nav>
+    <a class="nav-start-action" href="16s.html" tabindex="-1">Start an analysis</a>
+    <span class="local-badge"><span class="status-dot" aria-hidden="true"></span> Browser-local index</span>
+  </header>
+
+  <main id="history-main" class="app-main history-view" tabindex="-1">
+    <header class="view-head">
+      <div>
+        <h1>Research history</h1>
+        <p class="section-kicker">Reopen an earlier analysis from its genuine server-side run record. This page never submits a job.</p>
+      </div>
+      <aside id="history-honest-label" class="info-card" role="note">
+        <p>Browser-local research history — this index lives in this browser and is not cross-device owner-account sync. The actual analysis and original files remain retrievable from the server-side AI-run record.</p>
+      </aside>
+      <p class="ws-status-line"><a href="index.html#tools">New analysis</a> · <a href="phylo.html">Open phylo workflow</a></p>
+    </header>
+
+    <p id="history-error" class="info-card is-validation" role="alert" hidden></p>
+
+    <div class="app-shell history-shell">
+      <aside class="app-rail" aria-label="History filters and entries">
+        <section class="panel" aria-labelledby="history-list-title">
+          <div class="panel-head"><h2 id="history-list-title">Stored references</h2></div>
+          <p class="panel-note">Only run references are stored here. Sequence text, alignments, trees, keys and tokens are never written to browser storage.</p>
+          <div id="history-filters" class="history-filters" role="group" aria-label="Filter research history">
+            <button type="button" data-history-filter="all" aria-pressed="true">All</button>
+            <button type="button" data-history-filter="16s" aria-pressed="false">16S identification</button>
+            <button type="button" data-history-filter="phylo" aria-pressed="false">Phylogenetics</button>
+            <button type="button" data-history-filter="protein" aria-pressed="false">Protein annotation</button>
+            <button type="button" data-history-filter="microbiome" aria-pressed="false">16S microbiome</button>
+            <button type="button" data-history-filter="running" aria-pressed="false">Running</button>
+            <button type="button" data-history-filter="failed" aria-pressed="false">Failed</button>
+            <button type="button" data-history-filter="completed" aria-pressed="false">Completed</button>
+          </div>
+          <ul id="history-list" class="data-list history-list" aria-live="polite"></ul>
+          <p id="history-empty" class="empty-state" hidden>No research history entries are stored in this browser yet.</p>
+        </section>
+      </aside>
+
+      <div class="app-detail history-detail">
+        <section id="history-detail" class="panel" aria-labelledby="history-detail-title" hidden>
+          <div class="panel-head"><h2 id="history-detail-title">Recovered run record</h2></div>
+          <p id="history-recovery-status" class="info-card" role="status" aria-live="polite"></p>
+
+          <h3>Jobs and recorded state</h3>
+          <ul id="history-jobs" class="data-list"></ul>
+
+          <h3>Stored artifacts and checksums</h3>
+          <ul id="history-artifacts" class="data-list"></ul>
+
+          <h3>Validation and provenance</h3>
+          <p id="history-validation"></p>
+          <details>
+            <summary>Full provenance from the stored run</summary>
+            <pre id="history-provenance"></pre>
+          </details>
+
+          <div class="history-phylo">
+            <h3>Restored alignment (original artifact content)</h3>
+            <figure class="phylo-figure">
+              <div id="history-alignment" class="alignment-placeholder">No alignment text is available from the stored run.</div>
+              <figcaption>Multiple-sequence alignment — retrieved from the stored run record, never reconstructed.</figcaption>
+            </figure>
+
+            <h3>Restored tree</h3>
+            <p id="history-tree-note" class="panel-note"></p>
+            <figure class="phylo-figure">
+              <div id="history-tree" aria-label="Restored phylogenetic tree visualization"></div>
+              <figcaption>Interactive tree rendered from the genuine Newick tree in the stored run record.</figcaption>
+            </figure>
+            <ul id="history-starting-trees" class="data-list"></ul>
+
+            <h3>IQ-TREE report</h3>
+            <p><a id="history-report-link" href="#" hidden>Download original IQ-TREE report</a></p>
+            <pre id="history-report-excerpt" class="history-report-excerpt"></pre>
+          </div>
+          <div class="history-protein">
+            <h3>Restored protein annotation (server recovery)</h3>
+            <p id="history-protein-status" class="panel-note">No protein run is selected.</p>
+            <h4>Original protein input</h4>
+            <pre id="history-protein-input" class="history-report-excerpt"></pre>
+            <h4>Protein architecture from stored coordinates</h4>
+            <p id="history-protein-note" class="panel-note"></p>
+            <figure class="phylo-figure">
+              <div id="history-protein-viewer" aria-label="Restored protein architecture viewer"></div>
+              <figcaption>Drawn only from feature coordinates in the stored protein annotation artifact.</figcaption>
+            </figure>
+            <ul id="history-protein-features" class="data-list"></ul>
+            <h4>GO evidence and source releases</h4>
+            <p id="history-protein-go"></p>
+            <ul id="history-protein-downloads" class="phylo-downloads"></ul>
+          </div>
+
+          <div class="history-microbiome">
+            <h3>Restored 16S microbiome evidence (server recovery)</h3>
+            <p id="history-microbiome-status" class="panel-note">No microbiome run is selected.</p>
+            <h4>Original input and metadata</h4>
+            <pre id="history-microbiome-input" class="history-report-excerpt"></pre>
+            <h4>Composition and alpha diversity from stored tables</h4>
+            <div id="history-microbiome-composition" class="table-scroll"></div>
+            <p id="history-microbiome-alpha"></p>
+            <h4>PCoA from stored coordinates</h4>
+            <div id="history-microbiome-pcoa" class="chart-box"></div>
+            <ul id="history-microbiome-downloads" class="phylo-downloads"></ul>
+          </div>
+
+          <h3>Downloads from the original artifacts</h3>
+          <ul id="history-downloads" class="phylo-downloads"></ul>
+          <ul id="history-checksums" class="data-list" aria-live="polite"></ul>
+
+          <section id="history-provider" aria-label="Recorded provider job state"></section>
+          <section id="history-continuation" aria-label="Optional continuation"></section>
+        </section>
+
+        <section class="panel empty-state" id="history-detail-empty">
+          <span class="empty-state-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM4 10h16M9 10v9"/></svg>
+          </span>
+          <div>
+            <h3>No run selected</h3>
+            <p>Select a stored reference to read its genuine jobs, artifacts and validation from the server-side AI-run record. Nothing executes from this page.</p>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+
+    <footer class="site-footer app-footer">
+    <div class="footer-grid">
+      <div>
+        <div class="footer-brand">
+          <img class="footer-logo" src="brand/sbio-logo-dark.svg" alt="Smart Bioinformatics AI" width="245" height="28">
+        </div>
+        <p>A precise, research-grade workspace for scientific analysis. Inspect the inputs, keep the outputs, and read the caveats.</p>
+      </div>
+      <div>
+        <h2 class="footer-heading">Analyze</h2>
+        <ul class="footer-links">
+          <li><a href="16s.html">16S identification</a></li>
+          <li><a href="phylo.html">Phylogenetics</a></li>
+          <li><a href="protein.html">Protein annotation</a></li>
+          <li><a href="microbiome.html">Microbiome</a></li>
+          <li><a href="index.html#tools">Sequence analysis &amp; statistics</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2 class="footer-heading">Research</h2>
+        <ul class="footer-links">
+          <li><a href="assistant.html">AI assistant</a></li>
+          <li><a href="workspace.html">Research workspace</a></li>
+          <li><a href="history.html">Research history</a></li>
+          <li><a href="ai.html">AI research workspace</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2 class="footer-heading">About</h2>
+        <ul class="footer-links">
+          <li><a href="index.html#about">About</a></li>
+          <li><a href="benchmark.html#bench-limits-title">Known limitations</a></li>
+          <li><a href="research-use.html">Research-use policy</a></li>
+          <li><a href="blast.html">BLAST results</a></li>
+          <li><a href="taxonomy.html">Taxonomy</a></li>
+        </ul>
+      </div>
+    </div>
+    <p class="footer-disclaimer">Research and educational use only. Results require independent scientific interpretation. <a href="research-use.html">Full research-use statement</a>.</p>
+    <div class="footer-bottom"><span>Smart Bioinformatics AI</span></div>
+  </footer>
+  <script src="js/nav.js"></script>
+  <script type="module" src="js/research-history.js"></script>
+</body>
+</html>

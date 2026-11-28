@@ -10,6 +10,18 @@ compatibility_date = "2026-11-22"
 # Pages-specific validation, which conflicts with `main` + `assets`.
 assets = { directory = "./public", binding = "ASSETS", run_worker_first = true }
 
+# M7 feature flags. Everything defaults OFF. Secrets (API keys, signing key)
+# are set only with `wrangler secret put` for each environment, never here.
+[vars]
+GALAXY_ENABLED = "false"
+SMARTSBIO_ENABLED = "false"
+NINEROUTER_ENABLED = "false"
+
+# Private artifact storage is OPTIONAL and must be provisioned explicitly:
+#   [[r2_buckets]] binding = "ARTIFACTS" bucket_name = "<private-bucket>"
+#   wrangler secret put ARTIFACT_SIGNING_KEY [--env staging]
+# Without both, artifact endpoints fail closed; no public bucket is assumed.
+
 # Free-tier D1 database holding both BLAST requests and the AI control plane.
 # The binding name MUST stay `BLAST_DB` (handlers read env.BLAST_DB).
 [[d1_databases]]
@@ -24,7 +36,24 @@ database_id = "d277fe22-f99d-46d8-9ae9-6de17942a6a9"
 name = "smart-bioinformatics-toolkit-staging"
 assets = { directory = "./public", binding = "ASSETS", run_worker_first = true }
 
+[env.staging.vars]
+# M7.2: Galaxy is the first enabled provider, staging only. Production stays off.
+GALAXY_ENABLED = "true"
+SMARTSBIO_ENABLED = "false"
+# M7.9: the owner's existing 9Router is enabled on STAGING ONLY. The remote
+# base URL and API key are staging-only Worker secrets (never in this file,
+# never in source, never browser-accessible). Production stays off.
+NINEROUTER_ENABLED = "true"
+NINEROUTER_MODEL = "auto"
+# M7.10.1: bound server-side provider deadline (seconds). Staging only.
+NINEROUTER_TIMEOUT = "60"
+# M7.10.2: NCBI Common URL API tool identifier (staging only). No personal
+# contact email is configured; none is invented or sent.
+NCBI_TOOL = "smart-bioinformatics-toolkit"
+
+# M7.1: staging now uses its OWN D1 database. Production keeps the original
+# binding below; staging and production must never share a row space.
 [[env.staging.d1_databases]]
 binding = "BLAST_DB"
-database_name = "smart-bioinformatics-toolkit-blast"
-database_id = "d277fe22-f99d-46d8-9ae9-6de17942a6a9"
+database_name = "smart-bioinformatics-toolkit-staging"
+database_id = "72a07465-f0fe-4d32-93af-72bdc18b0cc0"

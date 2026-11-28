@@ -81,3 +81,11 @@ Last reviewed: 2026-11-02. Repository branches and licences can change; check ag
 - `web-platform/public/js/verdict.js`, `difficult-groups.js`: verdict logic (JS) and embedded groups (generated from the shared JSON; a test fails if they drift).
 - `python-engine/src/smartbio/benchmark/queries.py`, `evaluate.py`: benchmark query generation and evaluation.
 - Tests: `tests/test_verdict.py`, `test_verdict_pipeline.py`, `test_benchmark.py`, `web-platform/tests/verdict.test.mjs`, `verdict_pipeline.test.mjs`.
+
+## M7.4 unified research workspace (batch 1, design + API only)
+
+- `docs/M7_4_WORKSPACE_DESIGN.md`: architecture, schema, API, authorization and honesty decisions.
+- `web-platform/migrations/0011_workspace.sql`: additive columns on `projects`/`datasets`, new `workspace_runs` and `provenance_records`; reports reuse `report_runs`.
+- `web-platform/functions/api/workspace/`: versioned static workflow catalog (`catalog.js`), owner derivation and state machine (`_lib.js`), labelled sample payload (`demo.js`) and owner-scoped project/dataset/run/report handlers.
+- Existing code reused unchanged: `functions/api/ai/_lib.js` helpers, `agentTokenError`, D1 tables `projects`/`datasets`/`report_runs`/`audit_events`, and the legacy 16S/phylo engines.
+- **Status label:** API + design **EXISTS (batch 1)**; browser workspace UI **NOT BUILT** (batch 2). No new scientific domain, no R2, no login, no production deployment.

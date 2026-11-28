@@ -1,0 +1,25 @@
+{
+  "__fixture": "MOCK - synthetic Galaxy error envelopes for the M7.2 OFFLINE failure/usage matrix ONLY. NOT live provider responses. Every status and code below is canned.",
+  "execution_mode": "mock",
+  "is_mock": true,
+  "expired_credentials_401": {
+    "error": "expired_api_key",
+    "message": "MOCK: API key expired (offline fixture)."
+  },
+  "account_activation_403": {
+    "error": "action_requires_account_activation",
+    "message": "MOCK: Action requires account activation (offline fixture)."
+  },
+  "budget_exhausted_429": {
+    "error": "budget_exhausted",
+    "message": "MOCK: insufficient quota (offline fixture)."
+  },
+  "server_error_500": {
+    "error": "server_error",
+    "message": "MOCK: internal error (offline fixture)."
+  },
+  "not_found_404": {
+    "error": "not_found",
+    "message": "MOCK: endpoint not found (offline fixture)."
+  }
+}

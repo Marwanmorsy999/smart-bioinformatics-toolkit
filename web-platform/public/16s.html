@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Browser-only 16S rRNA identification workflow: validate FASTA, approve a real NCBI BLASTN request, retrieve real results, and review taxonomy evidence. Research use only.">
+  <meta name="theme-color" content="#F5F7F6">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <title>16S identification · Smart Bioinformatics AI</title>
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/main.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/16s-flow.css">
+</head>
+<body>
+  <a class="skip-link" href="#sixteen-main">Skip to main content</a>
+
+    <header class="topbar app-header">
+    <a class="brand" href="index.html" aria-label="Smart Bioinformatics AI home">
+      <img class="brand-logo" src="brand/sbio-logo-primary.svg" alt="Smart Bioinformatics AI" width="245" height="28">
+    </a>
+    <button class="nav-toggle" type="button" aria-label="Open navigation" aria-controls="primary-nav" aria-expanded="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+    <nav id="primary-nav" class="top-nav" aria-label="Main navigation">
+      <a href="index.html#tools">Tools</a>
+      <a href="workspace.html">Research workspace</a>
+      <a href="phylo.html">Phylogenetics</a>
+      <a href="protein.html">Protein annotation</a>
+      <a href="16s.html" aria-current="location">16S</a>
+      <a href="microbiome.html">Microbiome</a>
+      <a href="assistant.html">Assistant</a>
+      <a href="history.html">Research history</a>
+      <a href="index.html#about">About</a>
+    </nav>
+    <a class="nav-start-action" href="16s.html" tabindex="-1">Start an analysis</a>
+    <span class="local-badge caution">Approval required</span>
+  </header>
+
+  <main id="sixteen-main" class="app-main sixteen-main" tabindex="-1">
+    <header class="view-head">
+      <div>
+        <p class="section-kicker">Real NCBI BLASTN · browser-only control flow</p>
+        <h1>16S rRNA identification</h1>
+        <p class="section-lede">Validate your FASTA, approve an exact plan, then submit to NCBI through the existing single-use consent gate. Every scientific value below comes from a result actually retrieved by the platform. Nothing on this page is simulated unless the operator has explicitly enabled mock mode — and then it is labelled as synthetic.</p>
+      </div>
+      <aside class="info-card research-strip" aria-label="Research use notice">
+        <strong>Research use only.</strong> Similarity is evidence, not proof of species identity or a clinical diagnosis. Results require independent interpretation. <a href="research-use.html">Research-use terms</a>.
+      </aside>
+    </header>
+
+    <div class="storage-notice" role="note" data-testid="data-handling-disclosure">
+      <strong>Data handling.</strong>
+      Browser validation is local. When you create a request, your FASTA is sent to Smart Bioinformatics AI and stored in D1 for that request. It is not sent to NCBI until you review and approve the plan and explicitly submit using the single-use consent.
+      FASTA bytes are stored inline in D1 for this request, not durably in object storage; no retention period or deletion mechanism is documented.
+      Do not submit sequences you are not authorised to transmit.
+      <details class="data-flow-details">
+        <summary>Technical data-flow details</summary>
+        <ul>
+          <li><strong>What is sent to this platform:</strong> your FASTA text plus a short question/objective, sent to <code>POST /api/ai/requests</code>. Validation, statistics and previews before that step run in your browser; nothing else leaves your browser for those local checks.</li>
+          <li><strong>What is stored:</strong> FASTA bytes are stored inline in D1 <code>datasets.fasta_text</code>; a SHA-256 hash, size, filename, provenance/status and any retrieved result table; plus request, plan and job rows, a single-use consent record, and append-only audit events. Audit events contain no sequence. Nothing is stored in durable object storage; no durable R2 byte storage. No retention period and no user-facing deletion mechanism is documented.</li>
+          <li><strong>What goes to NCBI:</strong> only the approved FASTA plus the approved parameters <code>DATABASE=rRNA_typestrains/16S_ribosomal_RNA</code> and <code>PROGRAM=blastn</code> (<code>CMD=Put</code>); nothing unrelated, no project files, no secrets, and no consent token. Status and results polling (<code>CMD=Get</code>) sends only the RID. The outgoing NCBI URL is never logged, and the consent token is never sent to NCBI. Nothing is sent to any other external service.</li>
+          <li><strong>When external transmission occurs:</strong> nothing is sent to NCBI before approval and submission. External transmission to NCBI occurs only after you review and approve the plan and explicitly submit using the single-use consent. Nothing else is sent to external services.</li>
+          <li><strong>What consent authorizes:</strong> a short-lived, single-use token bound to this exact input hash, database and program authorizes exactly one external submission; it is not reusable.</li>
+        </ul>
+      </details>
+    </div>
+
+    <ol class="flow-steps" aria-label="Workflow steps">
+      <li>
+        <section id="step-input" class="flow-panel" aria-labelledby="step-input-title">
+          <div class="step-head"><span class="step-number">1</span><h2 id="step-input-title">Provide and validate FASTA</h2></div>
+          <div class="field-group">
+            <label for="fasta-file">FASTA file (optional)</label>
+            <input id="fasta-file" type="file" accept=".fasta,.fa,.fna,.txt,text/plain">
+            <small>Reading a file fills the text box below; reading is local. Creating a request sends your FASTA to this platform (see data handling above); nothing is sent to NCBI until you approve and submit.</small>
+          </div>
+          <div class="field-group">
+            <label for="fasta-text">FASTA text</label>
+            <!-- The greyed-out example is a PLACEHOLDER only; it is NOT a value. No sequence is loaded until you paste one or select a file. -->
+            <textarea id="fasta-text" rows="8" spellcheck="false" placeholder="Paste FASTA here… example: &gt;record_id&#10;ACGT…"></textarea>
+            <small class="placeholder-note">The greyed-out example is only a placeholder, not a sequence. <strong>No sequence is loaded until you paste one or select a file.</strong></small>
+          </div>
+          <div class="button-row">
+            <button id="load-example" type="button" class="secondary-button small-button">Load example input (not a result)</button>
+            <button id="validate-fasta" type="button" class="primary-button small-button">Validate FASTA</button>
+          </div>
+          <div id="input-info" class="input-info" role="status" aria-live="polite" hidden></div>
+        </section>
+      </li>
+
+      <li>
+        <section id="step-plan" class="flow-panel" aria-labelledby="step-plan-title">
+          <div class="step-head"><span class="step-number">2</span><h2 id="step-plan-title">Create the request and review the generated plan</h2></div>
+          <div class="field-group">
+            <label for="objective">Objective</label>
+            <input id="objective" type="text" maxlength="200" value="Identify taxa for these 16S rRNA sequences using BLASTN">
+            <small>Free text only selects from the fixed allowlisted intents; it cannot choose a tool or a database.</small>
+          </div>
+          <div class="button-row">
+            <button id="create-request" type="button" class="primary-button small-button" disabled>Create request</button>
+          </div>
+          <div class="plan-columns">
+            <div id="plan-view" class="plan-view" hidden aria-live="polite"></div>
+            <div id="plan-explanation" class="plan-explanation" hidden aria-live="polite"></div>
+          </div>
+          <div id="approval-box" class="approval-box" hidden>
+            <label for="approve-check">
+              <input id="approve-check" type="checkbox">
+              <span>I have reviewed this exact plan. I approve the single step and consent to transmit the validated FASTA bytes to <strong>NCBI BLAST</strong> (https://blast.ncbi.nlm.nih.gov/Blast.cgi) using database <code>rRNA_typestrains/16S_ribosomal_RNA</code> (16S ribosomal RNA sequences, Bacteria and Archaea; previously named <code>16S_ribosomal_RNA</code>) and program <code>blastn</code>. I understand this consent is scoped to this input, short-lived and single-use.</span>
+            </label>
+            <p class="small">Approval creates jobs and mints the single-use consent token; nothing is sent to NCBI until you then press “Submit to NCBI”.</p>
+            <button id="approve-plan" type="button" class="primary-button small-button" disabled>Approve plan &amp; issue consent</button>
+          </div>
+          <div id="consent-view" class="consent-view" role="status" aria-live="polite" hidden></div>
+        </section>
+      </li>
+
+      <li>
+        <section id="step-submit" class="flow-panel" aria-labelledby="step-submit-title">
+          <div class="step-head"><span class="step-number">3</span><h2 id="step-submit-title">Submit and follow the real RID</h2></div>
+          <div class="button-row">
+            <button id="submit-blast" type="button" class="primary-button small-button" disabled>Submit to NCBI</button>
+            <span id="submit-note" class="small" role="status" aria-live="polite">One submission per 10 seconds is permitted by NCBI usage rules.</span>
+          </div>
+          <div id="rid-view" class="rid-view" role="status" aria-live="polite" hidden></div>
+          <div id="provider-status" class="provider-status" role="status" aria-live="polite" hidden></div>
+          <div class="button-row">
+            <button id="check-status" type="button" class="secondary-button small-button" disabled>Check status</button>
+            <span id="status-countdown" class="small" aria-live="off"></span>
+          </div>
+          <div class="resume-row">
+            <label for="resume-rid">Already submitted? Resume monitoring by RID (no new submission)</label>
+            <input id="resume-rid" type="text" maxlength="64" autocomplete="off" spellcheck="false" placeholder="NCBI RID">
+            <button id="resume-rid-button" type="button" class="secondary-button small-button">Resume by RID</button>
+          </div>
+          <div class="small">
+            <p>Status is checked at most once per minute (the server enforces this too). Checking does not fetch results until the job is complete. No result is shown unless a real tabular report is retrieved and validated.</p>
+            <p>NCBI may occasionally return inconsistent status information. When this happens, monitoring stops and the request is held for verification. No scientific result is shown until the platform retrieves and validates a real results file.</p>
+            <details class="data-flow-details"><summary>Technical detail</summary><p>The API reports a terminal <code>status_conflict</code> state when structured status evidence disagrees; it is never shown as queued, no-hit or success, and monitoring stops. Production checks only NCBI's canonical status for your RID; no result is shown until a real results file is retrieved.</p></details>
+          </div>
+        </section>
+      </li>
+
+      <li>
+        <section id="step-results" class="flow-panel" aria-labelledby="step-results-title">
+          <div class="step-head"><span class="step-number">4</span><h2 id="step-results-title">Real retrieved results</h2></div>
+          <div id="results-banner" class="results-banner" role="status" aria-live="polite" hidden></div>
+          <div id="results" hidden>
+            <div id="summary" class="summary-grid" aria-label="Result summary"></div>
+            <div id="search-overview" class="search-overview" aria-label="Search overview"></div>
+            <div id="interpretation-view" class="interpretation-view" aria-label="Evidence-based interpretation"></div>
+            <div id="best-match-view" class="best-match-view" aria-label="Best-match table">
+              <div class="table-scroll">
+                <table id="best-hits-table">
+                  <caption>Best matches — values present in the retrieved structured report only</caption>
+                  <thead><tr>
+                    <th scope="col">Rank</th><th scope="col">Organism / accession</th>
+                    <th scope="col">Identity %</th><th scope="col">Hit coverage % (union of HSP query intervals / full query length)</th>
+                    <th scope="col">E-value</th><th scope="col">Bit score</th><th scope="col">Alignment (per-HSP span shown separately)</th>
+                  </tr></thead>
+                  <tbody id="best-hits-body"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="table-scroll">
+              <table id="hits-table">
+                <caption>Real BLAST hits — only fields present in the retrieved TSV are shown</caption>
+                <thead><tr>
+                  <th scope="col">Query id</th><th scope="col">Accession</th><th scope="col">Description / organism</th>
+                  <th scope="col">Identity %</th><th scope="col">Coverage % (TSV qcovs, or JSON2 hit union)</th><th scope="col">E-value</th><th scope="col">Bit score</th>
+                </tr></thead>
+                <tbody id="hits-body"></tbody>
+              </table>
+            </div>
+            <div id="query-details" class="query-details" aria-label="Sequence-level detail"></div>
+            <div id="taxonomy-view" class="taxonomy-view" aria-label="Taxonomy consensus and verdict"></div>
+            <div id="warnings-view" class="warnings-view" aria-label="Warnings and limitations"></div>
+            <div id="provenance-view" class="provenance-view" aria-label="Provenance"></div>
+            <div class="button-row">
+              <button id="download-tsv" type="button" class="secondary-button small-button">Download retrieved TSV</button>
+              <button id="download-json" type="button" class="secondary-button small-button">Download parsed JSON</button>
+              <button id="download-csv" type="button" class="secondary-button small-button" disabled>Download hit summary (CSV)</button>
+              <button id="download-report" type="button" class="secondary-button small-button" disabled>Download full report (TXT)</button>
+              <button id="download-alignment" type="button" class="secondary-button small-button" disabled>Download alignment data (TSV)</button>
+            </div>
+          </div>
+          <p id="results-empty" class="results-empty">No results yet. Results appear only after a real RID is retrieved and its tabular report is parsed.</p>
+        </section>
+      </li>
+    </ol>
+
+    <div id="flow-error" class="flow-error" role="alert" aria-live="assertive" hidden></div>
+    <button id="clear-error" type="button" class="secondary-button small-button" hidden>Clear error</button>
+  </main>
+
+    <footer class="site-footer app-footer">
+    <div class="footer-grid">
+      <div>
+        <div class="footer-brand">
+          <img class="footer-logo" src="brand/sbio-logo-dark.svg" alt="Smart Bioinformatics AI" width="245" height="28">
+        </div>
+        <p>A precise, research-grade workspace for scientific analysis. Inspect the inputs, keep the outputs, and read the caveats.</p>
+      </div>
+      <div>
+        <h2 class="footer-heading">Analyze</h2>
+        <ul class="footer-links">
+          <li><a href="16s.html">16S identification</a></li>
+          <li><a href="phylo.html">Phylogenetics</a></li>
+          <li><a href="protein.html">Protein annotation</a></li>
+          <li><a href="microbiome.html">Microbiome</a></li>
+          <li><a href="index.html#tools">Sequence analysis &amp; statistics</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2 class="footer-heading">Research</h2>
+        <ul class="footer-links">
+          <li><a href="assistant.html">AI assistant</a></li>
+          <li><a href="workspace.html">Research workspace</a></li>
+          <li><a href="history.html">Research history</a></li>
+          <li><a href="ai.html">AI research workspace</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2 class="footer-heading">About</h2>
+        <ul class="footer-links">
+          <li><a href="index.html#about">About</a></li>
+          <li><a href="benchmark.html#bench-limits-title">Known limitations</a></li>
+          <li><a href="research-use.html">Research-use policy</a></li>
+          <li><a href="blast.html">BLAST results</a></li>
+          <li><a href="taxonomy.html">Taxonomy</a></li>
+        </ul>
+      </div>
+    </div>
+    <p class="footer-disclaimer">Research and educational use only. Results require independent scientific interpretation. <a href="research-use.html">Full research-use statement</a>.</p>
+    <div class="footer-bottom"><span>Smart Bioinformatics AI</span></div>
+  </footer>
+
+  <script src="js/nav.js" defer></script>
+  <script type="module" src="js/16s-flow.js"></script>
+</body>
+</html>

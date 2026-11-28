@@ -1,0 +1,44 @@
+{
+  "__fixture": "MOCK - synthetic smarts.bio pipeline responses, NOT live data. The list shape mirrors the VERIFIED 2026-11-25 live {processes:[...], total, pagination} form (NOT `data`); detail/create shapes follow the published docs and are NOT live-verified.",
+  "created": {
+    "status": "success",
+    "data": { "id": "pipe_mock001", "status": "queued", "progress_pct": 0, "output_paths": [] }
+  },
+  "running": {
+    "status": "success",
+    "data": { "id": "pipe_mock001", "status": "running", "progress_pct": 62, "current_step": "Mock step", "output_paths": [] }
+  },
+  "completed": {
+    "status": "success",
+    "data": {
+      "id": "pipe_mock001",
+      "status": "completed",
+      "progress_pct": 100,
+      "output_paths": ["results/mock.vcf", "results/mock_report.html"]
+    }
+  },
+  "listing": {
+    "status": "success",
+    "processes": [
+      {
+        "id": "pipe_mock001",
+        "tool_id": "mock-pipeline-id",
+        "status": "completed",
+        "output_paths": ["results/mock.vcf", "results/mock_report.html"]
+      }
+    ],
+    "total": 1,
+    "pagination": { "page": 1, "limit": 20 }
+  },
+  "files": {
+    "status": "success",
+    "data": [
+      { "key": "results/mock.vcf", "name": "mock.vcf", "size": 512 },
+      { "key": "results/mock_report.html", "name": "mock_report.html", "size": 1024 }
+    ]
+  },
+  "download": {
+    "status": "success",
+    "data": { "downloadUrl": "https://storage.example.invalid/mock.vcf?sig=mock" }
+  }
+}

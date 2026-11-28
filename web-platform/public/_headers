@@ -4,3 +4,11 @@
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: geolocation=(), microphone=(), camera=()
+
+# M7.4 workspace UI: its page and controller must never be served from cache.
+# Narrow paths only; every other asset keeps the global policy above.
+/workspace.html
+  Cache-Control: no-store
+
+/js/workspace.js
+  Cache-Control: no-store

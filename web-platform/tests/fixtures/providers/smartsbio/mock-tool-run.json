@@ -1,0 +1,16 @@
+{
+  "__fixture": "MOCK - synthetic smarts.bio tool-run envelopes, NOT live data. Shapes mirror the VERIFIED 2026-11-25 live {status:'success', result:{success, data}} form; the failure case is fabricated.",
+  "success": {
+    "status": "success",
+    "result": { "success": true, "data": { "query_type": "uniprot", "identifier": "P04637", "entries": [] } }
+  },
+  "failure": {
+    "status": "success",
+    "result": { "success": false, "error": "Validation failed: query_type parameter is required" }
+  },
+  "http_validation_error": {
+    "status": "error",
+    "error": "validation_error",
+    "message": "Validation failed: query_type parameter is required"
+  }
+}

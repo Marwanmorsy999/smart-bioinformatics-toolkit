@@ -1,4 +1,4 @@
-// Standalone Cloudflare Worker entrypoint.
+﻿// Standalone Cloudflare Worker entrypoint.
 //
 // The control plane is a Worker, not a Pages project. The existing
 // functions/api/** modules keep their Pages-Functions-shaped `onRequest`
@@ -6,52 +6,263 @@
 // to that context. Non-API requests are delegated to the static-assets binding.
 
 import { onRequest as onTools } from "./functions/api/tools.js";
+import { onRequest as onToolCatalog } from "./functions/api/tools/catalog/index.js";
 import { onRequest as onAiRequests } from "./functions/api/ai/requests/index.js";
+import { onRequest as onWorkspace } from "./functions/api/workspace/index.js";
 import { onRequest as onAiBackend } from "./functions/api/ai/backend.js";
 import { onRequest as onAiJobs } from "./functions/api/ai/jobs/index.js";
 import { onRequest as onAiJobResult } from "./functions/api/ai/jobs/[id]/result.js";
+import { onRequest as onPhyloRun } from "./functions/api/ai/workflows/phylo/run.js";
+import { onRequest as onPhyloStatus } from "./functions/api/ai/workflows/phylo/status.js";
+import { onRequest as onPhyloTool } from "./functions/api/ai/workflows/phylo/tool.js";
+import { onRequest as onMicrobiomePlan } from "./functions/api/ai/workflows/microbiome/plan.js";
+import { onRequest as onMicrobiomeRun } from "./functions/api/ai/workflows/microbiome/run.js";
+import { onRequest as onMicrobiomeRetry } from "./functions/api/ai/workflows/microbiome/retry.js";
+import { onRequest as onMicrobiomeRefreshDiscovery } from "./functions/api/ai/workflows/microbiome/refresh-discovery.js";
+import { onRequest as onMicrobiomeResumeStages } from "./functions/api/ai/workflows/microbiome/resume-stages.js";
+import { onRequest as onMicrobiomeContinueStages } from "./functions/api/ai/workflows/microbiome/continue-stages.js";
+import { onRequest as onMicrobiomeToolSchema } from "./functions/api/ai/workflows/microbiome/tool-schema.js";
+import { onRequest as onMicrobiomeToolSearch } from "./functions/api/ai/workflows/microbiome/tool-search.js";
+import { onRequest as onMicrobiomeImportSchema } from "./functions/api/ai/workflows/microbiome/import-schema.js";
+import { onRequest as onMicrobiomeImportJob } from "./functions/api/ai/workflows/microbiome/import-job.js";
+import { onRequest as onMicrobiomeStatus } from "./functions/api/ai/workflows/microbiome/status.js";
+import { onRequest as onMicrobiomeAdvance } from "./functions/api/ai/workflows/microbiome/advance.js";
+import { onRequest as onMicrobiomeArtifact } from "./functions/api/ai/workflows/microbiome/artifact.js";
+import { onRequest as onMicrobiomeDatasetDetail } from "./functions/api/ai/workflows/microbiome/dataset-detail.js";
+import { onRequest as onMicrobiomeResult } from "./functions/api/ai/workflows/microbiome/result.js";
+import { onRequest as onMicrobiomeSubmissionFailures } from "./functions/api/ai/workflows/microbiome/submission-failures.js";
+import {
+  proteinHandlers as createProteinHandlers
+} from "./functions/api/protein/workflow.js";
+import { onRequest as onAiJobReport } from "./functions/api/ai/jobs/[id]/report.js";
 import { onRequest as onAiPlan } from "./functions/api/ai/plans/[id]/index.js";
 import { onRequest as onAiPlanApprove } from "./functions/api/ai/plans/[id]/approve.js";
 import { onRequest as onAiRun } from "./functions/api/ai/runs/[id]/index.js";
+import { onRequest as onAiRunRecovery } from "./functions/api/ai/runs/[id]/recovery.js";
 import { onRequest as onAiRunProvenance } from "./functions/api/ai/runs/[id]/provenance.js";
 import { onRequest as onAiRunReport } from "./functions/api/ai/runs/[id]/report.js";
 import { onRequest as onBlastSubmit } from "./functions/api/blast/submit.js";
 import { onRequest as onBlastStatus } from "./functions/api/blast/status/[rid].js";
 import { onRequest as onBlastResults } from "./functions/api/blast/results/[rid].js";
 import { onRequest as onBlastHistory } from "./functions/api/blast/history.js";
+import { onRequest as onProviders } from "./functions/api/providers/index.js";
+import { onRequest as onProviderDetail } from "./functions/api/providers/[id]/index.js";
+import { onRequest as onProviderCapabilities } from "./functions/api/providers/[id]/capabilities.js";
+import { onRequest as onProviderLimits } from "./functions/api/providers/[id]/limits.js";
+import { onRequest as onProviderUsage } from "./functions/api/providers/usage.js";
+import { onRequest as onProviderChat } from "./functions/api/providers/chat.js";
+import { onRequest as onProviderPlan } from "./functions/api/providers/plan.js";
+import { onRequest as onProviderConsent } from "./functions/api/providers/consent.js";
+import { onRequest as onProviderTransfers } from "./functions/api/providers/transfers.js";
+import { onRequest as onProviderEmergencyStop } from "./functions/api/providers/emergency-stop.js";
+import { onRequest as onProviderBudget } from "./functions/api/providers/budget.js";
+import { onRequest as onProviderJobs } from "./functions/api/providers/jobs/index.js";
+import { onRequest as onProviderJob } from "./functions/api/providers/jobs/[id]/index.js";
+import { onRequest as onProviderJobCancel } from "./functions/api/providers/jobs/[id]/cancel.js";
+import { onRequest as onProviderJobArtifacts } from "./functions/api/providers/jobs/[id]/artifacts.js";
+import { onRequest as onGalaxyUpload } from "./functions/api/providers/galaxy-artifacts/upload.js";
+import { onRequest as onGalaxyDatasetMetadata } from "./functions/api/providers/galaxy-artifacts/datasets/[id]/metadata.js";
+import { onRequest as onGalaxyDatasetDownload } from "./functions/api/providers/galaxy-artifacts/datasets/[id]/download.js";
+import { onRequest as onGalaxyArtifacts } from "./functions/api/providers/galaxy-artifacts/artifacts.js";
+import { onRequest as onArtifactUploadUrl } from "./functions/api/artifacts/upload-url.js";
+import { onRequest as onArtifactUpload } from "./functions/api/artifacts/upload.js";
+import { onRequest as onArtifactDownloadUrl } from "./functions/api/artifacts/[id]/download-url.js";
+import { onRequest as onArtifactContent } from "./functions/api/artifacts/content.js";
+import { onRequest as onArtifactDelete } from "./functions/api/artifacts/delete.js";
+import { onRequest as onWorkspaceProjects } from "./functions/api/workspace/projects/index.js";
+import { onRequest as onWorkspaceProject } from "./functions/api/workspace/projects/[id]/index.js";
+import { onRequest as onWorkspaceProjectArchive } from "./functions/api/workspace/projects/[id]/archive.js";
+import { onRequest as onWorkspaceProjectActivate } from "./functions/api/workspace/projects/[id]/activate.js";
+import { onRequest as onWorkspaceProjectDatasets } from "./functions/api/workspace/projects/[id]/datasets.js";
+import { onRequest as onWorkspaceProjectRuns } from "./functions/api/workspace/projects/[id]/runs.js";
+import { onRequest as onWorkspaceWorkflows } from "./functions/api/workspace/workflows.js";
+import { onRequest as onWorkspaceRun } from "./functions/api/workspace/runs/[id]/index.js";
+import { onRequest as onWorkspaceRunProvenance } from "./functions/api/workspace/runs/[id]/provenance.js";
+import { onRequest as onWorkspaceRunReport } from "./functions/api/workspace/runs/[id]/report.js";
+import { onRequest as onWorkspaceDemo } from "./functions/api/workspace/demo.js";
+import { onStatus as onAssistantStatus, onChat as onAssistantChat } from "./functions/api/assistant/index.js";
 import { errorResponse } from "./functions/api/ai/_lib.js";
 
 // Stable keys let unit tests inject stubbed handlers without changing the
 // production routing table. The default map is the real onRequest handlers.
+const PROTEIN_HANDLERS = createProteinHandlers();
+
 export const handlers = {
   tools: onTools,
+  toolCatalog: onToolCatalog,
   aiRequests: onAiRequests,
+  workspace: onWorkspace,
   aiBackend: onAiBackend,
   aiJobs: onAiJobs,
   aiJobResult: onAiJobResult,
+  phyloRun: onPhyloRun,
+  phyloStatus: onPhyloStatus,
+  phyloTool: onPhyloTool,
+  microbiomePlan: onMicrobiomePlan,
+  microbiomeRun: onMicrobiomeRun,
+  microbiomeRetry: onMicrobiomeRetry,
+  microbiomeRefreshDiscovery: onMicrobiomeRefreshDiscovery,
+  microbiomeResumeStages: onMicrobiomeResumeStages,
+  microbiomeContinueStages: onMicrobiomeContinueStages,
+  microbiomeToolSchema: onMicrobiomeToolSchema,
+  microbiomeToolSearch: onMicrobiomeToolSearch,
+  microbiomeImportSchema: onMicrobiomeImportSchema,
+  microbiomeImportJob: onMicrobiomeImportJob,
+  microbiomeStatus: onMicrobiomeStatus,
+  microbiomeAdvance: onMicrobiomeAdvance,
+  microbiomeArtifact: onMicrobiomeArtifact,
+  microbiomeDatasetDetail: onMicrobiomeDatasetDetail,
+  microbiomeResult: onMicrobiomeResult,
+  microbiomeSubmissionFailures: onMicrobiomeSubmissionFailures,
+  proteinPlan: PROTEIN_HANDLERS.proteinPlan,
+  proteinAnnotate: PROTEIN_HANDLERS.proteinAnnotate,
+  proteinStatus: PROTEIN_HANDLERS.proteinStatus,
+  proteinResult: PROTEIN_HANDLERS.proteinResult,
+  proteinDomains: PROTEIN_HANDLERS.proteinDomains,
+  aiJobReport: onAiJobReport,
   aiPlan: onAiPlan,
   aiPlanApprove: onAiPlanApprove,
   aiRun: onAiRun,
+  aiRunRecovery: onAiRunRecovery,
   aiRunProvenance: onAiRunProvenance,
   aiRunReport: onAiRunReport,
   blastSubmit: onBlastSubmit,
   blastStatus: onBlastStatus,
   blastResults: onBlastResults,
-  blastHistory: onBlastHistory
+  blastHistory: onBlastHistory,
+  providers: onProviders,
+  providerDetail: onProviderDetail,
+  providerCapabilities: onProviderCapabilities,
+  providerLimits: onProviderLimits,
+  providerUsage: onProviderUsage,
+  providerChat: onProviderChat,
+  providerPlan: onProviderPlan,
+  providerConsent: onProviderConsent,
+  providerTransfers: onProviderTransfers,
+  providerEmergencyStop: onProviderEmergencyStop,
+  providerBudget: onProviderBudget,
+  providerJobs: onProviderJobs,
+  providerJob: onProviderJob,
+  providerJobCancel: onProviderJobCancel,
+  providerJobArtifacts: onProviderJobArtifacts,
+  galaxyUpload: onGalaxyUpload,
+  galaxyDatasetMetadata: onGalaxyDatasetMetadata,
+  galaxyDatasetDownload: onGalaxyDatasetDownload,
+  galaxyArtifacts: onGalaxyArtifacts,
+  artifactUploadUrl: onArtifactUploadUrl,
+  artifactUpload: onArtifactUpload,
+  artifactDownloadUrl: onArtifactDownloadUrl,
+  artifactContent: onArtifactContent,
+  artifactDelete: onArtifactDelete,
+  workspaceProjects: onWorkspaceProjects,
+  workspaceProject: onWorkspaceProject,
+  workspaceProjectArchive: onWorkspaceProjectArchive,
+  workspaceProjectActivate: onWorkspaceProjectActivate,
+  workspaceProjectDatasets: onWorkspaceProjectDatasets,
+  workspaceProjectRuns: onWorkspaceProjectRuns,
+  workspaceWorkflows: onWorkspaceWorkflows,
+  workspaceRun: onWorkspaceRun,
+  workspaceRunProvenance: onWorkspaceRunProvenance,
+  workspaceRunReport: onWorkspaceRunReport,
+  workspaceDemo: onWorkspaceDemo,
+  assistantStatus: onAssistantStatus,
+  assistantChat: onAssistantChat
 };
 
 // Order is explicit. Static and dynamic patterns do not overlap, but the more
 // specific dynamic routes are listed first so future additions stay unambiguous.
 // `names` maps capture groups to the `params` object the handlers expect.
 const ROUTES = [
+  // S Bio Assistant gateway. Explicit static routes before every catch-all so
+  // an /api/assistant/** path can never fall through to a static HTML page.
+  { key: "assistantStatus", re: /^\/api\/assistant\/status\/?$/, names: [] },
+  { key: "assistantChat", re: /^\/api\/assistant\/chat\/?$/, names: [] },
+  // M7.4 batch-1 workspace routes. Specific sub-paths precede the dynamic
+  // /:id routes so "archive", "datasets", "runs" and "report" can never be
+  // captured as an id. These are listed before the legacy catch-all below.
+  { key: "workspaceProjectArchive", re: /^\/api\/workspace\/projects\/([^/]+)\/archive\/?$/, names: ["id"] },
+  { key: "workspaceProjectActivate", re: /^\/api\/workspace\/projects\/([^/]+)\/activate\/?$/, names: ["id"] },
+  { key: "workspaceProjectDatasets", re: /^\/api\/workspace\/projects\/([^/]+)\/datasets\/?$/, names: ["id"] },
+  { key: "workspaceProjectRuns", re: /^\/api\/workspace\/projects\/([^/]+)\/runs\/?$/, names: ["id"] },
+  { key: "workspaceProject", re: /^\/api\/workspace\/projects\/([^/]+)\/?$/, names: ["id"] },
+  { key: "workspaceProjects", re: /^\/api\/workspace\/projects\/?$/, names: [] },
+  { key: "workspaceRunProvenance", re: /^\/api\/workspace\/runs\/([^/]+)\/provenance\/?$/, names: ["id"] },
+  { key: "workspaceRunReport", re: /^\/api\/workspace\/runs\/([^/]+)\/report\/?$/, names: ["id"] },
+  { key: "workspaceRun", re: /^\/api\/workspace\/runs\/([^/]+)\/?$/, names: ["id"] },
+  { key: "workspaceWorkflows", re: /^\/api\/workspace\/workflows\/?$/, names: [] },
+  { key: "workspaceDemo", re: /^\/api\/workspace\/demo\/?$/, names: [] },
+  { key: "workspace", re: /^\/api\/workspace(?:\/.*)?$/, names: [] },
+  // Galaxy artifact routes. These static/specific paths MUST precede the
+  // dynamic /api/providers/:id routes so "galaxy" is never captured as a
+  // provider id and the dataset sub-paths stay unambiguous.
+  { key: "galaxyDatasetMetadata", re: /^\/api\/providers\/galaxy\/datasets\/([^/]+)\/metadata\/?$/, names: ["id"] },
+  { key: "galaxyDatasetDownload", re: /^\/api\/providers\/galaxy\/datasets\/([^/]+)\/download\/?$/, names: ["id"] },
+  { key: "galaxyUpload", re: /^\/api\/providers\/galaxy\/upload\/?$/, names: [] },
+  { key: "galaxyArtifacts", re: /^\/api\/providers\/galaxy\/artifacts\/?$/, names: [] },
+
+  // M7 provider routes. Static paths precede dynamic /api/providers/:id so a
+  // name like "usage" can never be captured as a provider id.
+  { key: "providerJobCancel", re: /^\/api\/providers\/jobs\/([^/]+)\/cancel\/?$/, names: ["id"] },
+  { key: "providerJobArtifacts", re: /^\/api\/providers\/jobs\/([^/]+)\/artifacts\/?$/, names: ["id"] },
+  { key: "providerJob", re: /^\/api\/providers\/jobs\/([^/]+)\/?$/, names: ["id"] },
+  { key: "providerCapabilities", re: /^\/api\/providers\/([^/]+)\/capabilities\/?$/, names: ["id"] },
+  { key: "providerLimits", re: /^\/api\/providers\/([^/]+)\/limits\/?$/, names: ["id"] },
+  { key: "providerUsage", re: /^\/api\/providers\/usage\/?$/, names: [] },
+  { key: "providerEmergencyStop", re: /^\/api\/providers\/emergency-stop\/?$/, names: [] },
+  { key: "providerBudget", re: /^\/api\/providers\/budget\/?$/, names: [] },
+  { key: "providerChat", re: /^\/api\/providers\/chat\/?$/, names: [] },
+  { key: "providerPlan", re: /^\/api\/providers\/plan\/?$/, names: [] },
+  { key: "providerConsent", re: /^\/api\/providers\/consent\/?$/, names: [] },
+  { key: "providerTransfers", re: /^\/api\/providers\/transfers\/?$/, names: [] },
+  { key: "providerJobs", re: /^\/api\/providers\/jobs\/?$/, names: [] },
+  { key: "artifactUploadUrl", re: /^\/api\/artifacts\/upload-url\/?$/, names: [] },
+  { key: "artifactUpload", re: /^\/api\/artifacts\/upload\/?$/, names: [] },
+  { key: "artifactContent", re: /^\/api\/artifacts\/content\/?$/, names: [] },
+  { key: "artifactDelete", re: /^\/api\/artifacts\/delete\/?$/, names: [] },
+  { key: "artifactDownloadUrl", re: /^\/api\/artifacts\/([^/]+)\/download-url\/?$/, names: ["id"] },
+  { key: "providers", re: /^\/api\/providers\/?$/, names: [] },
+  { key: "providerDetail", re: /^\/api\/providers\/([^/]+)\/?$/, names: ["id"] },
+  { key: "aiJobReport", re: /^\/api\/ai\/jobs\/([^/]+)\/report\/?$/, names: ["id"] },
+  // M7.13 protein annotation. Specific paths are static and precede every
+  // generic AI run path; no /api/** path may fall through to a static asset.
+  { key: "proteinPlan", re: /^\/api\/ai\/workflows\/protein\/plan\/?$/, names: [] },
+  { key: "proteinAnnotate", re: /^\/api\/ai\/workflows\/protein\/annotate\/?$/, names: [] },
+  { key: "proteinStatus", re: /^\/api\/ai\/workflows\/protein\/status\/?$/, names: [] },
+  { key: "proteinResult", re: /^\/api\/ai\/workflows\/protein\/result\/?$/, names: [] },
+  { key: "proteinDomains", re: /^\/api\/ai\/workflows\/protein\/domains\/?$/, names: [] },
+  // M7.14 microbiome routes. Specific static paths precede every generic AI
+  // run/plan path so no /api/** request can fall through to a static asset.
+  { key: "microbiomePlan", re: /^\/api\/ai\/workflows\/microbiome\/plan\/?$/, names: [] },
+  { key: "microbiomeRun", re: /^\/api\/ai\/workflows\/microbiome\/run\/?$/, names: [] },
+  { key: "microbiomeRetry", re: /^\/api\/ai\/workflows\/microbiome\/retry\/?$/, names: [] },
+  { key: "microbiomeRefreshDiscovery", re: /^\/api\/ai\/workflows\/microbiome\/refresh-discovery\/?$/, names: [] },
+  { key: "microbiomeResumeStages", re: /^\/api\/ai\/workflows\/microbiome\/resume-stages\/?$/, names: [] },
+  { key: "microbiomeContinueStages", re: /^\/api\/ai\/workflows\/microbiome\/continue-stages\/?$/, names: [] },
+  { key: "microbiomeToolSchema", re: /^\/api\/ai\/workflows\/microbiome\/tool-schema\/?$/, names: [] },
+  { key: "microbiomeToolSearch", re: /^\/api\/ai\/workflows\/microbiome\/tool-search\/?$/, names: [] },
+  { key: "microbiomeImportSchema", re: /^\/api\/ai\/workflows\/microbiome\/import-schema\/?$/, names: [] },
+  { key: "microbiomeImportJob", re: /^\/api\/ai\/workflows\/microbiome\/import-job\/?$/, names: [] },
+  { key: "microbiomeStatus", re: /^\/api\/ai\/workflows\/microbiome\/status\/?$/, names: [] },
+  { key: "microbiomeAdvance", re: /^\/api\/ai\/workflows\/microbiome\/advance\/?$/, names: [] },
+  { key: "microbiomeArtifact", re: /^\/api\/ai\/workflows\/microbiome\/artifact\/?$/, names: [] },
+  { key: "microbiomeDatasetDetail", re: /^\/api\/ai\/workflows\/microbiome\/dataset-detail\/?$/, names: [] },
+  { key: "microbiomeResult", re: /^\/api\/ai\/workflows\/microbiome\/result\/?$/, names: [] },
+  { key: "microbiomeSubmissionFailures", re: /^\/api\/ai\/workflows\/microbiome\/submission-failures\/?$/, names: [] },
+  { key: "phyloTool", re: /^\/api\/ai\/workflows\/phylo\/tool\/?$/, names: [] },
+  { key: "phyloStatus", re: /^\/api\/ai\/workflows\/phylo\/status\/?$/, names: [] },
+  { key: "phyloRun", re: /^\/api\/ai\/workflows\/phylo\/run\/?$/, names: [] },
   { key: "aiJobResult", re: /^\/api\/ai\/jobs\/([^/]+)\/result\/?$/, names: ["id"] },
   { key: "aiPlanApprove", re: /^\/api\/ai\/plans\/([^/]+)\/approve\/?$/, names: ["id"] },
+  { key: "aiRunRecovery", re: /^\/api\/ai\/runs\/([^/]+)\/recovery\/?$/, names: ["id"] },
   { key: "aiRunProvenance", re: /^\/api\/ai\/runs\/([^/]+)\/provenance\/?$/, names: ["id"] },
   { key: "aiRunReport", re: /^\/api\/ai\/runs\/([^/]+)\/report\/?$/, names: ["id"] },
   { key: "blastStatus", re: /^\/api\/blast\/status\/([^/]+)\/?$/, names: ["rid"] },
   { key: "blastResults", re: /^\/api\/blast\/results\/([^/]+)\/?$/, names: ["rid"] },
   { key: "aiPlan", re: /^\/api\/ai\/plans\/([^/]+)\/?$/, names: ["id"] },
   { key: "aiRun", re: /^\/api\/ai\/runs\/([^/]+)\/?$/, names: ["id"] },
+  // Public read-only capability catalog. Static /api/tools/catalog precedes
+  // /api/tools so the two endpoints can never be confused.
+  { key: "toolCatalog", re: /^\/api\/tools\/catalog\/?$/, names: [] },
   { key: "tools", re: /^\/api\/tools\/?$/, names: [] },
   { key: "aiRequests", re: /^\/api\/ai\/requests\/?$/, names: [] },
   { key: "aiBackend", re: /^\/api\/ai\/backend\/?$/, names: [] },
@@ -164,3 +375,8 @@ export function createFetch(handlerMap = handlers) {
 export const fetch = createFetch();
 
 export default { fetch };
+
+
+
+
+

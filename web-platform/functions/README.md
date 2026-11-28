@@ -12,7 +12,7 @@ plain text. Every response sets a restrictive `Content-Security-Policy`, `nosnif
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `POST` | `/api/blast/submit` | Validate a FASTA job and queue a BLAST search. Body: `{"fasta": ">id\\nACGT...", "database": "16S_ribosomal_RNA", "program": "blastn"}`. Returns `{"rid", "status"}`. |
+| `POST` | `/api/blast/submit` | Validate a FASTA job and queue a BLAST search. Body: `{"fasta": ">id\\nACGT...", "database": "rRNA_typestrains/16S_ribosomal_RNA", "program": "blastn"}`. Returns `{"rid", "status"}`. |
 | `GET` | `/api/blast/status/:rid` | Check job status. Server-side rate limit: at most once per minute per RID (HTTP 429 with `Retry-After` otherwise). Returns `{"status"}`. |
 | `GET` | `/api/blast/results/:rid` | Return cached tabular TSV (`Content-Type: text/plain`) once status is `complete`; otherwise HTTP 409. |
 | `GET` | `/api/blast/history` | List recent submissions as `{"submissions": [{rid, status, created_at}], count, mock}`. Query sequences are never returned. |
@@ -23,7 +23,7 @@ All endpoints accept `OPTIONS` for CORS preflight and reject other methods with 
 
 - FASTA must be at most 10,000 characters, start with a `>` header, contain one or more
   records, and use only the ACGT/IUPAC nucleotide alphabet (case-insensitive).
-- `database` must be exactly `16S_ribosomal_RNA`; `program` must be exactly `blastn`.
+- `database` must be exactly `rRNA_typestrains/16S_ribosomal_RNA`; `program` must be exactly `blastn`.
 - Only a SHA-256 `input_hash` of the FASTA is stored. The sequence itself is never written
   to D1, logged, or returned by any endpoint.
 

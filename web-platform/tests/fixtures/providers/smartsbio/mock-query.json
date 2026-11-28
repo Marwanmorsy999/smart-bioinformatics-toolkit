@@ -1,0 +1,10 @@
+{
+  "__fixture": "MOCK - synthetic smarts.bio query response, NOT live data.",
+  "status": "success",
+  "data": {
+    "answer": "Mock answer for unit tests only.",
+    "conversation_id": "conv_mock001",
+    "usage": { "input_tokens": 11, "output_tokens": 7, "total_tokens": 18 },
+    "model": "mock-agent"
+  }
+}

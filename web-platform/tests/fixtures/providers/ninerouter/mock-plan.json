@@ -1,0 +1,14 @@
+{
+  "__fixture": "MOCK - synthetic OpenAI-compatible JSON-mode completion, NOT live data.",
+  "id": "chatcmpl_mock002",
+  "object": "chat.completion",
+  "model": "mock-reasoner-1",
+  "choices": [
+    {
+      "index": 0,
+      "message": { "role": "assistant", "content": "{\"steps\":[\"validate\",\"profile\"],\"tools\":[]}" },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": { "input_tokens": 15, "output_tokens": 8, "total_tokens": 23 }
+}

@@ -1,0 +1,4 @@
+#OTU ID	sampleA	sampleB	sampleC	Taxon
+asv1	10	5	0	k__Bacteria; p__Firmicutes; g__Lactobacillus
+asv2	2	7	9	k__Bacteria; p__Bacteroidetes; g__Bacteroides
+asv3	0	1	0	k__Bacteria; p__Unassigned; g__Unassigned

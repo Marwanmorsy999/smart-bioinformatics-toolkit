@@ -1,0 +1,17 @@
+{
+  "__fixture": "MOCK - synthetic smarts.bio /v1/tools/alphafold-db/run envelope, NOT live data. The request shape mirrors the VERIFIED 2026-11-25 singular `input` contract; the gene/uniprot/model/artifact values below are fabricated for the offline regression check and contain no real credentials or endpoint.",
+  "status": "success",
+  "result": {
+    "success": true,
+    "data": {
+      "query_type": "uniprot",
+      "identifier": "P04637",
+      "gene": "TP53",
+      "uniprot_id": "P04637",
+      "model_identifier": "AF-P04637-F1-model_v4",
+      "output_paths": [
+        "mock://alphafold-db/TP53/AF-P04637-F1.json"
+      ]
+    }
+  }
+}

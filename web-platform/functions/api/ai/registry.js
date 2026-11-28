@@ -2,15 +2,309 @@
 // The Worker only advertises tools; it never executes them.
 // TOOLS is generated from the validated manifests; do not edit it here.
 
-import { TOOLS } from "./registry.tools.generated.js";
+import { TOOLS as GENERATED_TOOLS } from "./registry.tools.generated.js";
+import { ALLOWED_DATABASE, ALLOWED_PROGRAM } from "../blast/_lib.js";
 
-export { TOOLS };
+export const TOOLS = GENERATED_TOOLS;
+
+// Worker-side NCBI BLAST capability. It is deliberately NOT written into the
+// generated manifest file: egress happens through the existing consent-gated
+// /api/blast/submit -> status -> results endpoints, not through the local agent.
+// `backend` stays "local-python" because validatePlan's closed backend set is
+// unchanged; the transport is the legacy Worker BLAST path described above.
+export const WORKER_TOOLS = Object.freeze([
+  Object.freeze({
+    "id": "ncbi.blastn",
+    "name": "NCBI BLASTN (16S rRNA)",
+    "description": "Submit an approved FASTA to NCBI BLASTN against the 16S rRNA database through the existing single-use consent token, then poll and retrieve real tabular results. No local agent is involved; the Worker performs the audited GET requests.",
+    "version": "1.0.0",
+    "backend": "local-python",
+    "domain": "microbiome-16s",
+    "available": true,
+    "unavailable_reason": null,
+    "external_egress": true,
+    "requirements": ["binding:BLAST_DB", "consent:blast", "env:ALLOWED_DATABASE/ALLOWED_PROGRAM"],
+    "estimated_seconds": 60,
+    "params_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["database", "program"],
+      "properties": {
+        "database": { "type": "string", "enum": [ALLOWED_DATABASE] },
+        "program": { "type": "string", "enum": [ALLOWED_PROGRAM] }
+      }
+    },
+    "input_schema": {
+      "type": "object",
+      "required": ["dataset_id", "fasta_text", "filename"],
+      "properties": {
+        "dataset_id": { "type": "string" },
+        "fasta_text": { "type": "string", "maxLength": 65536 },
+        "filename": { "type": "string" }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "required": ["blast_tsv"],
+      "properties": { "blast_tsv": { "type": "string" } }
+    },
+    "references": [],
+    "limitations": [
+      "External egress requires explicit browser approval and a single-use, short-lived consent token bound to the input hash, database and program.",
+      "The transmitted value is the approved FASTA text; no file bytes are uploaded to a third-party object store by this capability.",
+      "NCBI limits apply: at most one submission per 10 seconds and no more than one RID status check per minute.",
+      "Parsed similarity is not proof of species identity and is not a clinical diagnosis.",
+      "When MOCK_NCBI is enabled by the operator, results are synthetic and are labelled as such; they are never presented as real."
+    ]
+  }),
+  // M7.13 protein annotation. Worker-side, versioned capabilities derived from
+  // the real /api/ai/workflows/protein/** handlers. No new chat provider is
+  // introduced; these manifests feed the existing /api/tools/catalog and the
+  // allowlisted assistant tool loop.
+  Object.freeze({
+    "id": "protein.validate",
+    "name": "Protein input validation (UniProt/FASTA)",
+    "description": "Validate a protein FASTA, raw protein sequence or UniProt accession server-side: documented amino-acid alphabet, duplicate ids, length, ambiguous residues and the uppercase-ASCII MD5 used by the InterPro Matches API.",
+    "version": "1.0.0-m7.13",
+    "backend": "worker",
+    "domain": "protein-annotation",
+    "available": true,
+    "unavailable_reason": null,
+    "external_egress": false,
+    "requirements": ["worker:protein/provider.js"],
+    "estimated_seconds": 2,
+    "params_schema": {
+      "type": "object", "additionalProperties": false,
+      "required": ["mode"],
+      "properties": { "mode": { "type": "string", "enum": ["accession", "fasta"] } }
+    },
+    "input_schema": {
+      "type": "object", "required": [],
+      "properties": {
+        "fasta_text": { "type": "string", "maxLength": 200000 },
+        "accession": { "type": "string", "maxLength": 40 },
+        "filename": { "type": "string", "maxLength": 200 }
+      }
+    },
+    "output_schema": {
+      "type": "object", "required": ["validation"],
+      "properties": { "validation": { "type": "object" } }
+    },
+    "references": [],
+    "limitations": [
+      "Ambiguous residues B/J/Z/X/U/O are retained verbatim and never resolved.",
+      "Nucleotide sequences are rejected; this is not a six-frame translation tool.",
+      "No result is claimed from validation alone."
+    ]
+  }),
+  Object.freeze({
+    "id": "protein.annotate",
+    "name": "Protein functional annotation (InterPro evidence)",
+    "description": "Annotate a validated protein from genuine UniProt/InterPro evidence. Route A reads precomputed InterPro Matches and PERSISTS a run record in AI D1 (a write side-effect); Route B submits an executed InterProScan 6 job only when a server-side contact email is configured, and is never auto-submitted from chat. Route labels are never conflated.",
+    "version": "1.0.0-m7.13",
+    "backend": "worker",
+    "domain": "protein-annotation",
+    "available": true,
+    "unavailable_reason": null,
+    "external_egress": true,
+    "requirements": ["binding:AI_DB", "env:INTERPROSCAN_EMAIL (Route B only)"],
+    "estimated_seconds": 30,
+    "params_schema": {
+      "type": "object", "additionalProperties": false,
+      "required": ["route"],
+      "properties": { "route": { "type": "string", "enum": ["precomputed", "iprscan6"] } }
+    },
+    "input_schema": {
+      "type": "object", "required": [],
+      "properties": {
+        "mode": { "type": "string", "enum": ["accession", "fasta"] },
+        "fasta_text": { "type": "string", "maxLength": 200000 },
+        "accession": { "type": "string", "maxLength": 40 },
+        "filename": { "type": "string", "maxLength": 200 },
+        "objective": { "type": "string", "maxLength": 1000 }
+      }
+    },
+    "output_schema": {
+      "type": "object", "required": ["result"],
+      "properties": { "result": { "type": "object" } }
+    },
+    "references": [],
+    "limitations": [
+      "Route B requires INTERPROSCAN_EMAIL; when it is absent the tool fails closed without submitting a job.",
+      "Only one protein per Route B job; small multi-FASTA inputs use Route A.",
+      "Member-database releases come from the response; no InterPro release version is guessed."
+    ]
+  }),
+  Object.freeze({
+    "id": "protein.get_result",
+    "name": "Stored protein annotation result",
+    "description": "Read back a genuine stored protein annotation run by its run id from the AI D1 record. Read-only; never re-submits and never reconstructs missing values.",
+    "version": "1.0.0-m7.13",
+    "backend": "worker",
+    "domain": "protein-annotation",
+    "available": true,
+    "unavailable_reason": null,
+    "external_egress": false,
+    "requirements": ["binding:AI_DB"],
+    "estimated_seconds": 1,
+    "params_schema": {
+      "type": "object", "additionalProperties": false,
+      "required": ["run_id"],
+      "properties": { "run_id": { "type": "string" } }
+    },
+    "input_schema": { "type": "object", "required": [], "properties": {} },
+    "output_schema": {
+      "type": "object", "required": ["result"],
+      "properties": { "result": { "type": "object" } }
+    },
+    "references": [],
+    "limitations": ["A run without a stored result returns a null result with an honest reason."]
+  }),
+  // M7.14 microbiome capabilities in the same Worker-side registry. Chat can
+  // validate inputs, review the genuine discovered plan and read stored
+  // results; an executed Galaxy workflow is never submitted from chat.
+  Object.freeze({
+    "id": "microbiome.validate",
+    "name": "16S input validation and sample correspondence",
+    "description": "Validate a multiplexed 16S FASTQ pair and sample metadata server-side: FASTQ structure, unique sample ids, barcode column, metadata-to-reads correspondence and observed quality-driven truncation parameters.",
+    "version": "1.0.0-m7.14",
+    "backend": "worker",
+    "domain": "microbiome-16s",
+    "available": true,
+    "unavailable_reason": null,
+    "external_egress": false,
+    "requirements": ["worker:workflows/microbiome/parsers.js"],
+    "estimated_seconds": 2,
+    "params_schema": { "type": "object", "additionalProperties": false,
+      "required": ["mode"], "properties": { "mode": { "type": "string", "enum": ["upload", "public"] } } },
+    "input_schema": { "type": "object", "required": [],
+      "properties": {
+        "reads_text": { "type": "string", "maxLength": 4000000 },
+        "barcodes_text": { "type": "string", "maxLength": 4000000 },
+        "metadata_text": { "type": "string", "maxLength": 400000 },
+        "public_dataset": { "type": "string", "maxLength": 80 }
+      } },
+    "output_schema": { "type": "object", "required": ["validation"],
+      "properties": { "validation": { "type": "object" } } },
+    "references": [],
+    "limitations": ["No Galaxy job is submitted by validation.", "Missing or duplicate sample ids are reported, never silently dropped."]
+  }),
+  Object.freeze({
+    "id": "microbiome.annotate",
+    "name": "16S workflow plan review (Microbiome)",
+    "description": "Review a genuine, live-discovered 16S workflow plan with exact tool ids/versions, classifier provenance, sample overview and evidence-derived truncation parameters. Chat may review; it never submits a Galaxy workflow.",
+    "version": "1.0.0-m7.14",
+    "backend": "worker",
+    "domain": "microbiome-16s",
+    "available": true,
+    "unavailable_reason": null,
+    "external_egress": true,
+    "requirements": ["binding:AI_DB", "env:GALAXY_BASE_URL/GALAXY_API_KEY"],
+    "estimated_seconds": 10,
+    "params_schema": { "type": "object", "additionalProperties": false,
+      "required": ["action"], "properties": { "action": { "type": "string", "enum": ["plan", "run"] } } },
+    "input_schema": { "type": "object", "required": [],
+      "properties": {
+        "reads_text": { "type": "string", "maxLength": 4000000 },
+        "barcodes_text": { "type": "string", "maxLength": 4000000 },
+        "metadata_text": { "type": "string", "maxLength": 400000 },
+        "public_dataset": { "type": "string", "maxLength": 80 },
+        "objective": { "type": "string", "maxLength": 1000 }
+      } },
+    "output_schema": { "type": "object", "required": ["result"],
+      "properties": { "result": { "type": "object" } } },
+    "references": [],
+    "limitations": ["Executed Galaxy workflows require the explicit approval gate on the Microbiome page.", "Tool ids and versions come only from live discovery."]
+  }),
+  Object.freeze({
+    "id": "microbiome.run",
+    "name": "16S workflow submission reference (Microbiome)",
+    "description": "Alias of microbiome.annotate. Reviews the genuine plan; actual submission is performed only by the Microbiome page approval gate and is never auto-executed from chat.",
+    "version": "1.0.0-m7.14",
+    "backend": "worker",
+    "domain": "microbiome-16s",
+    "available": true,
+    "unavailable_reason": null,
+    "external_egress": true,
+    "requirements": ["binding:AI_DB", "env:GALAXY_BASE_URL/GALAXY_API_KEY"],
+    "estimated_seconds": 10,
+    "params_schema": { "type": "object", "additionalProperties": false,
+      "required": ["action"], "properties": { "action": { "type": "string", "enum": ["plan", "run"] } } },
+    "input_schema": { "type": "object", "required": [],
+      "properties": {
+        "reads_text": { "type": "string", "maxLength": 4000000 },
+        "barcodes_text": { "type": "string", "maxLength": 4000000 },
+        "metadata_text": { "type": "string", "maxLength": 400000 },
+        "public_dataset": { "type": "string", "maxLength": 80 }
+      } },
+    "output_schema": { "type": "object", "required": ["result"],
+      "properties": { "result": { "type": "object" } } },
+    "references": [],
+    "limitations": ["Chat never submits a Galaxy workflow; use the reviewed approval gate on the Microbiome page."]
+  }),
+  Object.freeze({
+    "id": "microbiome.get_result",
+    "name": "Stored 16S microbiome result",
+    "description": "Read back a genuine stored 16S workflow result by its run id from AI D1. Read-only; never resubmits and never reconstructs missing values.",
+    "version": "1.0.0-m7.14",
+    "backend": "worker",
+    "domain": "microbiome-16s",
+    "available": true,
+    "unavailable_reason": null,
+    "external_egress": false,
+    "requirements": ["binding:AI_DB"],
+    "estimated_seconds": 1,
+    "params_schema": { "type": "object", "additionalProperties": false,
+      "required": ["run_id"], "properties": { "run_id": { "type": "string" } } },
+    "input_schema": { "type": "object", "required": [], "properties": {} },
+    "output_schema": { "type": "object", "required": ["result"],
+      "properties": { "result": { "type": "object" } } },
+    "references": [],
+    "limitations": ["A run without a stored result returns null with an honest reason."]
+  }),
+  Object.freeze({
+    "id": "protein.get_domain_details",
+    "name": "Stored protein domain details",
+    "description": "Read one stored protein domain/family/site feature by accession from a genuine annotation run, including coordinates, signature source, integrated entry, GO terms and evidence links. Read-only.",
+    "version": "1.0.0-m7.13",
+    "backend": "worker",
+    "domain": "protein-annotation",
+    "available": true,
+    "unavailable_reason": null,
+    "external_egress": false,
+    "requirements": ["binding:AI_DB"],
+    "estimated_seconds": 1,
+    "params_schema": {
+      "type": "object", "additionalProperties": false,
+      "required": ["run_id", "accession"],
+      "properties": {
+        "run_id": { "type": "string" },
+        "accession": { "type": "string", "maxLength": 120 }
+      }
+    },
+    "input_schema": { "type": "object", "required": [], "properties": {} },
+    "output_schema": {
+      "type": "object", "required": ["details"],
+      "properties": { "details": { "type": "object" } }
+    },
+    "references": [],
+    "limitations": ["No feature is synthesised when the accession is absent from the stored run."]
+  })
+]);
+
+// Resolve dynamically so the existing tests that temporarily splice/push into
+// the generated TOOLS array keep exercising their intended branches.
+function allTools() {
+  return [...TOOLS, ...WORKER_TOOLS];
+}
 
 export function getTool(toolId) {
-  return TOOLS.find((tool) => tool.id === toolId) ?? null;
+  return allTools().find((tool) => tool.id === toolId) ?? null;
 }
 
 export function toolIds() {
+  // Manifest parity only: worker-side capabilities are registered above and
+  // reachable through getTool/isKnownTool, not through the manifest id list.
   return TOOLS.map((tool) => tool.id);
 }
 

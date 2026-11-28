@@ -1,0 +1,258 @@
+{
+  "results": [
+    {
+      "viewport": "desktop",
+      "page": "homepage",
+      "http": 200,
+      "overflow": false,
+      "h1": "Turn biological questions into scientific analysis.",
+      "consoleErrors": [],
+      "failedRequests": [],
+      "screenshot": "homepage-desktop.png"
+    },
+    {
+      "viewport": "desktop",
+      "page": "microbiome-run",
+      "http": 200,
+      "overflow": false,
+      "h1": "Multi-sample 16S microbiome workflow",
+      "consoleErrors": [],
+      "failedRequests": [],
+      "screenshot": "microbiome-run-desktop.png"
+    },
+    {
+      "viewport": "desktop",
+      "page": "assistant",
+      "http": null,
+      "overflow": false,
+      "h1": "AI assistant",
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 404 (Not Found)",
+        "Failed to load resource: the server responded with a status of 404 (Not Found)"
+      ],
+      "failedRequests": [],
+      "screenshot": "assistant-desktop.png"
+    },
+    {
+      "viewport": "desktop",
+      "page": "workspace",
+      "http": 200,
+      "overflow": false,
+      "h1": "Research workspace",
+      "consoleErrors": [],
+      "failedRequests": [],
+      "screenshot": "workspace-desktop.png"
+    },
+    {
+      "viewport": "desktop",
+      "page": "history",
+      "http": 200,
+      "overflow": false,
+      "h1": "Research history",
+      "consoleErrors": [],
+      "failedRequests": [],
+      "screenshot": "history-desktop.png"
+    },
+    {
+      "viewport": "desktop",
+      "page": "phylo",
+      "http": 200,
+      "overflow": false,
+      "h1": "Multi-step phylogenetics on Galaxy",
+      "consoleErrors": [],
+      "failedRequests": [],
+      "screenshot": "phylo-desktop.png"
+    },
+    {
+      "viewport": "desktop",
+      "page": "protein",
+      "http": 200,
+      "overflow": false,
+      "h1": "Protein functional annotation",
+      "consoleErrors": [],
+      "failedRequests": [],
+      "screenshot": "protein-desktop.png"
+    },
+    {
+      "viewport": "desktop",
+      "page": "16s",
+      "http": 200,
+      "overflow": false,
+      "h1": "16S rRNA identification",
+      "consoleErrors": [],
+      "failedRequests": [],
+      "screenshot": "16s-desktop.png"
+    },
+    {
+      "viewport": "tablet",
+      "page": "homepage",
+      "http": 200,
+      "overflow": false,
+      "h1": "Turn biological questions into scientific analysis.",
+      "consoleErrors": [],
+      "failedRequests": [],
+      "screenshot": "homepage-tablet.png"
+    },
+    {
+      "viewport": "tablet",
+      "page": "microbiome-run",
+      "http": 200,
+      "overflow": false,
+      "h1": "Multi-sample 16S microbiome workflow",
+      "consoleErrors": [],
+      "failedRequests": [],
+      "screenshot": "microbiome-run-tablet.png"
+    },
+    {
+      "viewport": "tablet",
+      "page": "assistant",
+      "http": null,
+      "overflow": false,
+      "h1": "AI assistant",
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 404 (Not Found)",
+        "Failed to load resource: the server responded with a status of 404 (Not Found)"
+      ],
+      "failedRequests": [],
+      "screenshot": "assistant-tablet.png"
+    },
+    {
+      "viewport": "tablet",
+      "page": "workspace",
+      "http": 200,
+      "overflow": false,
+      "h1": "Research workspace",
+      "consoleErrors": [],
+      "failedRequests": [],
+      "screenshot": "workspace-tablet.png"
+    },
+    {
+      "viewport": "tablet",
+      "page": "history",
+      "http": 200,
+      "overflow": false,
+      "h1": "Research history",
+      "consoleErrors": [],
+      "failedRequests": [],
+      "screenshot": "history-tablet.png"
+    },
+    {
+      "viewport": "tablet",
+      "page": "phylo",
+      "http": 200,
+      "overflow": false,
+      "h1": "Multi-step phylogenetics on Galaxy",
+      "consoleErrors": [],
+      "failedRequests": [],
+      "screenshot": "phylo-tablet.png"
+    },
+    {
+      "viewport": "tablet",
+      "page": "protein",
+      "http": 200,
+      "overflow": false,
+      "h1": "Protein functional annotation",
+      "consoleErrors": [],
+      "failedRequests": [],
+      "screenshot": "protein-tablet.png"
+    },
+    {
+      "viewport": "tablet",
+      "page": "16s",
+      "http": 200,
+      "overflow": false,
+      "h1": "16S rRNA identification",
+      "consoleErrors": [],
+      "failedRequests": [],
+      "screenshot": "16s-tablet.png"
+    },
+    {
+      "viewport": "mobile",
+      "page": "homepage",
+      "http": 200,
+      "overflow": false,
+      "h1": "Turn biological questions into scientific analysis.",
+      "consoleErrors": [],
+      "failedRequests": [],
+      "screenshot": "homepage-mobile.png"
+    },
+    {
+      "viewport": "mobile",
+      "page": "microbiome-run",
+      "http": 200,
+      "overflow": false,
+      "h1": "Multi-sample 16S microbiome workflow",
+      "consoleErrors": [],
+      "failedRequests": [],
+      "screenshot": "microbiome-run-mobile.png"
+    },
+    {
+      "viewport": "mobile",
+      "page": "assistant",
+      "http": null,
+      "overflow": false,
+      "h1": "AI assistant",
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 404 (Not Found)",
+        "Failed to load resource: the server responded with a status of 404 (Not Found)"
+      ],
+      "failedRequests": [],
+      "screenshot": "assistant-mobile.png"
+    },
+    {
+      "viewport": "mobile",
+      "page": "workspace",
+      "http": 200,
+      "overflow": false,
+      "h1": "Research workspace",
+      "consoleErrors": [],
+      "failedRequests": [],
+      "screenshot": "workspace-mobile.png"
+    },
+    {
+      "viewport": "mobile",
+      "page": "history",
+      "http": 200,
+      "overflow": false,
+      "h1": "Research history",
+      "consoleErrors": [],
+      "failedRequests": [],
+      "screenshot": "history-mobile.png"
+    },
+    {
+      "viewport": "mobile",
+      "page": "phylo",
+      "http": 200,
+      "overflow": false,
+      "h1": "Multi-step phylogenetics on Galaxy",
+      "consoleErrors": [],
+      "failedRequests": [],
+      "screenshot": "phylo-mobile.png"
+    },
+    {
+      "viewport": "mobile",
+      "page": "protein",
+      "http": 200,
+      "overflow": false,
+      "h1": "Protein functional annotation",
+      "consoleErrors": [],
+      "failedRequests": [],
+      "screenshot": "protein-mobile.png"
+    },
+    {
+      "viewport": "mobile",
+      "page": "16s",
+      "http": 200,
+      "overflow": false,
+      "h1": "16S rRNA identification",
+      "consoleErrors": [],
+      "failedRequests": [],
+      "screenshot": "16s-mobile.png"
+    }
+  ],
+  "download": {
+    "filename": "feature-table.tsv",
+    "bytes": 72865,
+    "sha256": "ba92b7020d63f5679c43c79832f9c6a2c244faed2b4ef824fdec746b06c0f697"
+  }
+}

@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Research-use policy for Smart Bioinformatics AI: evidence limits, consent and interpretation responsibilities.">
+  <meta name="theme-color" content="#F5F7F6">
+  <title>Research-use policy — Smart Bioinformatics AI</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/main.css">
+  <link rel="stylesheet" href="css/components.css">
+</head>
+<body>
+  <a class="skip-link" href="#research-use-main">Skip to main content</a>
+
+    <header class="topbar app-header">
+    <a class="brand" href="index.html" aria-label="Smart Bioinformatics AI home">
+      <img class="brand-logo" src="brand/sbio-logo-primary.svg" alt="Smart Bioinformatics AI" width="245" height="28">
+    </a>
+    <button class="nav-toggle" type="button" aria-label="Open navigation" aria-controls="primary-nav" aria-expanded="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+    <nav id="primary-nav" class="top-nav" aria-label="Main navigation">
+      <a href="index.html#tools">Tools</a>
+      <a href="workspace.html">Research workspace</a>
+      <a href="phylo.html">Phylogenetics</a>
+      <a href="protein.html">Protein annotation</a>
+      <a href="16s.html">16S</a>
+      <a href="microbiome.html">Microbiome</a>
+      <a href="assistant.html">Assistant</a>
+      <a href="history.html">Research history</a>
+      <a href="index.html#about" aria-current="location">About</a>
+    </nav>
+    <a class="nav-start-action" href="16s.html" tabindex="-1">Start an analysis</a>
+    <span class="local-badge"><span class="status-dot" aria-hidden="true"></span> Research use only</span>
+  </header>
+
+  <main id="research-use-main" class="policy-view" tabindex="-1">
+    <section class="section-block policy-intro" aria-labelledby="policy-title">
+      <p class="eyebrow section-kicker">Scope and limits</p>
+      <h1 id="policy-title">Research-use policy</h1>
+      <p class="section-lede">This policy covers browser FASTA validation and statistics, BLAST TSV filtering, taxonomic consensus, the AI workspace plan and approval flow, the phylogenetics page, the research workspace metadata view and the synthetic benchmark walkthrough. No clinical, forensic or regulatory decision is supported.</p>
+    </section>
+
+    <section class="section-block" aria-labelledby="policy-statement-title">
+      <h2 id="policy-statement-title">Full statement</h2>
+      <p class="policy-statement">This platform is designed for research and educational use. Its outputs are computational evidence and do not constitute clinical diagnosis. Taxonomic assignments and other scientific interpretations depend on input quality, reference databases, methods and validation. Results do not independently confirm organism identity or pathogenicity and are not validated for clinical, forensic or regulatory decision-making. Users remain responsible for independent scientific assessment and interpretation.</p>
+    </section>
+
+    <section class="section-block" aria-labelledby="policy-taxonomy-title">
+      <h2 id="policy-taxonomy-title">Taxonomy confidence and reference coverage</h2>
+      <div class="info-grid">
+        <article class="info-card is-validation">
+          <div class="info-card-head"><h3>Evidence fractions</h3><span class="card-status">Consensus</span></div>
+          <p>Consensus support is an evidence fraction, not a probability of correct identification. A 98.65% identity threshold is a screening reference, not a universal species boundary. BLAST similarity is evidence, not proof of species identity.</p>
+        </article>
+        <article class="info-card is-result">
+          <div class="info-card-head"><h3>Reference coverage</h3><span class="card-status">Input dependent</span></div>
+          <p>Results depend on the BLAST TSV you supply and, optionally, a taxonomy mapping. Without a mapping, taxa are reported as unresolved; queries with no hits are reported as insufficient evidence; truncated candidate sets, multiple taxids and missing taxids are caveated. Local-agent taxa calls need a local BLAST database and are not claimed without one.</p>
+        </article>
+      </div>
+      <p class="results-note">Difficult-group literature notes are references for review, not validated identification rules.</p>
+    </section>
+
+    <section class="section-block" aria-labelledby="policy-phylo-title">
+      <h2 id="policy-phylo-title">Phylogenetic hypotheses</h2>
+      <div class="info-card is-education">
+        <div class="info-card-head"><h3>Reported status</h3><span class="card-status">Not production-ready</span></div>
+        <p>MAFFT submission/completion was evidenced once; full multi-step execution is unverified; workflow not production-ready. Proposed steps are a plan, not evidence that a job ran.</p>
+        <p>Trees are hypotheses, not publication-grade inference without independent validation. Your FASTA is uploaded to Galaxy only after you approve the plan.</p>
+      </div>
+    </section>
+
+    <section class="section-block" aria-labelledby="policy-consent-title">
+      <h2 id="policy-consent-title">External execution and consent</h2>
+      <div class="info-card is-locality">
+        <div class="info-card-head"><h3>Destination and approval</h3><span class="card-status">Per-step consent</span></div>
+        <p>Standalone tools parse data locally. A Worker plan request is sent only after you submit a request; heavy tools require a local agent, plan approval and per-step consent.</p>
+        <p>Nothing is sent to a remote service without a separate, dataset-scoped consent. Files leave the platform only with explicit, dataset-scoped consent. The data-transfer ledger and locality receipt record destinations, byte counts and consent references.</p>
+      </div>
+    </section>
+
+    <section class="section-block" aria-labelledby="policy-reports-title">
+      <h2 id="policy-reports-title">Report evidence quality</h2>
+      <div class="info-card">
+        <div class="info-card-head"><h3>What a report records</h3><span class="card-status">Evidence, not conclusion</span></div>
+        <p>JSON, CSV and HTML exports carry parameters, thresholds, input hashes and limitations so an output can be judged on its evidence. A completed stage does not imply validated artifacts, and no output is labelled a conclusion.</p>
+        <p>Use each report as a record of what was run, not as an independent confirmation of identity or pathogenicity. Interpretation remains the user's responsibility.</p>
+      </div>
+    </section>
+  </main>
+
+    <footer class="site-footer app-footer">
+    <div class="footer-grid">
+      <div>
+        <div class="footer-brand">
+          <img class="footer-logo" src="brand/sbio-logo-dark.svg" alt="Smart Bioinformatics AI" width="245" height="28">
+        </div>
+        <p>A precise, research-grade workspace for scientific analysis. Inspect the inputs, keep the outputs, and read the caveats.</p>
+      </div>
+      <div>
+        <h2 class="footer-heading">Analyze</h2>
+        <ul class="footer-links">
+          <li><a href="16s.html">16S identification</a></li>
+          <li><a href="phylo.html">Phylogenetics</a></li>
+          <li><a href="protein.html">Protein annotation</a></li>
+          <li><a href="microbiome.html">Microbiome</a></li>
+          <li><a href="index.html#tools">Sequence analysis &amp; statistics</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2 class="footer-heading">Research</h2>
+        <ul class="footer-links">
+          <li><a href="assistant.html">AI assistant</a></li>
+          <li><a href="workspace.html">Research workspace</a></li>
+          <li><a href="history.html">Research history</a></li>
+          <li><a href="ai.html">AI research workspace</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2 class="footer-heading">About</h2>
+        <ul class="footer-links">
+          <li><a href="index.html#about">About</a></li>
+          <li><a href="benchmark.html#bench-limits-title">Known limitations</a></li>
+          <li><a href="research-use.html">Research-use policy</a></li>
+          <li><a href="blast.html">BLAST results</a></li>
+          <li><a href="taxonomy.html">Taxonomy</a></li>
+        </ul>
+      </div>
+    </div>
+    <p class="footer-disclaimer">Research and educational use only. Results require independent scientific interpretation. <a href="research-use.html">Full research-use statement</a>.</p>
+    <div class="footer-bottom"><span>Smart Bioinformatics AI</span></div>
+  </footer>
+  <script src="js/nav.js"></script>
+</body>
+</html>

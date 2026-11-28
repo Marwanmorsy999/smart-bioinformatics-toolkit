@@ -1,36 +1,156 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Risk-coverage analysis - Smart Bioinformatics Toolkit</title>
+<meta name="theme-color" content="#F5F7F6">
+<title>Risk-coverage analysis - Smart Bioinformatics AI</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="stylesheet" href="css/tokens.css">
 <link rel="stylesheet" href="css/main.css">
+<link rel="stylesheet" href="css/tool-views.css">
 <link rel="stylesheet" href="css/benchmark.css">
 </head>
 <body>
-<header class="topbar">
-  <a class="brand" href="index.html" aria-label="Smart Bioinformatics Toolkit home">
-    <span class="brand-mark" aria-hidden="true">S<span>Bio</span></span>
-    <span class="brand-name">Smart Bioinformatics<span>Toolkit</span></span>
-  </a>
-  <nav class="top-nav" aria-label="Main navigation"><a href="index.html#tools">Tools</a> <a href="blast.html">BLAST</a> <a href="taxonomy.html">Taxonomy</a></nav>
-</header>
-<main>
-<section class="section-block" aria-labelledby="about">
-<h1 id="about">Risk-coverage analysis</h1>
-<p>Synthetic demonstration data from <code>shared/test-cases/risk_coverage_cases.json</code>. This is NOT a performance measurement. Real held-out numbers are in <code>benchmark_data/RESULTS.md</code>.</p>
-<p>The sweep varies the species screening identity and shows species call rate against wrong rate. Lower wrong rate at the same call rate is better; abstentions are counted in the table.</p>
-</section>
-<section class="section-block" aria-labelledby="chart-title">
-<h2 id="chart-title">Synthetic risk-coverage curve</h2>
-<div id="chart" role="img" aria-label="Bar chart of synthetic species call rate and wrong overall rate across five screening thresholds"></div>
-<table id="rc-table">
-<caption>Synthetic risk-coverage sweep values (not performance data)</caption>
-<thead><tr><th scope="col">Threshold (%)</th><th scope="col">Species call rate</th><th scope="col">Wrong rate among calls</th><th scope="col">Overall wrong rate</th><th scope="col">Calls</th><th scope="col">Wrong</th></tr></thead>
-<tbody></tbody>
-</table>
-</section>
+<a class="skip-link" href="#main-content">Skip to main content</a>
+  <header class="topbar app-header">
+    <a class="brand" href="index.html" aria-label="Smart Bioinformatics AI home">
+      <img class="brand-logo" src="brand/sbio-logo-primary.svg" alt="Smart Bioinformatics AI" width="245" height="28">
+    </a>
+    <button class="nav-toggle" type="button" aria-label="Open navigation" aria-controls="primary-nav" aria-expanded="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+    <nav id="primary-nav" class="top-nav" aria-label="Main navigation">
+      <a href="index.html#tools">Tools</a>
+      <a href="workspace.html">Research workspace</a>
+      <a href="phylo.html">Phylogenetics</a>
+      <a href="protein.html">Protein annotation</a>
+      <a href="16s.html">16S</a>
+      <a href="microbiome.html">Microbiome</a>
+      <a href="assistant.html">Assistant</a>
+      <a href="history.html">Research history</a>
+      <a href="index.html#about">About</a>
+    </nav>
+    <a class="nav-start-action" href="16s.html" tabindex="-1">Start an analysis</a>
+    
+  </header>
+<main id="main-content" class="tool-view bench-page" tabindex="-1">
+  <section class="section-block bench-intro" aria-labelledby="about">
+    <p class="eyebrow">Demonstration / not a benchmark result</p>
+    <h1 id="about">Risk-coverage analysis</h1>
+    <p class="bench-lede">A walkthrough of the risk-coverage sweep calculation using synthetic demonstration data from <code>shared/test-cases/risk_coverage_cases.json</code>. No held-out results file is present in this repository; every value shown here is illustrative.</p>
+  </section>
+
+  <div class="bench-note" role="note" aria-labelledby="bench-note-title">
+    <h2 id="bench-note-title">Synthetic demonstration — not a performance measurement</h2>
+    <p>The sweep varies the species screening identity and shows species call rate against wrong rate. Lower wrong rate at the same call rate is better; abstentions are counted in the table.</p>
+  </div>
+
+  <section class="section-block bench-chart-section" aria-labelledby="chart-title">
+    <div class="section-heading">
+      <div><p class="eyebrow">Figure 01</p><h2 id="chart-title">Synthetic risk-coverage curve</h2></div>
+      <p class="section-note">Bars show rates, not counts. Exact fractions and the underlying counts are in the table below.</p>
+    </div>
+    <figure class="bench-figure">
+      <figcaption>At each screening threshold, the two bars describe the same five synthetic cases: species calls made, and calls that are wrong when counted against all cases.</figcaption>
+      <div class="chart-grid">
+        <p class="axis-y" aria-hidden="true">Rate (fraction 0&ndash;1)</p>
+        <div id="chart" role="img" aria-label="Bar chart of synthetic species call rate and wrong overall rate across five screening thresholds"></div>
+        <p class="axis-x" aria-hidden="true">Species screening identity threshold (%)</p>
+      </div>
+    </figure>
+  </section>
+
+  <section class="section-block bench-explain" aria-labelledby="bench-explain-title">
+    <div class="section-heading">
+      <div><p class="eyebrow">How to read it</p><h2 id="bench-explain-title">What is and is not measured</h2></div>
+    </div>
+    <div class="bench-explain-grid">
+      <div class="bench-info-card">
+        <h3>What the sweep shows</h3>
+        <ul>
+          <li>Five fixed synthetic cases are re-evaluated at thresholds of 97.0, 98.0, 98.65, 99.0 and 99.9% identity.</li>
+          <li>A species call requires a top species name, a non-null identity at or above the threshold, and query coverage of at least 80%.</li>
+          <li><strong>Call rate</strong> is calls divided by all cases. <strong>Overall wrong rate</strong> is wrong calls divided by all cases, so abstentions remain in the denominator.</li>
+          <li><strong>Wrong rate among calls</strong> divides wrong calls by calls only; it is not available when no calls are made.</li>
+          <li>The <code>Calls</code> and <code>Wrong</code> columns are counts out of five; lower wrong rate at the same call rate is better.</li>
+        </ul>
+      </div>
+      <div class="bench-info-card is-limited">
+        <h3>What it does not measure</h3>
+        <ul>
+          <li>These are fixture values, not performance on held-out or real samples.</li>
+          <li>Correct and wrong are judged only against the fixture&rsquo;s supplied <code>true_species</code> labels; this is not proof of species identity.</li>
+          <li>No confidence intervals, uncertainty estimates or generalisation beyond these five cases are reported.</li>
+          <li>Query coverage is held at 80%; the sweep varies only the identity threshold, so other pipeline parameters are not compared.</li>
+          <li>No clinical validity or diagnostic claim follows from this illustration.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="section-block bench-table-section" aria-labelledby="bench-table-title">
+    <div class="section-heading">
+      <div><p class="eyebrow">Data table</p><h2 id="bench-table-title">Synthetic sweep values</h2></div>
+      <p class="section-note">Rates are fractions rounded to four decimals. The count columns make the denominators explicit.</p>
+    </div>
+    <p class="table-scroll-hint">Scroll horizontally to see all columns</p>
+    <div class="bench-table-wrap">
+      <table id="rc-table">
+        <caption>Synthetic risk-coverage sweep values (not performance data)</caption>
+        <thead><tr><th scope="col">Threshold (%)</th><th scope="col">Species call rate</th><th scope="col">Wrong rate among calls</th><th scope="col">Overall wrong rate</th><th scope="col">Calls</th><th scope="col">Wrong</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="section-block bench-limits" aria-labelledby="bench-limits-title">
+    <h2 id="bench-limits-title">Limitations of this demonstration</h2>
+    <p class="bench-lede">The five threshold points are chosen to illustrate how the rates move, not to establish a rule: differences between adjacent points are properties of this small fixture. Treat every value on this page as an illustration of the calculation, never as an accuracy estimate. For measured results, no results file is available in this repository; do not treat these values as an accuracy estimate.</p>
+  </section>
 </main>
+  <footer class="site-footer app-footer">
+    <div class="footer-grid">
+      <div>
+        <div class="footer-brand">
+          <img class="footer-logo" src="brand/sbio-logo-dark.svg" alt="Smart Bioinformatics AI" width="245" height="28">
+        </div>
+        <p>A precise, research-grade workspace for scientific analysis. Inspect the inputs, keep the outputs, and read the caveats.</p>
+      </div>
+      <div>
+        <h2 class="footer-heading">Analyze</h2>
+        <ul class="footer-links">
+          <li><a href="16s.html">16S identification</a></li>
+          <li><a href="phylo.html">Phylogenetics</a></li>
+          <li><a href="protein.html">Protein annotation</a></li>
+          <li><a href="microbiome.html">Microbiome</a></li>
+          <li><a href="index.html#tools">Sequence analysis &amp; statistics</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2 class="footer-heading">Research</h2>
+        <ul class="footer-links">
+          <li><a href="assistant.html">AI assistant</a></li>
+          <li><a href="workspace.html">Research workspace</a></li>
+          <li><a href="history.html">Research history</a></li>
+          <li><a href="ai.html">AI research workspace</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2 class="footer-heading">About</h2>
+        <ul class="footer-links">
+          <li><a href="index.html#about">About</a></li>
+          <li><a href="benchmark.html#bench-limits-title">Known limitations</a></li>
+          <li><a href="research-use.html">Research-use policy</a></li>
+          <li><a href="blast.html">BLAST results</a></li>
+          <li><a href="taxonomy.html">Taxonomy</a></li>
+        </ul>
+      </div>
+    </div>
+    <p class="footer-disclaimer">Research and educational use only. Results require independent scientific interpretation. <a href="research-use.html">Full research-use statement</a>.</p>
+    <div class="footer-bottom"><span>Smart Bioinformatics AI</span></div>
+  </footer>
+<script src="js/nav.js"></script>
 <script type="module" src="js/benchmark-app.js"></script>
 </body>
 </html>

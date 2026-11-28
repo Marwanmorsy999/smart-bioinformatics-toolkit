@@ -1,0 +1,29 @@
+{
+  "__fixture": "MOCK - canned Galaxy error envelopes for the M7.2 OFFLINE Galaxy-artifact storage tests ONLY. NOT live provider responses. Every status and code below is synthetic; no credential or network call is involved.",
+  "execution_mode": "mock",
+  "is_mock": true,
+  "expired_credentials_401": {
+    "error": "expired_api_key",
+    "message": "MOCK: API key expired (offline fixture)."
+  },
+  "account_activation_403": {
+    "error": "action_requires_account_activation",
+    "message": "MOCK: Action requires account activation (offline fixture)."
+  },
+  "not_found_404": {
+    "error": "not_found",
+    "message": "MOCK: endpoint not found (offline fixture)."
+  },
+  "dataset_deleted_404": {
+    "error": "dataset_deleted",
+    "message": "MOCK: dataset was purged (offline fixture)."
+  },
+  "dataset_expired_410": {
+    "error": "dataset_expired",
+    "message": "MOCK: dataset expired (offline fixture)."
+  },
+  "server_error_500": {
+    "error": "server_error",
+    "message": "MOCK: internal error (offline fixture)."
+  }
+}

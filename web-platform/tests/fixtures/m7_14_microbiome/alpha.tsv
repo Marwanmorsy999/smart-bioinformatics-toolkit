@@ -1,0 +1,4 @@
+#SampleID	observed_features	shannon	faith_pd
+sampleA	3	1.02	2.4
+sampleB	3	1.05	2.5
+sampleC	2	0.85	1.9

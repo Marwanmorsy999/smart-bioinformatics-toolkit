@@ -1,0 +1,8 @@
+{
+  "__fixture": "MOCK - synthetic smarts.bio workspaces response, NOT live data.",
+  "status": "success",
+  "data": [
+    { "id": "ws_mock001", "name": "Mock Lab", "description": "Synthetic workspace for tests." },
+    { "id": "ws_mock002", "name": "Other Mock Lab" }
+  ]
+}

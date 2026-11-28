@@ -1,0 +1,14 @@
+{
+  "__fixture": "MOCK - synthetic OpenAI-compatible chat completion, NOT live data.",
+  "id": "chatcmpl_mock001",
+  "object": "chat.completion",
+  "model": "mock-reasoner-1",
+  "choices": [
+    {
+      "index": 0,
+      "message": { "role": "assistant", "content": "Mock structured reasoning only; no scientific values." },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": { "prompt_tokens": 20, "completion_tokens": 9, "total_tokens": 29 }
+}
