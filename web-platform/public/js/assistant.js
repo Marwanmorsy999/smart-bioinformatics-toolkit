@@ -587,9 +587,9 @@
       head.append(element("span", "tool-id", entry.id));
       const chip = element("span", `availability-${String(entry.availability).replace(/[^a-z-]/g, "")}`, entry.availability);
       head.append(chip);
-      if (entry.production_ready === true) head.append(element("span", "tool-ready", "production ready"));
-      if (entry.production_ready === false) head.append(element("span", "tool-not-ready", "NOT production ready"));
-      if (entry.workflow_context?.production_ready === false) head.append(element("span", "tool-not-ready", "workflow NOT production ready"));
+      if (entry.production_ready === true) head.append(element("span", "tool-ready", "Ready"));
+      if (entry.production_ready === false) head.append(element("span", "tool-not-ready", "Partial"));
+      if (entry.workflow_context?.production_ready === false) head.append(element("span", "tool-not-ready", "Partial (workflow)"));
       card.append(head);
       card.append(element("p", "tool-purpose", entry.scientific_purpose ?? ""));
       card.append(element("p", "tool-description", entry.description ?? ""));
@@ -661,7 +661,7 @@
     if (entry.workflow_context) {
       appendField(ui.planOutput, "Workflow readiness", [
         `${entry.workflow_context.workflow_id}: ${entry.workflow_context.availability}`,
-        entry.workflow_context.production_ready === true ? "production ready" : "NOT production ready"
+        entry.workflow_context.production_ready === true ? "Ready" : "Partial"
       ]);
     }
   }

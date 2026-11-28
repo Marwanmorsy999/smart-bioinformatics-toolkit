@@ -25,6 +25,11 @@
   --faint: #5f727b;           /* metadata, disabled-ish labels; >=4.5:1 on light surfaces */
   --ink-inverse: #f4f8f9;     /* text on dark surfaces */
 
+  /* M7.15.1 shared workbench rail width + dark scientific accent. */
+  --rail: 392px;
+  --dark-accent: #102B31;
+  --canvas-dark: #102B31;
+
   /* COLOR - hairlines */
   --line: #d3dde1;
   --line-soft: #e6edef;

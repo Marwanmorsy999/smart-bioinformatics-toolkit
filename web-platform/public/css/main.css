@@ -542,8 +542,8 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
    ========================================================================== */
 .topbar { min-height: var(--header-h); gap: var(--space-4); padding: 0 max(4vw, var(--space-6)); }
 .brand-logo { height: 30px; }
-.top-nav { gap: var(--space-1); font-size: var(--fs-300); }
-.top-nav a { padding: var(--space-2) var(--space-3); border-radius: var(--radius-2); border-bottom: 0; white-space: nowrap; }
+.top-nav { gap: 2px; font-size: var(--fs-300); }
+.top-nav a { padding: var(--space-1) var(--space-2); border-radius: var(--radius-2); border-bottom: 0; white-space: nowrap; flex-shrink: 0; }
 .top-nav a:hover { color: var(--accent-strong); background: var(--surface-2); border-bottom-color: transparent; }
 .top-nav a.active, .top-nav a[aria-current="location"] { color: var(--accent-strong); background: var(--accent-tint); border-bottom-color: transparent; }
 

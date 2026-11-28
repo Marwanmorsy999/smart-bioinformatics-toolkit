@@ -459,3 +459,15 @@
 .status-badge { white-space: normal; }
 .capability-card h3 { overflow-wrap: anywhere; }
 @media (max-width: 640px) { .capability-grid { grid-template-columns: minmax(0, 1fr); } }
+
+/* I-09: styled file inputs (custom trigger + selected name) */
+input[type="file"] { color: var(--muted); font-size: var(--fs-300); }
+input[type="file"]::file-selector-button {
+  border: 1px solid var(--accent); border-radius: var(--radius-2);
+  background: var(--accent); color: #fff; padding: 6px 12px; margin-right: 8px;
+  font: var(--fw-semibold) var(--fs-200) var(--font); cursor: pointer;
+  transition: background-color var(--dur-fast) ease;
+}
+input[type="file"]::file-selector-button:hover {
+  background: var(--accent-strong); border-color: var(--accent-strong);
+}
