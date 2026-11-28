@@ -61,3 +61,10 @@ Canonical source of truth for the product/UX rebuild. Keep this file concise; up
 - Tests: 1041/1041 pass, E2E PASS.
 - Real run reopen: `?run_id=job_a8817e35d7534d98` loads succeeded result with 702 ASVs, 34 samples, PCoA variance PC1 0.506.
 - Screenshots: pending capture.
+## Milestone 2 — Visual critique + usability (implemented)
+- Cycle A (visual structure): identified horizontal overflow on the microbiome workbench at all breakpoints; root cause wide Bray-Curtis/distance tables not in a scrollable container.
+- Correction: wrapped every rendered table in `div.table-scroll` (overflow-x:auto, max-width:100%); added `overflow-x:clip` on `.microbiome-view`; verified no page-level horizontal overflow at 1440/768/390.
+- Cycle B (visual polish): retained existing restrained tokens; no new decoration; tables now scroll inside their own box; verified 1041/1041.
+- Cycle C (usability): added read-only "Active research context" panel on `assistant.html?run_id=...` populated from the stored genuine run (samples, 702 ASVs, 134,820 reads, L1S105 Shannon/observed, PCoA variance, Bray-Curtis size, taxonomy count, honest limitations).
+- Assistant backend status: `/api/assistant/chat` is the existing assistant gateway; the page copy states chat may be unavailable when no authorized model provider is configured. We did not fabricate responses. Exact backend context contract for the standalone assistant page is partially wired read-only; full provider wiring is a remaining backlog item.
+- Older branch `implementation/m7-15-product-redesign` (0abfd2c) is based on a pre-M7.14.3 baseline and removes M7.14.3 tests; its redesign changes are represented on this branch. Recommend retiring it rather than merging (no unique required functionality lost); not deleted (no destructive action without confirmation).
