@@ -1,0 +1,12 @@
+name = "smart-bioinformatics-m715-preview"
+main = "src/index.js"
+compatibility_date = "2026-11-22"
+workers_dev = true
+
+[assets]
+directory = "../../web-platform/public"
+binding = "ASSETS"
+run_worker_first = true
+
+# Isolated read-only preview: intentionally NO D1, NO R2, NO secrets,
+# NO provider keys, NO production/staging bindings.
