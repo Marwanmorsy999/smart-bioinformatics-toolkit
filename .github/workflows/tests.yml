@@ -23,7 +23,15 @@ jobs:
         with:
           # node:sqlite (used by the real-SQLite migration test) requires Node >= 22.5.
           node-version: "24"
-      - run: cd web-platform && npm test
+      - name: Install dependencies (locked)
+        working-directory: web-platform
+        run: npm ci
+      - name: Install Chromium and required system dependencies
+        working-directory: web-platform
+        run: npx playwright install --with-deps chromium
+      - name: Run JavaScript tests
+        working-directory: web-platform
+        run: npm test
 
   plugin-compliance:
     runs-on: ubuntu-latest

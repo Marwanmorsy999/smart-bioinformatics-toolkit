@@ -1,9 +1,11 @@
-﻿# Smart Bioinformatics Toolkit
+﻿# Smart Bioinformatics AI
 
 > **RESEARCH AND EDUCATION USE ONLY — NOT A CLINICAL DIAGNOSTIC DEVICE.** This toolkit
 > interprets BLAST similarity evidence; it does not prove species identity, is not clinically
 > validated, and must not be used to make treatment or patient-management decisions. See
 > [Research use only and limitations](#research-use-only-and-limitations).
+
+Smart Bioinformatics AI is a research workspace for guided, evidence-traceable biological analysis. The original 16S toolkit remains part of the product.
 
 A modular, framework-free bioinformatics workspace for FASTA quality checks and 16S rRNA
 BLAST evidence interpretation. Two matching interfaces are provided:
@@ -13,7 +15,7 @@ BLAST evidence interpretation. Two matching interfaces are provided:
 
 Each tool is usable independently. FASTA validation and statistics run locally in the
 browser; those tools upload no sequence. Remote BLAST is an explicit, opt-in feature backed
-by Cloudflare Pages Functions and D1 (see [Live deployment](#5-live-deployment-and-deploying-your-own)).
+by a Cloudflare Worker and D1 (see [Live deployment](#5-live-deployment-and-deploying-your-own)).
 
 ## Product vision reset (2026-11-24)
 
@@ -73,7 +75,7 @@ they are reproducibility instructions, not external factual claims.
 ### Prerequisites
 
 - Python 3.10+ with `pip` (`python-engine/requirements.txt`: Biopython, Pandas, pytest).
-- Node.js 18+ for the JavaScript tests (npm optional; the static app has no build step).
+- Node.js `>=22.5.0` for the JavaScript tests (Node 24 is used in CI; `npm ci` installs locked dependencies; static app has no build step).
 - NCBI BLAST+ (`blastn`, `makeblastdb`, `blastdbcmd`) **only** for local BLAST runs and the
   benchmark. Install it from NCBI; no installer is bundled in this repository.
 - `npx` / Wrangler **only** if you want to deploy your own copy.
@@ -185,9 +187,7 @@ Deployment on the Cloudflare Free plan succeeded (EVIDENCE_LEDGER: "Deployment s
 build environment: both the paired browser and `curl` rejected the `pages.dev` TLS
 certificate there; the Cloudflare API confirmed the deployment exists and succeeded.
 
-The static UI is served by Cloudflare Pages, and the `/api/blast/*` endpoints are
-**Cloudflare Pages Functions** (plain ES modules, no framework, no R2, no paid services)
-backed by a **D1** database:
+The static UI is served by **Cloudflare Workers Static Assets**; the Worker (`web-platform/worker.js`) serves the API and delegates non-API paths to `env.ASSETS`. The `/api/blast/*` endpoints run in the **Cloudflare Worker** (plain ES modules, no framework, no R2, no paid services) backed by **D1** (`BLAST_DB`). Historical Cloudflare Pages deployment docs below are **legacy**.
 
 - `web-platform/functions/api/blast/{submit,status/[rid],results/[rid],history}.js`.
 - D1 binding `BLAST_DB`, table `blast_requests`

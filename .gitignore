@@ -25,3 +25,5 @@ ncbi-blast-2.17.0+-win64.exe
 .dev.vars.local
 wrangler.local.toml
 # local secrets variants (never commit); keep examples like .env.example
+
+.wrangler/
