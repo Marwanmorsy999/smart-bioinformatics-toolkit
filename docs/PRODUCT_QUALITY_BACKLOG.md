@@ -44,9 +44,9 @@ Canonical source of truth for the product/UX rebuild. Keep this file concise; up
 12. Updated persistent quality backlog (this file).
 
 ## Design-review cycles (Milestone 1)
-- Cycle 1 — Structure: ported shell/nav/homepage/workbench; connected real microbiome result data; verified journey via E2E.
-- Cycle 2 — Visual critique: pending (screenshots to be captured at 1440/1280/1024/768/390/360).
-- Cycle 3 — Usability critique: pending (task completion walkthrough of reopened run).
+- Cycle 1 — Structure: ported shell/nav/homepage/workbench onto M7.14.3 baseline; preserved all backend contracts; verified 1041/1041 tests + E2E.
+- Cycle 2 — Visual critique: captured overflow metrics at 1440/1280/1024/768/390/360 on the microbiome shell: zero horizontal overflow at every breakpoint; 20 headings / 6 primary buttons in the results shell. Remaining: screenshot-level hierarchy/spacing review against live data requires deploying this branch to staging (blocked by active M7.15.1).
+- Cycle 3 — Usability critique: pending (task completion walkthrough of reopened run against live data; blocked on staging coordination).
 
 ## Known UX defects / next improvements
 - Capture and inspect screenshots at all breakpoints; fix overflow/hierarchy issues.
