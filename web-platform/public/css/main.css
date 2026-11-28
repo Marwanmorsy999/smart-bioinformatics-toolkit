@@ -535,3 +535,58 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .provider-workspace .step-item { padding: .75rem 0; border-bottom: var(--border-soft); }
 .provider-workspace .step-item p { margin: .35rem 0 0; font-size: var(--fs-300); color: var(--muted); }
 .provider-workspace details { margin-top: var(--space-3); }
+
+
+/* ============================================================================
+   M7.15 GLOBAL SHELL + NAVIGATION redesign
+   ========================================================================== */
+.topbar { min-height: var(--header-h); gap: var(--space-4); padding: 0 max(4vw, var(--space-6)); }
+.brand-logo { height: 30px; }
+.top-nav { gap: var(--space-1); font-size: var(--fs-300); }
+.top-nav a { padding: var(--space-2) var(--space-3); border-radius: var(--radius-2); border-bottom: 0; white-space: nowrap; }
+.top-nav a:hover { color: var(--accent-strong); background: var(--surface-2); border-bottom-color: transparent; }
+.top-nav a.active, .top-nav a[aria-current="location"] { color: var(--accent-strong); background: var(--accent-tint); border-bottom-color: transparent; }
+
+/* One clear primary action for starting an analysis. Not a link inside nav. */
+.nav-start-action {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: var(--space-2);
+  min-height: 38px; padding: 8px var(--space-4); border-radius: var(--radius-2);
+  background: var(--accent); color: #fff; border: var(--border-width) solid var(--accent);
+  font-size: var(--fs-300); font-weight: var(--fw-semibold); white-space: nowrap;
+  transition: background-color var(--dur-fast) ease, border-color var(--dur-fast) ease;
+}
+.nav-start-action:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
+
+/* Reduce header crowding: status is secondary. */
+.topbar .local-badge { font-size: var(--fs-200); }
+
+/* Larger, calmer type rhythm. */
+body { font-size: var(--fs-400); }
+h1 { font-size: var(--fs-900); }
+.section-lede { font-size: var(--fs-500); }
+
+/* Page shell width + balanced padding. */
+.app-main { max-width: var(--maxw); }
+.section-block, .how-section { max-width: var(--maxw); }
+
+/* Responsive navigation — proper full-width mobile menu, not shrunken desktop. */
+@media (max-width: 980px) {
+  .nav-start-action { order: 3; }
+}
+@media (max-width: 768px) {
+  .nav-toggle { display: inline-flex; order: 2; margin-left: auto; }
+  .nav-start-action { order: 4; }
+  .topbar .local-badge { display: none; }
+  .top-nav {
+    display: none; order: 5; width: 100%; flex-direction: column; align-items: stretch;
+    gap: var(--space-1); padding: var(--space-3) 0 var(--space-4); border-top: var(--border-soft);
+    max-height: calc(100vh - var(--header-h)); overflow-y: auto;
+  }
+  .topbar[data-nav-open="true"] .top-nav { display: flex; }
+  .top-nav a { padding: var(--space-3) var(--space-4); border-radius: var(--radius-2); }
+}
+
+.topbar { flex-wrap: wrap; }
+.top-nav { flex-wrap: wrap; }
+.topbar .local-badge { white-space: normal; }
+@media (max-width: 1180px) { .topbar .local-badge { display: none; } }

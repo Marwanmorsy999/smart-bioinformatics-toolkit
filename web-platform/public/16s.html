@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Browser-only 16S rRNA identification workflow: validate FASTA, approve a real NCBI BLASTN request, retrieve real results, and review taxonomy evidence. Research use only.">
-  <meta name="theme-color" content="#eef2f4">
+  <meta name="theme-color" content="#F5F7F6">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <title>16S identification · Smart Bioinformatics AI</title>
   <link rel="stylesheet" href="css/tokens.css">
@@ -15,7 +15,7 @@
 <body>
   <a class="skip-link" href="#sixteen-main">Skip to main content</a>
 
-  <header class="topbar">
+    <header class="topbar app-header">
     <a class="brand" href="index.html" aria-label="Smart Bioinformatics AI home">
       <img class="brand-logo" src="brand/sbio-logo-primary.svg" alt="Smart Bioinformatics AI" width="245" height="28">
     </a>
@@ -33,6 +33,7 @@
       <a href="history.html">Research history</a>
       <a href="index.html#about">About</a>
     </nav>
+    <a class="nav-start-action" href="16s.html" tabindex="-1">Start an analysis</a>
     <span class="local-badge caution">Approval required</span>
   </header>
 
@@ -193,36 +194,41 @@
     <button id="clear-error" type="button" class="secondary-button small-button" hidden>Clear error</button>
   </main>
 
-  <footer class="site-footer">
+    <footer class="site-footer app-footer">
     <div class="footer-grid">
       <div>
-        <div class="footer-brand"><img class="footer-logo" src="brand/sbio-logo-dark.svg" alt="Smart Bioinformatics AI" width="245" height="28"></div>
-        <p>A modular, browser-first research workspace for sequence checks. Inspect the inputs, keep the outputs, and read the caveats.</p>
+        <div class="footer-brand">
+          <img class="footer-logo" src="brand/sbio-logo-dark.svg" alt="Smart Bioinformatics AI" width="245" height="28">
+        </div>
+        <p>A precise, research-grade workspace for scientific analysis. Inspect the inputs, keep the outputs, and read the caveats.</p>
       </div>
       <div>
-        <h2 class="footer-heading">Tools</h2>
+        <h2 class="footer-heading">Analyze</h2>
         <ul class="footer-links">
-          <li><a href="index.html#tools">FASTA validation</a></li>
-          <li><a href="index.html#tools">Sequence statistics</a></li>
-          <li><a href="blast.html">BLAST results</a></li>
-          <li><a href="16s.html">16S</a></li>
+          <li><a href="16s.html">16S identification</a></li>
+          <li><a href="phylo.html">Phylogenetics</a></li>
+          <li><a href="protein.html">Protein annotation</a></li>
+          <li><a href="microbiome.html">Microbiome</a></li>
+          <li><a href="index.html#tools">Sequence analysis &amp; statistics</a></li>
         </ul>
       </div>
       <div>
         <h2 class="footer-heading">Research</h2>
         <ul class="footer-links">
-          <li><a href="ai.html">AI workspace</a></li>
+          <li><a href="assistant.html">AI assistant</a></li>
           <li><a href="workspace.html">Research workspace</a></li>
-          <li><a href="phylo.html">Phylogenetics</a></li>
-          <li><a href="assistant.html">Assistant</a></li>
+          <li><a href="history.html">Research history</a></li>
+          <li><a href="ai.html">AI research workspace</a></li>
         </ul>
       </div>
       <div>
-        <h2 class="footer-heading">Documentation</h2>
+        <h2 class="footer-heading">About</h2>
         <ul class="footer-links">
-          <li><a href="research-use.html">Research-use policy</a></li>
-          <li><a href="benchmark.html#bench-limits-title">Known limitations</a></li>
           <li><a href="index.html#about">About</a></li>
+          <li><a href="benchmark.html#bench-limits-title">Known limitations</a></li>
+          <li><a href="research-use.html">Research-use policy</a></li>
+          <li><a href="blast.html">BLAST results</a></li>
+          <li><a href="taxonomy.html">Taxonomy</a></li>
         </ul>
       </div>
     </div>

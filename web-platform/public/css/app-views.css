@@ -215,3 +215,7 @@
 @media (prefers-reduced-motion: reduce) {
   .ws-view button { transition: none; }
 }
+
+/* M7.15 shared scientific workbench: balanced 360-420px input rail + canvas */
+.app-shell { grid-template-columns: minmax(360px, var(--rail)) minmax(0, 1fr); }
+@media (max-width: 1024px) { .app-shell { grid-template-columns: minmax(0, 1fr); } }

@@ -435,3 +435,57 @@
   .message-list { scroll-behavior: auto; }
   .assistant-shell *, .assistant-panel *, .capability-browser *, .plan-builder * { transition-duration: 0s !important; animation-duration: 0s !important; }
 }
+
+
+/* ============================================================================
+   M7.15 conversation-first assistant workspace
+   ========================================================================== */
+.assistant-main { max-width: var(--maxw); margin: 0 auto; padding: var(--space-6) var(--space-8) var(--space-12); }
+.assistant-page-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-4); margin-bottom: var(--space-5); }
+.assistant-page-head h1 { font-size: var(--fs-800); }
+.assistant-page-head .section-lede { margin: var(--space-2) 0 0; max-width: 64ch; font-size: var(--fs-400); }
+.assistant-page-head .research-notice { margin: 0; max-width: 44ch; }
+
+/* Conversation-first shell: compact optional sidebar + large central chat. */
+.assistant-shell { display: grid; grid-template-columns: 248px minmax(0, 1fr); gap: var(--space-5); align-items: start; }
+.assistant-sidebar { padding: var(--space-4); background: var(--surface); border: var(--border-hairline); border-radius: var(--radius-3); font-size: var(--fs-300); }
+.assistant-panel { display: flex; flex-direction: column; min-width: 0; min-height: 60vh; padding: var(--space-5); background: var(--surface); border: var(--border-hairline); border-radius: var(--radius-3); }
+
+/* Conversation area is dominant; composer anchored at bottom. */
+.timeline-section { flex: 1 1 auto; min-height: 240px; }
+.message-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--space-4); }
+.timeline-note { color: var(--muted); font-size: var(--fs-300); }
+
+/* Compact starter prompts. */
+.suggested { margin-top: var(--space-5); }
+.suggested-title { font-size: var(--fs-300); color: var(--muted); margin: 0 0 var(--space-2); }
+.suggested-list { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.suggested-prompt { padding: 8px var(--space-3); border: var(--border-hairline); border-radius: var(--radius-2); background: var(--surface-2); color: var(--ink-2); font-size: var(--fs-300); cursor: pointer; }
+.suggested-prompt:hover { background: var(--accent-tint); border-color: var(--accent-line); color: var(--ink); }
+
+/* Composer anchored at bottom of conversation. */
+.composer { margin-top: var(--space-4); padding-top: var(--space-4); border-top: var(--border-hairline); }
+
+/* Optional collapsible research context + tool drawer. */
+.context-drawer { margin-top: var(--space-4); border: var(--border-hairline); border-radius: var(--radius-3); background: var(--surface-2); padding: 0 var(--space-4); }
+.context-drawer > summary { cursor: pointer; padding: var(--space-3) 0; font-weight: var(--fw-semibold); font-size: var(--fs-300); color: var(--ink); }
+.context-drawer[open] > summary { border-bottom: var(--border-hairline); margin-bottom: var(--space-3); }
+.context-block { margin-bottom: var(--space-4); }
+
+/* Compact tool catalog (NOT a capability-card wall). */
+.tool-catalog-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); max-height: 360px; overflow-y: auto; }
+.capability-browser, .plan-builder, .activity-strip { margin-bottom: var(--space-5); }
+
+/* Real tool-execution activity — compact. */
+.activity-list { list-style: none; margin: var(--space-3) 0 0; padding: 0; display: grid; gap: 4px; }
+.activity-stage { display: flex; justify-content: space-between; gap: var(--space-3); padding: 6px var(--space-3); border-radius: var(--radius-2); background: var(--surface); border: var(--border-soft); font-size: var(--fs-200); }
+.activity-stage .stage-state { color: var(--muted); }
+
+@media (max-width: 1024px) {
+  .assistant-shell { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 768px) {
+  .assistant-main { padding: var(--space-5) var(--space-4) var(--space-10); }
+  .assistant-panel { padding: var(--space-4); }
+  .assistant-page-head { flex-direction: column; align-items: flex-start; }
+}

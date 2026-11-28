@@ -183,36 +183,10 @@ function schedulePoll(run) {
   }, run.poll_after_ms ?? 1600);
 }
 
-let advanceInFlight = false;
-
-// One best-effort bounded operation after a running status poll. The Worker's
-// status route is read-only; all progress is driven by this explicit POST. A
-// failure is swallowed so the next scheduled poll can retry — never a tight
-// retry loop and never a page rebuild.
-async function advanceOnce(url) {
-  if (advanceInFlight || !state.run?.run_id) return;
-  advanceInFlight = true;
-  try {
-    await json(url ?? "/api/ai/workflows/microbiome/advance", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ run_id: state.run.run_id })
-    });
-  } catch {
-    // Best effort: status stays authoritative and the next poll advances again.
-  } finally {
-    advanceInFlight = false;
-  }
-}
-
 async function refreshStatus() {
   if (!state.run?.run_id) return null;
   try {
-    const statusUrl = `/api/ai/workflows/microbiome/status?run_id=${encodeURIComponent(state.run.run_id)}`;
-    let { body } = await json(statusUrl);
-    if (body.status === "running") {
-      await advanceOnce(body.advance_url ?? undefined);
-      body = (await json(statusUrl)).body;
-    }
+    const { body } = await json(`/api/ai/workflows/microbiome/status?run_id=${encodeURIComponent(state.run.run_id)}`);
     state.run = { ...state.run, ...body };
     state.polls += 1;
     if (ui.progress) {

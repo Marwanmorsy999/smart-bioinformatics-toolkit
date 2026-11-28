@@ -1,9 +1,9 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#eef2f4">
+<meta name="theme-color" content="#F5F7F6">
 <title>Risk-coverage analysis - Smart Bioinformatics AI</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="stylesheet" href="css/tokens.css">
@@ -13,25 +13,27 @@
 </head>
 <body>
 <a class="skip-link" href="#main-content">Skip to main content</a>
-<header class="topbar">
-  <a class="brand" href="index.html" aria-label="Smart Bioinformatics AI home">
-    <img class="brand-logo" src="brand/sbio-logo-primary.svg" alt="Smart Bioinformatics AI" width="245" height="28">
-  </a>
-  <button class="nav-toggle" type="button" aria-label="Open navigation" aria-controls="primary-nav" aria-expanded="false">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
-  </button>
-  <nav id="primary-nav" class="top-nav" aria-label="Main navigation">
-    <a href="index.html#tools">Tools</a>
-    <a href="workspace.html">Research workspace</a>
-    <a href="phylo.html">Phylogenetics</a>
-    <a href="protein.html">Protein annotation</a>
-    <a href="16s.html">16S</a>
-    <a href="microbiome.html">Microbiome</a>
-    <a href="assistant.html">Assistant</a>
-    <a href="history.html">Research history</a>
-    <a href="index.html#about">About</a>
-  </nav>
-</header>
+  <header class="topbar app-header">
+    <a class="brand" href="index.html" aria-label="Smart Bioinformatics AI home">
+      <img class="brand-logo" src="brand/sbio-logo-primary.svg" alt="Smart Bioinformatics AI" width="245" height="28">
+    </a>
+    <button class="nav-toggle" type="button" aria-label="Open navigation" aria-controls="primary-nav" aria-expanded="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+    <nav id="primary-nav" class="top-nav" aria-label="Main navigation">
+      <a href="index.html#tools">Tools</a>
+      <a href="workspace.html">Research workspace</a>
+      <a href="phylo.html">Phylogenetics</a>
+      <a href="protein.html">Protein annotation</a>
+      <a href="16s.html">16S</a>
+      <a href="microbiome.html">Microbiome</a>
+      <a href="assistant.html">Assistant</a>
+      <a href="history.html">Research history</a>
+      <a href="index.html#about">About</a>
+    </nav>
+    <a class="nav-start-action" href="16s.html" tabindex="-1">Start an analysis</a>
+    
+  </header>
 <main id="main-content" class="tool-view bench-page" tabindex="-1">
   <section class="section-block bench-intro" aria-labelledby="about">
     <p class="eyebrow">Demonstration / not a benchmark result</p>
@@ -107,44 +109,47 @@
     <p class="bench-lede">The five threshold points are chosen to illustrate how the rates move, not to establish a rule: differences between adjacent points are properties of this small fixture. Treat every value on this page as an illustration of the calculation, never as an accuracy estimate. For measured results, no results file is available in this repository; do not treat these values as an accuracy estimate.</p>
   </section>
 </main>
-<footer class="site-footer">
-  <div class="footer-grid">
-    <div>
-      <div class="footer-brand">
-        <img class="footer-logo" src="brand/sbio-logo-dark.svg" alt="Smart Bioinformatics AI" width="245" height="28">
+  <footer class="site-footer app-footer">
+    <div class="footer-grid">
+      <div>
+        <div class="footer-brand">
+          <img class="footer-logo" src="brand/sbio-logo-dark.svg" alt="Smart Bioinformatics AI" width="245" height="28">
+        </div>
+        <p>A precise, research-grade workspace for scientific analysis. Inspect the inputs, keep the outputs, and read the caveats.</p>
       </div>
-      <p>A modular, browser-first research workspace for sequence checks. Inspect the inputs, keep the outputs, and read the caveats.</p>
+      <div>
+        <h2 class="footer-heading">Analyze</h2>
+        <ul class="footer-links">
+          <li><a href="16s.html">16S identification</a></li>
+          <li><a href="phylo.html">Phylogenetics</a></li>
+          <li><a href="protein.html">Protein annotation</a></li>
+          <li><a href="microbiome.html">Microbiome</a></li>
+          <li><a href="index.html#tools">Sequence analysis &amp; statistics</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2 class="footer-heading">Research</h2>
+        <ul class="footer-links">
+          <li><a href="assistant.html">AI assistant</a></li>
+          <li><a href="workspace.html">Research workspace</a></li>
+          <li><a href="history.html">Research history</a></li>
+          <li><a href="ai.html">AI research workspace</a></li>
+        </ul>
+      </div>
+      <div>
+        <h2 class="footer-heading">About</h2>
+        <ul class="footer-links">
+          <li><a href="index.html#about">About</a></li>
+          <li><a href="benchmark.html#bench-limits-title">Known limitations</a></li>
+          <li><a href="research-use.html">Research-use policy</a></li>
+          <li><a href="blast.html">BLAST results</a></li>
+          <li><a href="taxonomy.html">Taxonomy</a></li>
+        </ul>
+      </div>
     </div>
-    <div>
-      <h2 class="footer-heading">Tools</h2>
-      <ul class="footer-links">
-        <li><a href="index.html#tools">FASTA validation</a></li>
-        <li><a href="index.html#tools">Sequence statistics</a></li>
-        <li><a href="blast.html">BLAST results</a></li>
-        <li><a href="taxonomy.html">Taxonomy</a></li>
-      </ul>
-    </div>
-    <div>
-      <h2 class="footer-heading">Research</h2>
-      <ul class="footer-links">
-        <li><a href="ai.html">AI workspace</a></li>
-        <li><a href="workspace.html">Research workspace</a></li>
-        <li><a href="phylo.html">Phylogenetics</a></li>
-        <li><a href="assistant.html">Assistant</a></li>
-      </ul>
-    </div>
-    <div>
-      <h2 class="footer-heading">Documentation</h2>
-      <ul class="footer-links">
-        <li><a href="index.html#about">About</a></li>
-        <li><a href="benchmark.html#bench-limits-title">Known limitations</a></li>
-        <li><a href="research-use.html">Research-use policy</a></li>
-      </ul>
-    </div>
-  </div>
-  <p class="footer-disclaimer">Research and educational use only. Results require independent scientific interpretation. <a href="research-use.html">Full research-use statement</a>.</p>
-  <div class="footer-bottom"><span>Smart Bioinformatics AI</span></div>
-</footer>
+    <p class="footer-disclaimer">Research and educational use only. Results require independent scientific interpretation. <a href="research-use.html">Full research-use statement</a>.</p>
+    <div class="footer-bottom"><span>Smart Bioinformatics AI</span></div>
+  </footer>
 <script src="js/nav.js"></script>
 <script type="module" src="js/benchmark-app.js"></script>
 </body>
