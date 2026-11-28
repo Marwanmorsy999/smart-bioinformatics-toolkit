@@ -32,7 +32,10 @@ export function renderTable(container, columns, rows, { empty = "No data availab
     tbody.append(tr);
   }
   table.append(thead, tbody);
-  container.replaceChildren(table);
+  const scroll = document.createElement("div");
+  scroll.className = "table-scroll";
+  scroll.append(table);
+  container.replaceChildren(scroll);
   return table;
 }
 
